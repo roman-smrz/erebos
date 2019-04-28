@@ -176,16 +176,16 @@ storeRawBytes st raw = do
   return ref
 
 serializeRecItem :: ByteString -> RecItem -> [ByteString]
-serializeRecItem name (RecInt x) = [BC.pack "i:", name, BC.singleton ' ', BC.pack (show x), BC.singleton '\n']
-serializeRecItem name (RecNum x) = [BC.pack "n:", name, BC.singleton ' ', BC.pack (showRatio x), BC.singleton '\n']
-serializeRecItem name (RecText x) = [BC.pack "t:", name, BC.singleton ' ', escaped, BC.singleton '\n']
+serializeRecItem name (RecInt x) = [name, BC.pack ":i", BC.singleton ' ', BC.pack (show x), BC.singleton '\n']
+serializeRecItem name (RecNum x) = [name, BC.pack ":n", BC.singleton ' ', BC.pack (showRatio x), BC.singleton '\n']
+serializeRecItem name (RecText x) = [name, BC.pack ":t", BC.singleton ' ', escaped, BC.singleton '\n']
     where escaped = BC.concatMap escape $ encodeUtf8 x
           escape '\\' = BC.pack "\\\\"
           escape '\n' = BC.pack "\\n"
           escape c    = BC.singleton c
-serializeRecItem name (RecDate x) = [BC.pack "d:", name, BC.singleton ' ', BC.pack (formatTime defaultTimeLocale "%s %z" x), BC.singleton '\n']
-serializeRecItem name (RecJson x) = [BC.pack "j:", name, BC.singleton ' '] ++ BL.toChunks (J.encode x) ++ [BC.singleton '\n']
-serializeRecItem name (RecRef x) = [BC.pack "r:", name, BC.singleton ' ', showRef x, BC.singleton '\n']
+serializeRecItem name (RecDate x) = [name, BC.pack ":d", BC.singleton ' ', BC.pack (formatTime defaultTimeLocale "%s %z" x), BC.singleton '\n']
+serializeRecItem name (RecJson x) = [name, BC.pack ":j", BC.singleton ' '] ++ BL.toChunks (J.encode x) ++ [BC.singleton '\n']
+serializeRecItem name (RecRef x) = [name, BC.pack ":r", BC.singleton ' ', showRef x, BC.singleton '\n']
 
 lazyLoadObject :: Ref -> Object
 lazyLoadObject = fst . lazyLoadObject'
@@ -223,8 +223,8 @@ lazyLoadObject' ref@(Ref st rhash) = unsafePerformIO $ do
               colon <- BC.elemIndex ':' line
               space <- BC.elemIndex ' ' line
               guard $ colon < space
-              let itype = B.take colon line
-                  name = B.take (space-colon-1) $ B.drop (colon+1) line
+              let name = B.take colon line
+                  itype = B.take (space-colon-1) $ B.drop (colon+1) line
                   content = B.drop (space+1) line
 
               val <- case BC.unpack itype of
