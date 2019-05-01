@@ -6,6 +6,7 @@ module Storage (
     readRef, showRef,
 
     Object(..), RecItem(..),
+    serializeObject, deserializeObject,
     storeRawBytes, lazyLoadBytes,
 
     Head,
@@ -162,12 +163,17 @@ data RecItem = RecInt Integer
              | RecRef Ref
     deriving (Show)
 
+serializeObject :: Object -> BL.ByteString
+serializeObject = \case
+    Blob cnt -> BL.fromChunks [BC.pack "blob ", BC.pack (show $ B.length cnt), BC.singleton '\n', cnt]
+    Rec rec -> let cnt = BL.fromChunks $ concatMap (uncurry serializeRecItem) rec
+                in BL.fromChunks [BC.pack "rec ", BC.pack (show $ BL.length cnt), BC.singleton '\n'] `BL.append` cnt
+    ZeroObject -> BL.empty
+
 storeObject :: Storage -> Object -> IO Ref
 storeObject storage = \case
-    Blob cnt -> storeRawBytes storage $ BL.fromChunks [BC.pack "blob ", BC.pack (show $ B.length cnt), BC.singleton '\n', cnt]
-    Rec rec -> let cnt = BL.fromChunks $ concatMap (uncurry serializeRecItem) rec
-                in storeRawBytes storage $ BL.fromChunks [BC.pack "rec ", BC.pack (show $ BL.length cnt), BC.singleton '\n'] `BL.append` cnt
     ZeroObject -> return $ zeroRef storage
+    obj -> storeRawBytes storage $ serializeObject obj
 
 storeRawBytes :: Storage -> BL.ByteString -> IO Ref
 storeRawBytes st raw = do
@@ -199,20 +205,24 @@ lazyLoadObject' ref@(Ref st rhash) = unsafePerformIO $ do
     file <- decompress <$> (BL.readFile $ refPath ref)
     let Ref _ chash = Ref st $ hash file
     when (chash /= rhash) $ error $ "Hash mismatch on object " ++ BC.unpack (showRef ref) {- TODO throw -}
-
-    obj <- case BLC.break (=='\n') file of
-                (line, rest) | Just (otype, len) <- splitObjPrefix line -> do
-                    let content = BL.toStrict $ BL.drop 1 rest
-                    guard $ B.length content == len
-                    case otype of
-                         _ | otype == BC.pack "blob" -> return $ Blob content
-                           | otype == BC.pack "rec" -> maybe (error $ "Malformed record item in " ++ BC.unpack (showRef ref))
-                                                           (return . Rec) $ sequence $ map parseRecLine $ BC.lines content
-                           | otherwise -> error $ "Unknown object type of " ++ BC.unpack (showRef ref) {- TODO throw -}
-                _ -> error $ "Malformed object " ++ BC.unpack (showRef ref) {- TODO throw -}
-
+    let obj = case runExcept $ deserializeObject st file of
+                   Left err -> error $ err ++ ", ref " ++ BC.unpack (showRef ref) {- TODO throw -}
+                   Right x  -> x
     return (obj, file)
 
+deserializeObject :: Storage -> BL.ByteString -> Except String Object
+deserializeObject _  bytes | BL.null bytes = return ZeroObject
+deserializeObject st bytes =
+    case BLC.break (=='\n') bytes of
+        (line, rest) | Just (otype, len) <- splitObjPrefix line -> do
+            let content = BL.toStrict $ BL.drop 1 rest
+            guard $ B.length content == len
+            case otype of
+                 _ | otype == BC.pack "blob" -> return $ Blob content
+                   | otype == BC.pack "rec" -> maybe (throwError $ "Malformed record item ")
+                                                   (return . Rec) $ sequence $ map parseRecLine $ BC.lines content
+                   | otherwise -> throwError $ "Unknown object type"
+        _ -> throwError $ "Malformed object"
     where splitObjPrefix line = do
               [otype, tlen] <- return $ BLC.words line
               (len, rest) <- BLC.readInt tlen
