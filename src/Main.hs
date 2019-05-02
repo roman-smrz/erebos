@@ -1,4 +1,34 @@
-module Main where
+module Main (main) where
+
+import Control.Concurrent.Chan
+import Control.Exception
+import Control.Monad
+
+import qualified Data.Text.IO as T
+
+import System.Environment
+import System.IO
+import System.IO.Error
+
+import Identity
+import Network
+import Storage
+
 
 main :: IO ()
-main = putStrLn "Hello, Haskell!"
+main = do
+    [bhost] <- getArgs
+    st <- openStorage "test"
+    idhead <- catchJust (guard . isDoesNotExistError) (loadHead st "identity") $ \_ -> do
+        putStr "Name: "
+        hFlush stdout
+        name <- T.getLine
+        let base = Identity name Nothing
+        Right h <- replaceHead base (Left (st, "identity"))
+        return h
+    let sidentity = wrappedLoad (headRef idhead) :: Stored Identity
+    print $ fromStored sidentity
+
+    chan <- peerDiscovery bhost sidentity
+    void $ forever $ print =<< readChan chan
+    return ()
