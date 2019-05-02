@@ -6,7 +6,7 @@ module Storage (
     readRef, showRef,
 
     Object(..), RecItem(..),
-    serializeObject, deserializeObject,
+    serializeObject, deserializeObject, deserializeObjects,
     storeRawBytes, lazyLoadBytes,
 
     Head,
@@ -49,6 +49,7 @@ import Codec.Compression.Zlib
 import qualified Codec.MIME.Type as MIME
 import qualified Codec.MIME.Parse as MIME
 
+import Control.Arrow
 import Control.Exception
 import Control.Monad
 import Control.Monad.Except
@@ -207,17 +208,18 @@ lazyLoadObject' ref@(Ref st rhash) = unsafePerformIO $ do
     when (chash /= rhash) $ error $ "Hash mismatch on object " ++ BC.unpack (showRef ref) {- TODO throw -}
     let obj = case runExcept $ deserializeObject st file of
                    Left err -> error $ err ++ ", ref " ++ BC.unpack (showRef ref) {- TODO throw -}
-                   Right x  -> x
+                   Right (x, rest) | BL.null rest -> x
+                                   | otherwise -> error $ "Superfluous content after " ++ BC.unpack (showRef ref) {- TODO throw -}
     return (obj, file)
 
-deserializeObject :: Storage -> BL.ByteString -> Except String Object
-deserializeObject _  bytes | BL.null bytes = return ZeroObject
+deserializeObject :: Storage -> BL.ByteString -> Except String (Object, BL.ByteString)
+deserializeObject _  bytes | BL.null bytes = return (ZeroObject, bytes)
 deserializeObject st bytes =
     case BLC.break (=='\n') bytes of
         (line, rest) | Just (otype, len) <- splitObjPrefix line -> do
-            let content = BL.toStrict $ BL.drop 1 rest
+            let (content, next) = first BL.toStrict $ BL.splitAt (fromIntegral len) $ BL.drop 1 rest
             guard $ B.length content == len
-            case otype of
+            (,next) <$> case otype of
                  _ | otype == BC.pack "blob" -> return $ Blob content
                    | otype == BC.pack "rec" -> maybe (throwError $ "Malformed record item ")
                                                    (return . Rec) $ sequence $ map parseRecLine $ BC.lines content
@@ -248,6 +250,11 @@ deserializeObject st bytes =
                           "r" -> RecRef <$> unsafeReadRef st content
                           _   -> Nothing
               return (name, val)
+
+deserializeObjects :: Storage -> BL.ByteString -> Except String [Object]
+deserializeObjects _  bytes | BL.null bytes = return []
+deserializeObjects st bytes = do (obj, rest) <- deserializeObject st bytes
+                                 (obj:) <$> deserializeObjects st rest
 
 
 data Head = Head String Ref
