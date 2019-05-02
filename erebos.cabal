@@ -16,6 +16,7 @@ extra-source-files:  CHANGELOG.md
 cabal-version:       >=1.10
 
 executable erebos
+  ghc-options:	       -Wall
   main-is:             Main.hs
   other-modules:       Identity,
                        Network,
