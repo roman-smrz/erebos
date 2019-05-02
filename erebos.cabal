@@ -19,7 +19,7 @@ executable erebos
   main-is:             Main.hs
   other-modules:       Storage
 
-  extensions:          FlexibleContexts,
+  default-extensions:  FlexibleContexts,
                        FlexibleInstances,
                        LambdaCase,
                        TupleSections
