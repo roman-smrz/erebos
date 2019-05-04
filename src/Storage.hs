@@ -56,11 +56,11 @@ import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.Writer
 
-import Crypto.Classes
-import Crypto.Skein
+import Crypto.Hash
 
 import qualified Data.Aeson as J
 import Data.ByteString (ByteString, singleton)
+import qualified Data.ByteArray as BA
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as BC
 import qualified Data.ByteString.Lazy as BL
@@ -72,8 +72,6 @@ import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Maybe
 import Data.Ratio
-import Data.Serialize
-import Data.Tagged
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding
@@ -102,7 +100,7 @@ openStorage path = do
     return $ Storage path
 
 
-data Ref = Ref Storage Skein_512_160
+data Ref = Ref Storage (Digest Blake2b_256)
     deriving (Eq, Ord)
 
 instance Show Ref where
@@ -110,16 +108,16 @@ instance Show Ref where
 
 zeroRef :: Storage -> Ref
 zeroRef s = Ref s h
-    where h = case decode $ B.replicate ((witness outputLength h) `div` 8) 0 of
-                   Left err -> error $ "Failed to create zero hash: " ++ err
-                   Right h' -> h'
+    where h = case digestFromByteString $ B.replicate (BA.length h) 0 of
+                   Nothing -> error $ "Failed to create zero hash"
+                   Just h' -> h'
 
 isZeroRef :: Ref -> Bool
-isZeroRef (Ref _ h) = B.all (==0) $ encode h
+isZeroRef (Ref _ h) = all (==0) $ BA.unpack h
 
 
 unsafeReadRef :: Storage -> ByteString -> Maybe Ref
-unsafeReadRef s = either (const Nothing) (Just . Ref s) . decode . B.concat <=< readHex
+unsafeReadRef s = Just . Ref s <=< digestFromByteString . B.concat <=< readHex
     where readHex bs | B.null bs = Just []
           readHex bs = do (bx, bs') <- B.uncons bs
                           (by, bs'') <- B.uncons bs'
@@ -141,7 +139,7 @@ readRef s b =
                  False -> return Nothing
 
 showRef :: Ref -> ByteString
-showRef (Ref _ h) = B.concatMap showHexByte $ encode h
+showRef (Ref _ h) = B.concat $ map showHexByte $ BA.unpack h
     where showHex x | x < 10    = x + 48
                     | otherwise = x + 87
           showHexByte x = B.pack [ showHex (x `div` 16), showHex (x `mod` 16) ]
@@ -178,7 +176,7 @@ storeObject storage = \case
 
 storeRawBytes :: Storage -> BL.ByteString -> IO Ref
 storeRawBytes st raw = do
-  let ref = Ref st (hash raw)
+  let ref = Ref st $ hashFinalize $ hashUpdates hashInit $ BL.toChunks raw
   writeFileOnce (refPath ref) $ compress raw
   return ref
 
@@ -192,7 +190,7 @@ serializeRecItem name (RecText x) = [name, BC.pack ":t", BC.singleton ' ', escap
           escape c    = BC.singleton c
 serializeRecItem name (RecDate x) = [name, BC.pack ":d", BC.singleton ' ', BC.pack (formatTime defaultTimeLocale "%s %z" x), BC.singleton '\n']
 serializeRecItem name (RecJson x) = [name, BC.pack ":j", BC.singleton ' '] ++ BL.toChunks (J.encode x) ++ [BC.singleton '\n']
-serializeRecItem name (RecRef x) = [name, BC.pack ":r", BC.singleton ' ', showRef x, BC.singleton '\n']
+serializeRecItem name (RecRef x) = [name, BC.pack ":r.b2 ", showRef x, BC.singleton '\n']
 
 lazyLoadObject :: Ref -> Object
 lazyLoadObject = fst . lazyLoadObject'
@@ -204,7 +202,7 @@ lazyLoadObject' :: Ref -> (Object, BL.ByteString)
 lazyLoadObject' ref | isZeroRef ref = (ZeroObject, BL.empty)
 lazyLoadObject' ref@(Ref st rhash) = unsafePerformIO $ do
     file <- decompress <$> (BL.readFile $ refPath ref)
-    let Ref _ chash = Ref st $ hash file
+    let Ref _ chash = Ref st $ hashFinalize $ hashUpdates hashInit $ BL.toChunks file
     when (chash /= rhash) $ error $ "Hash mismatch on object " ++ BC.unpack (showRef ref) {- TODO throw -}
     let obj = case runExcept $ deserializeObject st file of
                    Left err -> error $ err ++ ", ref " ++ BC.unpack (showRef ref) {- TODO throw -}
@@ -247,7 +245,7 @@ deserializeObject st bytes =
                           "t" -> return $ RecText $ decodeUtf8With lenientDecode content
                           "d" -> RecDate <$> parseTimeM False defaultTimeLocale "%s %z" (BC.unpack content)
                           "j" -> RecJson <$> J.decode (BL.fromStrict content)
-                          "r" -> RecRef <$> unsafeReadRef st content
+                          "r.b2" -> RecRef <$> unsafeReadRef st content
                           _   -> Nothing
               return (name, val)
 
