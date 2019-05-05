@@ -17,13 +17,13 @@ module Storage (
     StorableText(..), StorableDate(..),
 
     storeBlob, storeRec, storeZero,
-    storeInt, storeNum, storeText, storeDate, storeJson, storeRef,
-    storeMbInt, storeMbNum, storeMbText, storeMbDate, storeMbJson, storeMbRef,
+    storeInt, storeNum, storeText, storeBinary, storeDate, storeJson, storeRef,
+    storeMbInt, storeMbNum, storeMbText, storeMbBinary, storeMbDate, storeMbJson, storeMbRef,
     storeZRef,
 
     loadBlob, loadRec, loadZero,
-    loadInt, loadNum, loadText, loadDate, loadJson, loadRef,
-    loadMbInt, loadMbNum, loadMbText, loadMbDate, loadMbJson, loadMbRef,
+    loadInt, loadNum, loadText, loadBinary, loadDate, loadJson, loadRef,
+    loadMbInt, loadMbNum, loadMbText, loadMbBinary, loadMbDate, loadMbJson, loadMbRef,
     loadZRef,
 
     Stored,
@@ -61,6 +61,7 @@ import Crypto.Hash
 import qualified Data.Aeson as J
 import Data.ByteString (ByteString, singleton)
 import qualified Data.ByteArray as BA
+import Data.ByteArray.Encoding
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as BC
 import qualified Data.ByteString.Lazy as BL
@@ -157,6 +158,7 @@ data Object = Blob ByteString
 data RecItem = RecInt Integer
              | RecNum Rational
              | RecText Text
+             | RecBinary ByteString
              | RecDate ZonedTime
              | RecJson J.Value
              | RecRef Ref
@@ -188,6 +190,7 @@ serializeRecItem name (RecText x) = [name, BC.pack ":t", BC.singleton ' ', escap
           escape '\\' = BC.pack "\\\\"
           escape '\n' = BC.pack "\\n"
           escape c    = BC.singleton c
+serializeRecItem name (RecBinary x) = [name, BC.pack ":b ", convertToBase Base64 x, BC.singleton '\n']
 serializeRecItem name (RecDate x) = [name, BC.pack ":d", BC.singleton ' ', BC.pack (formatTime defaultTimeLocale "%s %z" x), BC.singleton '\n']
 serializeRecItem name (RecJson x) = [name, BC.pack ":j", BC.singleton ' '] ++ BL.toChunks (J.encode x) ++ [BC.singleton '\n']
 serializeRecItem name (RecRef x) = [name, BC.pack ":r.b2 ", showRef x, BC.singleton '\n']
@@ -243,6 +246,7 @@ deserializeObject st bytes =
                                     return $ RecInt num
                           "n" -> RecNum <$> parseRatio content
                           "t" -> return $ RecText $ decodeUtf8With lenientDecode content
+                          "b" -> either (const Nothing) (Just . RecBinary) $ convertFromBase Base64 content
                           "d" -> RecDate <$> parseTimeM False defaultTimeLocale "%s %z" (BC.unpack content)
                           "j" -> RecJson <$> J.decode (BL.fromStrict content)
                           "r.b2" -> RecRef <$> unsafeReadRef st content
@@ -457,6 +461,12 @@ storeText name x = tell [return [(BC.pack name, RecText $ toText x)]]
 storeMbText :: StorableText a => String -> Maybe a -> StoreRec
 storeMbText name = maybe (return ()) (storeText name)
 
+storeBinary :: BA.ByteArrayAccess a => String -> a -> StoreRec
+storeBinary name x = tell [return [(BC.pack name, RecBinary $ BA.convert x)]]
+
+storeMbBinary :: BA.ByteArrayAccess a => String -> Maybe a -> StoreRec
+storeMbBinary name = maybe (return ()) (storeBinary name)
+
 storeDate :: StorableDate a => String -> a -> StoreRec
 storeDate name x = tell [return [(BC.pack name, RecDate $ toDate x)]]
 
@@ -536,6 +546,15 @@ loadMbText name = asks (lookup (BC.pack name) . snd) >>= \case
     Nothing -> return Nothing
     Just (RecText x) -> Just <$> fromText x
     Just _ -> throwError $ "Expecting type text of record item '"++name++"'"
+
+loadBinary :: BA.ByteArray a => String -> LoadRec a
+loadBinary name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbBinary name
+
+loadMbBinary :: BA.ByteArray a => String -> LoadRec (Maybe a)
+loadMbBinary name = asks (lookup (BC.pack name) . snd) >>= \case
+    Nothing -> return Nothing
+    Just (RecBinary x) -> return $ Just $ BA.convert x
+    Just _ -> throwError $ "Expecting type binary of record item '"++name++"'"
 
 loadDate :: StorableDate a => String -> LoadRec a
 loadDate name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbDate name
