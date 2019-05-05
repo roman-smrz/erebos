@@ -17,6 +17,7 @@ import Network.Socket
 import Network.Socket.ByteString (recvFrom, sendTo)
 
 import Identity
+import PubKey
 import Storage
 
 
@@ -108,30 +109,38 @@ peerDiscovery bhost sidentity = do
         void $ sendTo sock (BL.toStrict $ BL.concat
             [ serializeObject $ transportToObject $ IdentityRequest ref (storedRef sidentity)
             , lazyLoadBytes $ storedRef sidentity
+            , lazyLoadBytes $ storedRef $ signedData $ fromStored sidentity
+            , lazyLoadBytes $ storedRef $ idKeyIdentity $ fromStored $ signedData $ fromStored sidentity
+            , lazyLoadBytes $ storedRef $ signedSignature $ fromStored sidentity
             ]) peer
 
     packet _ _ peer (IdentityRequest ref from) [] = do
         putStrLn $ "Got identity request: for " ++ show ref ++ " by " ++ show from ++ " from " ++ show peer ++ " without content"
 
-    packet chan sock peer (IdentityRequest ref from) objs@(obj:_) = do
+    packet chan sock peer (IdentityRequest ref from) (obj:objs) = do
         putStrLn $ "Got identity request: for " ++ show ref ++ " by " ++ show from ++ " from " ++ show peer
-        print objs
+        print (obj:objs)
         from' <- store (storedStorage sidentity) obj
         if from == from'
-           then do writeChan chan $ Peer (wrappedLoad from) (DatagramAddress peer)
+           then do forM_ objs $ store $ storedStorage sidentity
+                   writeChan chan $ Peer (wrappedLoad from) (DatagramAddress peer)
                    void $ sendTo sock (BL.toStrict $ BL.concat
                        [ serializeObject $ transportToObject $ IdentityResponse (storedRef sidentity)
                        , lazyLoadBytes $ storedRef sidentity
+                       , lazyLoadBytes $ storedRef $ signedData $ fromStored sidentity
+                       , lazyLoadBytes $ storedRef $ idKeyIdentity $ fromStored $ signedData $ fromStored sidentity
+                       , lazyLoadBytes $ storedRef $ signedSignature $ fromStored sidentity
                        ]) peer
            else putStrLn $ "Mismatched content"
 
     packet _ _ peer (IdentityResponse ref) [] = do
         putStrLn $ "Got identity response: by " ++ show ref ++ " from " ++ show peer ++ " without content"
 
-    packet chan _ peer (IdentityResponse ref) objs@(obj:_) = do
+    packet chan _ peer (IdentityResponse ref) (obj:objs) = do
         putStrLn $ "Got identity response: by " ++ show ref ++ " from " ++ show peer
-        print objs
+        print (obj:objs)
         ref' <- store (storedStorage sidentity) obj
         if ref == ref'
-           then writeChan chan $ Peer (wrappedLoad ref) (DatagramAddress peer)
+           then do forM_ objs $ store $ storedStorage sidentity
+                   writeChan chan $ Peer (wrappedLoad ref) (DatagramAddress peer)
            else putStrLn $ "Mismatched content"

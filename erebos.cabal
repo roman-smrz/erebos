@@ -20,6 +20,7 @@ executable erebos
   main-is:             Main.hs
   other-modules:       Identity,
                        Network,
+                       PubKey,
                        Storage
 
   default-extensions:  FlexibleContexts,

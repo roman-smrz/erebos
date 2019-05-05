@@ -107,6 +107,10 @@ data Ref = Ref Storage (Digest Blake2b_256)
 instance Show Ref where
     show ref@(Ref (Storage path) _) = path ++ ":" ++ BC.unpack (showRef ref)
 
+instance BA.ByteArrayAccess Ref where
+    length (Ref _ dgst) = BA.length dgst
+    withByteArray (Ref _ dgst) = BA.withByteArray dgst
+
 zeroRef :: Storage -> Ref
 zeroRef s = Ref s h
     where h = case digestFromByteString $ B.replicate (BA.length h) 0 of

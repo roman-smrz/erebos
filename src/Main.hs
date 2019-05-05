@@ -12,6 +12,7 @@ import System.IO.Error
 
 import Identity
 import Network
+import PubKey
 import Storage
 
 
@@ -23,7 +24,9 @@ main = do
         putStr "Name: "
         hFlush stdout
         name <- T.getLine
-        let base = Identity name Nothing
+        (secret, public) <- generateKeys st
+
+        base <- sign secret =<< wrappedStore st (Identity name Nothing public)
         Right h <- replaceHead base (Left (st, "identity"))
         return h
     let sidentity = wrappedLoad (headRef idhead) :: Stored Identity
