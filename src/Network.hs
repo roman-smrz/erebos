@@ -106,7 +106,7 @@ peerDiscovery bhost sidentity = do
 
     packet _ sock peer (AnnouncePacket ref) _ = do
         putStrLn $ "Got announce: " ++ show ref ++ " from " ++ show peer
-        void $ sendTo sock (BL.toStrict $ BL.concat
+        when (ref /= storedRef sidentity) $ void $ sendTo sock (BL.toStrict $ BL.concat
             [ serializeObject $ transportToObject $ IdentityRequest ref (storedRef sidentity)
             , lazyLoadBytes $ storedRef sidentity
             , lazyLoadBytes $ storedRef $ signedData $ fromStored sidentity
