@@ -2,7 +2,7 @@ module PubKey (
     PublicKey, SecretKey,
     Signature(sigKey), Signed(..),
     generateKeys,
-    sign,
+    sign, signAdd,
 ) where
 
 import Control.Monad
@@ -29,7 +29,7 @@ data Signature = Signature
 
 data Signed a = Signed
     { signedData :: Stored a
-    , signedSignature :: Stored Signature
+    , signedSignature :: [Stored Signature]
     }
     deriving (Show)
 
@@ -59,11 +59,11 @@ instance Storable Signature where
 instance Storable a => Storable (Signed a) where
     store' sig = storeRec $ do
         storeRef "data" $ signedData sig
-        storeRef "sig" $ signedSignature sig
+        mapM_ (storeRef "sig") $ signedSignature sig
 
     load' = loadRec $ Signed
         <$> loadRef "data"
-        <*> loadRef "sig"
+        <*> loadRefs "sig"
 
 
 generateKeys :: Storage -> IO (SecretKey, Stored PublicKey)
@@ -73,8 +73,11 @@ generateKeys st = do
     return (SecretKey secret public, public)
 
 sign :: SecretKey -> Stored a -> IO (Signed a)
-sign (SecretKey secret spublic) val = do
+sign secret val = signAdd secret $ Signed val []
+
+signAdd :: SecretKey -> Signed a -> IO (Signed a)
+signAdd (SecretKey secret spublic) (Signed val sigs) = do
     let PublicKey public = fromStored spublic
         sig = ED.sign secret public $ storedRef val
     ssig <- wrappedStore (storedStorage val) $ Signature spublic sig
-    return $ Signed val ssig
+    return $ Signed val (ssig : sigs)

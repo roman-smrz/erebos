@@ -24,7 +24,7 @@ module Storage (
 
     loadBlob, loadRec, loadZero,
     loadInt, loadNum, loadText, loadBinary, loadDate, loadJson, loadRef,
-    loadMbInt, loadMbNum, loadMbText, loadMbBinary, loadMbDate, loadMbJson, loadMbRef,
+    loadMbInt, loadMbNum, loadMbText, loadMbBinary, loadMbDate, loadMbJson, loadMbRef, loadRefs,
     loadZRef,
 
     Stored,
@@ -607,11 +607,20 @@ loadMbRawRef name = asks (lookup (BC.pack name) . snd) >>= \case
     Just (RecRef x) -> return (Just x)
     Just _ -> throwError $ "Expecting type ref of record item '"++name++"'"
 
+loadRawRefs :: String -> LoadRec [Ref]
+loadRawRefs name = do
+    items <- map snd . filter ((BC.pack name ==) . fst) <$> asks snd
+    forM items $ \case RecRef x -> return x
+                       _ -> throwError $ "Expecting type ref of record item '"++name++"'"
+
 loadRef :: Storable a => String -> LoadRec a
 loadRef name = load <$> loadRawRef name
 
 loadMbRef :: Storable a => String -> LoadRec (Maybe a)
 loadMbRef name = fmap load <$> loadMbRawRef name
+
+loadRefs :: Storable a => String -> LoadRec [a]
+loadRefs name = map load <$> loadRawRefs name
 
 loadZRef :: ZeroStorable a => String -> LoadRec a
 loadZRef name = loadMbRef name >>= \case
