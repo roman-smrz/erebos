@@ -17,7 +17,6 @@ import Network.Socket
 import Network.Socket.ByteString (recvFrom, sendTo)
 
 import Identity
-import PubKey
 import Storage
 
 
@@ -108,10 +107,7 @@ peerDiscovery bhost sidentity = do
         putStrLn $ "Got announce: " ++ show ref ++ " from " ++ show peer
         when (ref /= storedRef sidentity) $ void $ sendTo sock (BL.toStrict $ BL.concat
             [ serializeObject $ transportToObject $ IdentityRequest ref (storedRef sidentity)
-            , lazyLoadBytes $ storedRef sidentity
-            , lazyLoadBytes $ storedRef $ signedData $ fromStored sidentity
-            , lazyLoadBytes $ storedRef $ idKeyIdentity $ fromStored $ signedData $ fromStored sidentity
-            , lazyLoadBytes $ storedRef $ signedSignature $ fromStored sidentity
+            , BL.concat $ map (lazyLoadBytes . storedRef) $ collectStoredObjects $ wrappedLoad $ storedRef sidentity
             ]) peer
 
     packet _ _ peer (IdentityRequest ref from) [] = do
@@ -126,10 +122,7 @@ peerDiscovery bhost sidentity = do
                    writeChan chan $ Peer (wrappedLoad from) (DatagramAddress peer)
                    void $ sendTo sock (BL.toStrict $ BL.concat
                        [ serializeObject $ transportToObject $ IdentityResponse (storedRef sidentity)
-                       , lazyLoadBytes $ storedRef sidentity
-                       , lazyLoadBytes $ storedRef $ signedData $ fromStored sidentity
-                       , lazyLoadBytes $ storedRef $ idKeyIdentity $ fromStored $ signedData $ fromStored sidentity
-                       , lazyLoadBytes $ storedRef $ signedSignature $ fromStored sidentity
+                       , BL.concat $ map (lazyLoadBytes . storedRef) $ collectStoredObjects $ wrappedLoad $ storedRef sidentity
                        ]) peer
            else putStrLn $ "Mismatched content"
 

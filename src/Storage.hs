@@ -8,6 +8,7 @@ module Storage (
     Object(..), RecItem(..),
     serializeObject, deserializeObject, deserializeObjects,
     storeRawBytes, lazyLoadBytes,
+    collectObjects, collectStoredObjects,
 
     Head,
     headName, headRef, headObject,
@@ -73,6 +74,8 @@ import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Maybe
 import Data.Ratio
+import Data.Set (Set)
+import qualified Data.Set as S
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding
@@ -261,6 +264,21 @@ deserializeObjects :: Storage -> BL.ByteString -> Except String [Object]
 deserializeObjects _  bytes | BL.null bytes = return []
 deserializeObjects st bytes = do (obj, rest) <- deserializeObject st bytes
                                  (obj:) <$> deserializeObjects st rest
+
+
+collectObjects :: Object -> [Object]
+collectObjects obj = obj : map fromStored (fst $ collectOtherStored S.empty obj)
+
+collectStoredObjects :: Stored Object -> [Stored Object]
+collectStoredObjects obj = obj : (fst $ collectOtherStored S.empty $ fromStored obj)
+
+collectOtherStored :: Set Ref -> Object -> ([Stored Object], Set Ref)
+collectOtherStored seen (Rec items) = foldr helper ([], seen) $ map snd items
+    where helper (RecRef r) (xs, s) | r `S.notMember` s = let o = wrappedLoad r
+                                                              (xs', s') = collectOtherStored (S.insert r s) $ fromStored o
+                                                           in ((o : xs') ++ xs, s')
+          helper _          (xs, s) = (xs, s)
+collectOtherStored seen _ = ([], seen)
 
 
 data Head = Head String Ref
