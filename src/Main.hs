@@ -24,9 +24,14 @@ main = do
         putStr "Name: "
         hFlush stdout
         name <- T.getLine
-        (secret, public) <- generateKeys st
 
-        base <- sign secret =<< wrappedStore st (Identity name Nothing public)
+        (secret, public) <- generateKeys st
+        (devSecret, devPublic) <- generateKeys st
+
+        owner <- wrappedStore st =<< sign secret =<< wrappedStore st (emptyIdentity public) { idName = Just name }
+        base <- signAdd devSecret =<< sign secret =<<
+            wrappedStore st (emptyIdentity devPublic) { idOwner = Just owner }
+
         Right h <- replaceHead base (Left (st, "identity"))
         return h
     let sidentity = wrappedLoad (headRef idhead) :: Stored Identity

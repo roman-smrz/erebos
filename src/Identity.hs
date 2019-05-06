@@ -1,5 +1,6 @@
 module Identity (
     Identity, IdentityData(..),
+    emptyIdentity,
 ) where
 
 import Data.Text (Text)
@@ -10,19 +11,30 @@ import Storage
 type Identity = Signed IdentityData
 
 data IdentityData = Identity
-    { idName :: Text
+    { idName :: Maybe Text
     , idPrev :: Maybe (Stored Identity)
+    , idOwner :: Maybe (Stored Identity)
     , idKeyIdentity :: Stored PublicKey
     }
     deriving (Show)
 
+emptyIdentity :: Stored PublicKey -> IdentityData
+emptyIdentity key = Identity
+    { idName = Nothing
+    , idPrev = Nothing
+    , idOwner = Nothing
+    , idKeyIdentity = key
+    }
+
 instance Storable IdentityData where
     store' idt = storeRec $ do
-        storeText "name" $ idName idt
+        storeMbText "name" $ idName idt
         storeMbRef "prev" $ idPrev idt
+        storeMbRef "owner" $ idOwner idt
         storeRef "key-id" $ idKeyIdentity idt
 
     load' = loadRec $ Identity
-        <$> loadText "name"
+        <$> loadMbText "name"
         <*> loadMbRef "prev"
+        <*> loadMbRef "owner"
         <*> loadRef "key-id"
