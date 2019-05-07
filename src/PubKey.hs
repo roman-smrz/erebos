@@ -1,6 +1,6 @@
 module PubKey (
     PublicKey, SecretKey,
-    Signature(sigKey), Signed(..),
+    Signature(sigKey), Signed, signedData, signedSignature,
     generateKeys,
     sign, signAdd,
 ) where
@@ -28,10 +28,16 @@ data Signature = Signature
     deriving (Show)
 
 data Signed a = Signed
-    { signedData :: Stored a
-    , signedSignature :: [Stored Signature]
+    { signedData_ :: Stored a
+    , signedSignature_ :: [Stored Signature]
     }
     deriving (Show)
+
+signedData :: Signed a -> Stored a
+signedData = signedData_
+
+signedSignature :: Signed a -> [Stored Signature]
+signedSignature = signedSignature_
 
 instance Storable PublicKey where
     store' (PublicKey pk) = storeRec $ do
@@ -61,9 +67,14 @@ instance Storable a => Storable (Signed a) where
         storeRef "data" $ signedData sig
         mapM_ (storeRef "sig") $ signedSignature sig
 
-    load' = loadRec $ Signed
-        <$> loadRef "data"
-        <*> loadRefs "sig"
+    load' = loadRec $ do
+        sdata <- loadRef "data"
+        sigs <- loadRefs "sig"
+        forM_ sigs $ \sig -> do
+            let PublicKey pubkey = fromStored $ sigKey $ fromStored sig
+            when (not $ ED.verify pubkey (storedRef sdata) $ sigSignature $ fromStored sig) $
+                throwError "signature verification failed"
+        return $ Signed sdata sigs
 
 
 generateKeys :: Storage -> IO (SecretKey, Stored PublicKey)
