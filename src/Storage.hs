@@ -116,9 +116,11 @@ instance BA.ByteArrayAccess Ref where
 
 zeroRef :: Storage -> Ref
 zeroRef s = Ref s h
-    where h = case digestFromByteString $ B.replicate (BA.length h) 0 of
+    where h = case digestFromByteString $ B.replicate (hashDigestSize $ digestAlgo h) 0 of
                    Nothing -> error $ "Failed to create zero hash"
                    Just h' -> h'
+          digestAlgo :: Digest a -> a
+          digestAlgo = undefined
 
 isZeroRef :: Ref -> Bool
 isZeroRef (Ref _ h) = all (==0) $ BA.unpack h
