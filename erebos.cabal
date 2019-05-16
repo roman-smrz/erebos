@@ -21,10 +21,13 @@ executable erebos
   other-modules:       Identity,
                        Network,
                        PubKey,
-                       Storage
+                       Storage,
+                       Storage.Internal
+                       Storage.Key
 
   default-extensions:  FlexibleContexts,
                        FlexibleInstances,
+                       FunctionalDependencies,
                        LambdaCase,
                        TupleSections
 

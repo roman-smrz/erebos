@@ -1,7 +1,7 @@
 module PubKey (
     PublicKey, SecretKey,
+    KeyPair(generateKeys), loadKey,
     Signature(sigKey), Signed, signedData, signedSignature,
-    generateKeys,
     sign, signAdd,
 ) where
 
@@ -11,10 +11,12 @@ import Control.Monad.Except
 import Crypto.Error
 import qualified Crypto.PubKey.Ed25519 as ED
 
+import Data.ByteArray
 import Data.ByteString (ByteString)
 import qualified Data.Text as T
 
 import Storage
+import Storage.Key
 
 data PublicKey = PublicKey ED.PublicKey
     deriving (Show)
@@ -38,6 +40,17 @@ signedData = signedData_
 
 signedSignature :: Signed a -> [Stored Signature]
 signedSignature = signedSignature_
+
+instance KeyPair SecretKey PublicKey where
+    keyGetPublic (SecretKey _ pub) = pub
+    keyGetData (SecretKey sec _) = convert sec
+    keyFromData kdata spub = SecretKey <$> maybeCryptoError (ED.secretKey kdata) <*> pure spub
+    generateKeys st = do
+        secret <- ED.generateSecretKey
+        public <- wrappedStore st $ PublicKey $ ED.toPublic secret
+        let pair = SecretKey secret public
+        storeKey pair
+        return (pair, public)
 
 instance Storable PublicKey where
     store' (PublicKey pk) = storeRec $ do
@@ -75,13 +88,6 @@ instance Storable a => Storable (Signed a) where
             when (not $ ED.verify pubkey (storedRef sdata) $ sigSignature $ fromStored sig) $
                 throwError "signature verification failed"
         return $ Signed sdata sigs
-
-
-generateKeys :: Storage -> IO (SecretKey, Stored PublicKey)
-generateKeys st = do
-    secret <- ED.generateSecretKey
-    public <- wrappedStore st $ PublicKey $ ED.toPublic secret
-    return (SecretKey secret public, public)
 
 sign :: SecretKey -> Stored a -> IO (Signed a)
 sign secret val = signAdd secret $ Signed val []
