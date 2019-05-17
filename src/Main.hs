@@ -26,11 +26,13 @@ main = do
         name <- T.getLine
 
         (secret, public) <- generateKeys st
+        (_secretMsg, publicMsg) <- generateKeys st
         (devSecret, devPublic) <- generateKeys st
+        (_devSecretMsg, devPublicMsg) <- generateKeys st
 
-        owner <- wrappedStore st =<< sign secret =<< wrappedStore st (emptyIdentity public) { idName = Just name }
+        owner <- wrappedStore st =<< sign secret =<< wrappedStore st (emptyIdentity public publicMsg) { idName = Just name }
         base <- signAdd devSecret =<< sign secret =<<
-            wrappedStore st (emptyIdentity devPublic) { idOwner = Just owner }
+            wrappedStore st (emptyIdentity devPublic devPublicMsg) { idOwner = Just owner }
 
         Right h <- replaceHead base (Left (st, "identity"))
         return h

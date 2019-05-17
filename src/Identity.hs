@@ -15,15 +15,17 @@ data IdentityData = Identity
     , idPrev :: Maybe (Stored Identity)
     , idOwner :: Maybe (Stored Identity)
     , idKeyIdentity :: Stored PublicKey
+    , idKeyMessage :: Stored PublicKey
     }
     deriving (Show)
 
-emptyIdentity :: Stored PublicKey -> IdentityData
-emptyIdentity key = Identity
+emptyIdentity :: Stored PublicKey -> Stored PublicKey -> IdentityData
+emptyIdentity key kmsg = Identity
     { idName = Nothing
     , idPrev = Nothing
     , idOwner = Nothing
     , idKeyIdentity = key
+    , idKeyMessage = kmsg
     }
 
 instance Storable IdentityData where
@@ -32,9 +34,11 @@ instance Storable IdentityData where
         storeMbRef "prev" $ idPrev idt
         storeMbRef "owner" $ idOwner idt
         storeRef "key-id" $ idKeyIdentity idt
+        storeRef "key-msg" $ idKeyMessage idt
 
     load' = loadRec $ Identity
         <$> loadMbText "name"
         <*> loadMbRef "prev"
         <*> loadMbRef "owner"
         <*> loadRef "key-id"
+        <*> loadRef "key-msg"

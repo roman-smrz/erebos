@@ -3,6 +3,9 @@ module PubKey (
     KeyPair(generateKeys), loadKey,
     Signature(sigKey), Signed, signedData, signedSignature,
     sign, signAdd,
+
+    PublicKexKey, SecretKexKey,
+    dhSecret,
 ) where
 
 import Control.Monad
@@ -10,6 +13,7 @@ import Control.Monad.Except
 
 import Crypto.Error
 import qualified Crypto.PubKey.Ed25519 as ED
+import qualified Crypto.PubKey.Curve25519 as CX
 
 import Data.ByteArray
 import Data.ByteString (ByteString)
@@ -98,3 +102,35 @@ signAdd (SecretKey secret spublic) (Signed val sigs) = do
         sig = ED.sign secret public $ storedRef val
     ssig <- wrappedStore (storedStorage val) $ Signature spublic sig
     return $ Signed val (ssig : sigs)
+
+
+data PublicKexKey = PublicKexKey CX.PublicKey
+    deriving (Show)
+
+data SecretKexKey = SecretKexKey CX.SecretKey (Stored PublicKexKey)
+
+instance KeyPair SecretKexKey PublicKexKey where
+    keyGetPublic (SecretKexKey _ pub) = pub
+    keyGetData (SecretKexKey sec _) = convert sec
+    keyFromData kdata spub = SecretKexKey <$> maybeCryptoError (CX.secretKey kdata) <*> pure spub
+    generateKeys st = do
+        secret <- CX.generateSecretKey
+        public <- wrappedStore st $ PublicKexKey $ CX.toPublic secret
+        let pair = SecretKexKey secret public
+        storeKey pair
+        return (pair, public)
+
+instance Storable PublicKexKey where
+    store' (PublicKexKey pk) = storeRec $ do
+        storeText "type" $ T.pack "x25519"
+        storeBinary "pubkey" pk
+
+    load' = loadRec $ do
+        ktype <- loadText "type"
+        guard $ ktype == "x25519"
+        maybe (throwError "public key decoding failed") (return . PublicKexKey) .
+            maybeCryptoError . (CX.publicKey :: ScrubbedBytes -> CryptoFailable CX.PublicKey) =<<
+                loadBinary "pubkey"
+
+dhSecret :: SecretKexKey -> PublicKexKey -> ScrubbedBytes
+dhSecret (SecretKexKey secret _) (PublicKexKey public) = convert $ CX.dh public secret
