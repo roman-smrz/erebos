@@ -1,7 +1,8 @@
 module Network (
     Peer(..),
-    PeerAddress,
-    peerDiscovery,
+    PeerAddress(..),
+    startServer,
+    sendToPeer,
 ) where
 
 import Control.Concurrent
@@ -31,6 +32,7 @@ data Peer = Peer
     { peerAddress :: PeerAddress
     , peerIdentity :: Maybe (Stored Identity)
     , peerChannels :: [Channel]
+    , peerSocket :: Socket
     }
     deriving (Show)
 
@@ -43,6 +45,8 @@ data TransportHeader = AnnouncePacket Ref
                      | IdentityResponse Ref
                      | TrChannelRequest Ref
                      | TrChannelAccept Ref
+
+data ServiceHeader = ServiceHeader T.Text Ref
 
 transportToObject :: TransportHeader -> Object
 transportToObject = \case
@@ -93,10 +97,24 @@ transportFromObject (Rec items)
 
 transportFromObject _ = Nothing
 
+serviceToObject :: ServiceHeader -> Object
+serviceToObject (ServiceHeader svc ref) = Rec
+        [ (BC.pack "SVC", RecText svc)
+        , (BC.pack "ref", RecRef ref)
+        ]
 
-peerDiscovery :: String -> Stored Identity -> IO (Chan Peer)
-peerDiscovery bhost sidentity = do
+serviceFromObject :: Object -> Maybe ServiceHeader
+serviceFromObject (Rec items)
+    | Just (RecText svc) <- lookup (BC.pack "SVC") items
+    , Just (RecRef ref) <- lookup (BC.pack "ref") items
+    = Just $ ServiceHeader svc ref
+serviceFromObject _ = Nothing
+
+
+startServer :: String -> Stored Identity -> IO (Chan Peer, Chan (Peer, T.Text, Ref))
+startServer bhost sidentity = do
     chanPeer <- newChan
+    chanSvc <- newChan
     peers <- newMVar M.empty
 
     let open addr = do
@@ -112,11 +130,20 @@ peerDiscovery bhost sidentity = do
             void $ sendTo sock (BL.toStrict $ serializeObject $ transportToObject $ AnnouncePacket $ storedRef sidentity) (addrAddress baddr)
             forever $ do
                 (msg, paddr) <- recvFrom sock 4096
-                let packet' = packet sock paddr
-                case runExcept $ deserializeObjects (storedStorage sidentity) $ BL.fromStrict msg of
-                     Left err -> putStrLn $ show paddr ++ ": " ++ err
-                     Right (obj:objs) | Just tpack <- transportFromObject obj -> packet' tpack objs
-                     _ -> putStrLn $ show paddr ++ ": invalid transport packet"
+                mbpeer <- M.lookup paddr <$> readMVar peers
+                if | Just peer <- mbpeer
+                   , ch:_ <- peerChannels peer
+                   , Just plain <- channelDecrypt ch msg
+                   , Right (obj:objs) <- runExcept $ deserializeObjects (storedStorage sidentity) $ BL.fromStrict plain
+                   , Just (ServiceHeader svc ref) <- serviceFromObject obj
+                   -> do forM_ objs $ store $ storedStorage sidentity
+                         writeChan chanSvc (peer, svc, ref)
+
+                   | Right (obj:objs) <- runExcept $ deserializeObjects (storedStorage sidentity) $ BL.fromStrict msg
+                   , Just tpack <- transportFromObject obj
+                   -> packet sock paddr tpack objs
+
+                   | otherwise -> putStrLn $ show paddr ++ ": invalid packet"
 
         packet sock paddr (AnnouncePacket ref) _ = do
             putStrLn $ "Got announce: " ++ show ref ++ " from " ++ show paddr
@@ -134,7 +161,7 @@ peerDiscovery bhost sidentity = do
             from' <- store (storedStorage sidentity) obj
             if from == from'
                then do forM_ objs $ store $ storedStorage sidentity
-                       let peer = Peer (DatagramAddress paddr) (Just $ wrappedLoad from) []
+                       let peer = Peer (DatagramAddress paddr) (Just $ wrappedLoad from) [] sock
                        modifyMVar_ peers $ return . M.insert paddr peer
                        writeChan chanPeer peer
                        void $ sendTo sock (BL.toStrict $ BL.concat
@@ -153,7 +180,7 @@ peerDiscovery bhost sidentity = do
             if ref == ref'
                then do forM_ objs $ store $ storedStorage sidentity
                        let pidentity = wrappedLoad ref
-                           peer = Peer (DatagramAddress paddr) (Just pidentity) []
+                           peer = Peer (DatagramAddress paddr) (Just pidentity) [] sock
                        modifyMVar_ peers $ return . M.insert paddr peer
                        writeChan chanPeer peer
                        req <- createChannelRequest sidentity pidentity
@@ -231,4 +258,19 @@ peerDiscovery bhost sidentity = do
         addr:_ <- getAddrInfo (Just hints) Nothing (Just discoveryPort)
         bracket (open addr) close loop
 
-    return chanPeer
+    return (chanPeer, chanSvc)
+
+
+sendToPeer :: Storable a => Stored Identity -> Peer -> T.Text -> a -> IO ()
+sendToPeer self peer@Peer { peerChannels = ch:_ } svc obj = do
+    let st = storedStorage self
+    ref <- store st obj
+    let plain = BL.toStrict $ BL.concat
+            [ serializeObject $ serviceToObject $ ServiceHeader svc ref
+            , lazyLoadBytes ref
+            ]
+    ctext <- channelEncrypt ch plain
+    let DatagramAddress paddr = peerAddress peer
+    void $ sendTo (peerSocket peer) ctext paddr
+
+sendToPeer _ _ _ _ = putStrLn $ "No channel to peer"

@@ -20,6 +20,7 @@ executable erebos
   main-is:             Main.hs
   other-modules:       Identity,
                        Channel,
+                       Message,
                        Network,
                        PubKey,
                        Storage,
@@ -30,6 +31,7 @@ executable erebos
                        FlexibleInstances,
                        FunctionalDependencies,
                        LambdaCase,
+                       MultiWayIf,
                        ScopedTypeVariables,
                        TupleSections
 

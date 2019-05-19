@@ -1,6 +1,7 @@
 module Identity (
     Identity, IdentityData(..),
     emptyIdentity,
+    finalOwner,
 ) where
 
 import Data.Text (Text)
@@ -42,3 +43,11 @@ instance Storable IdentityData where
         <*> loadMbRef "owner"
         <*> loadRef "key-id"
         <*> loadRef "key-msg"
+
+unfoldOwners :: Stored Identity -> [Stored Identity]
+unfoldOwners cur = cur : case idOwner $ fromStored $ signedData $ fromStored cur of
+                              Nothing   -> []
+                              Just prev -> unfoldOwners prev
+
+finalOwner :: Stored Identity -> Stored Identity
+finalOwner = last . unfoldOwners
