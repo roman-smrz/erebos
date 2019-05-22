@@ -77,14 +77,14 @@ main = do
     erebosHead <- loadErebosHead st
     let serebos = wrappedLoad (headRef erebosHead) :: Stored Erebos
         self = erbIdentity $ fromStored serebos
-    print $ fromStored self
+    T.putStrLn $ displayIdentity self
 
     (chanPeer, chanSvc) <- startServer bhost $ erbIdentity $ fromStored serebos
 
     void $ forkIO $ void $ forever $ do
         peer@Peer { peerAddress = DatagramAddress addr } <- readChan chanPeer
         print addr
-        putStrLn $ maybe "<noid>" show $ peerIdentity peer
+        T.putStrLn $ maybe (T.pack "<noid>") displayIdentity $ peerIdentity peer
         if | Just powner <- finalOwner <$> peerIdentity peer
            , _:_ <- peerChannels peer
            -> do

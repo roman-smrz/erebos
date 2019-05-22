@@ -2,9 +2,12 @@ module Identity (
     Identity, IdentityData(..),
     emptyIdentity,
     finalOwner,
+    displayIdentity,
 ) where
 
+import Data.Maybe
 import Data.Text (Text)
+import qualified Data.Text as T
 
 import PubKey
 import Storage
@@ -51,3 +54,9 @@ unfoldOwners cur = cur : case idOwner $ fromStored $ signedData $ fromStored cur
 
 finalOwner :: Stored Identity -> Stored Identity
 finalOwner = last . unfoldOwners
+
+displayIdentity :: Stored Identity -> Text
+displayIdentity sidentity = T.concat
+    [ T.intercalate (T.pack " / ") $ map (fromMaybe (T.pack "<unnamed>") . idName . fromStored . signedData . fromStored) owners
+    ]
+    where owners = reverse $ unfoldOwners sidentity
