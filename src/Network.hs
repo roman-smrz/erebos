@@ -111,8 +111,8 @@ serviceFromObject (Rec items)
 serviceFromObject _ = Nothing
 
 
-startServer :: String -> Stored Identity -> IO (Chan Peer, Chan (Peer, T.Text, Ref))
-startServer bhost sidentity = do
+startServer :: (String -> IO ()) -> String -> Stored Identity -> IO (Chan Peer, Chan (Peer, T.Text, Ref))
+startServer logd bhost sidentity = do
     chanPeer <- newChan
     chanSvc <- newChan
     peers <- newMVar M.empty
@@ -143,21 +143,21 @@ startServer bhost sidentity = do
                    , Just tpack <- transportFromObject obj
                    -> packet sock paddr tpack objs
 
-                   | otherwise -> putStrLn $ show paddr ++ ": invalid packet"
+                   | otherwise -> logd $ show paddr ++ ": invalid packet"
 
         packet sock paddr (AnnouncePacket ref) _ = do
-            putStrLn $ "Got announce: " ++ show ref ++ " from " ++ show paddr
+            logd $ "Got announce: " ++ show ref ++ " from " ++ show paddr
             when (ref /= storedRef sidentity) $ void $ sendTo sock (BL.toStrict $ BL.concat
                 [ serializeObject $ transportToObject $ IdentityRequest ref (storedRef sidentity)
                 , BL.concat $ map (lazyLoadBytes . storedRef) $ collectStoredObjects $ wrappedLoad $ storedRef sidentity
                 ]) paddr
 
         packet _ paddr (IdentityRequest ref from) [] = do
-            putStrLn $ "Got identity request: for " ++ show ref ++ " by " ++ show from ++ " from " ++ show paddr ++ " without content"
+            logd $ "Got identity request: for " ++ show ref ++ " by " ++ show from ++ " from " ++ show paddr ++ " without content"
 
         packet sock paddr (IdentityRequest ref from) (obj:objs) = do
-            putStrLn $ "Got identity request: for " ++ show ref ++ " by " ++ show from ++ " from " ++ show paddr
-            print (obj:objs)
+            logd $ "Got identity request: for " ++ show ref ++ " by " ++ show from ++ " from " ++ show paddr
+            logd $ show (obj:objs)
             from' <- store (storedStorage sidentity) obj
             if from == from'
                then do forM_ objs $ store $ storedStorage sidentity
@@ -168,14 +168,14 @@ startServer bhost sidentity = do
                            [ serializeObject $ transportToObject $ IdentityResponse (storedRef sidentity)
                            , BL.concat $ map (lazyLoadBytes . storedRef) $ collectStoredObjects $ wrappedLoad $ storedRef sidentity
                            ]) paddr
-               else putStrLn $ "Mismatched content"
+               else logd $ "Mismatched content"
 
         packet _ paddr (IdentityResponse ref) [] = do
-            putStrLn $ "Got identity response: by " ++ show ref ++ " from " ++ show paddr ++ " without content"
+            logd $ "Got identity response: by " ++ show ref ++ " from " ++ show paddr ++ " without content"
 
         packet sock paddr (IdentityResponse ref) (obj:objs) = do
-            putStrLn $ "Got identity response: by " ++ show ref ++ " from " ++ show paddr
-            print (obj:objs)
+            logd $ "Got identity response: by " ++ show ref ++ " from " ++ show paddr
+            logd $ show (obj:objs)
             ref' <- store (storedStorage sidentity) obj
             if ref == ref'
                then do forM_ objs $ store $ storedStorage sidentity
@@ -191,14 +191,14 @@ startServer bhost sidentity = do
                            , lazyLoadBytes $ storedRef $ crKey $ fromStored $ signedData $ fromStored req
                            , BL.concat $ map (lazyLoadBytes . storedRef) $ signedSignature $ fromStored req
                            ]) paddr
-               else putStrLn $ "Mismatched content"
+               else logd $ "Mismatched content"
 
         packet _ paddr (TrChannelRequest _) [] = do
-            putStrLn $ "Got channel request: from " ++ show paddr ++ " without content"
+            logd $ "Got channel request: from " ++ show paddr ++ " without content"
 
         packet sock paddr (TrChannelRequest ref) (obj:objs) = do
-            putStrLn $ "Got channel request: from " ++ show paddr
-            print (obj:objs)
+            logd $ "Got channel request: from " ++ show paddr
+            logd $ show (obj:objs)
             ref' <- store (storedStorage sidentity) obj
             if ref == ref'
                then do forM_ objs $ store $ storedStorage sidentity
@@ -206,10 +206,10 @@ startServer bhost sidentity = do
                        modifyMVar_ peers $ \pval -> case M.lookup paddr pval of
                            Just peer | Just pid <- peerIdentity peer ->
                                runExceptT (acceptChannelRequest sidentity pid request) >>= \case
-                                   Left errs -> do mapM_ putStrLn ("Invalid channel request" : errs)
+                                   Left errs -> do mapM_ logd ("Invalid channel request" : errs)
                                                    return pval
                                    Right (acc, channel) -> do
-                                       putStrLn $ "Got channel: " ++ show (storedRef channel)
+                                       logd $ "Got channel: " ++ show (storedRef channel)
                                        let peer' = peer { peerChannels = fromStored channel : peerChannels peer }
                                        writeChan chanPeer peer'
                                        void $ sendTo sock (BL.toStrict $ BL.concat
@@ -221,16 +221,16 @@ startServer bhost sidentity = do
                                            ]) paddr
                                        return $ M.insert paddr peer' pval
 
-                           _ -> do putStrLn $ "Invalid channel request - no peer identity"
+                           _ -> do logd $ "Invalid channel request - no peer identity"
                                    return pval
-               else putStrLn $ "Mismatched content"
+               else logd $ "Mismatched content"
 
         packet _ paddr (TrChannelAccept _) [] = do
-            putStrLn $ "Got channel accept: from " ++ show paddr ++ " without content"
+            logd $ "Got channel accept: from " ++ show paddr ++ " without content"
 
         packet _ paddr (TrChannelAccept ref) (obj:objs) = do
-            putStrLn $ "Got channel accept: from " ++ show paddr
-            print (obj:objs)
+            logd $ "Got channel accept: from " ++ show paddr
+            logd $ show (obj:objs)
             ref' <- store (storedStorage sidentity) obj
             if ref == ref'
                then do forM_ objs $ store $ storedStorage sidentity
@@ -238,17 +238,17 @@ startServer bhost sidentity = do
                        modifyMVar_ peers $ \pval -> case M.lookup paddr pval of
                            Just peer | Just pid <- peerIdentity peer ->
                                runExceptT (acceptedChannel sidentity pid accepted) >>= \case
-                                   Left errs -> do mapM_ putStrLn ("Invalid channel accept" : errs)
+                                   Left errs -> do mapM_ logd ("Invalid channel accept" : errs)
                                                    return pval
                                    Right channel -> do
-                                       putStrLn $ "Got channel: " ++ show (storedRef channel)
+                                       logd $ "Got channel: " ++ show (storedRef channel)
                                        let peer' = peer { peerChannels = fromStored channel : peerChannels peer }
                                        writeChan chanPeer peer'
                                        return $ M.insert paddr peer' pval
-                           _ -> do putStrLn $ "Invalid channel accept - no peer identity"
+                           _ -> do logd $ "Invalid channel accept - no peer identity"
                                    return pval
 
-               else putStrLn $ "Mismatched content"
+               else logd $ "Mismatched content"
 
     void $ forkIO $ withSocketsDo $ do
         let hints = defaultHints
