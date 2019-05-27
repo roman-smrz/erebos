@@ -6,6 +6,7 @@ module Message (
 
 import Data.List
 import Data.Ord
+import qualified Data.Set as S
 import Data.Text (Text)
 import Data.Time.LocalTime
 
@@ -70,8 +71,9 @@ createDirectMessage self thread msg = do
     return (smsg, sthread)
 
 threadToList :: DirectMessageThread -> [DirectMessage]
-threadToList thread = helper $ msgHead thread
-    where helper msgs | msg : msgs' <- sortBy (comparing cmpView) msgs =
-              fromStored msg : helper (dropWhile (== msg) msgs')
-                      | otherwise = []
+threadToList thread = helper S.empty $ msgHead thread
+    where helper seen msgs
+              | msg : msgs' <- filter (`S.notMember` seen) $ reverse $ sortBy (comparing cmpView) msgs =
+                  fromStored msg : helper (S.insert msg seen) (msgs' ++ msgPrev (fromStored msg))
+              | otherwise = []
           cmpView msg = (zonedTimeToUTC $ msgTime $ fromStored msg, storedRef msg)
