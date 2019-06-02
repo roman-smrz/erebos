@@ -1,7 +1,6 @@
 module Main (main) where
 
 import Control.Concurrent
-import Control.Exception
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.State
@@ -18,7 +17,6 @@ import Data.Time.LocalTime
 import System.Console.Haskeline
 import System.Environment
 import System.IO
-import System.IO.Error
 
 import Identity
 import Message
@@ -43,36 +41,32 @@ instance Storable Erebos where
 
 
 loadErebosHead :: Storage -> IO Head
-loadErebosHead st = do
-    catchJust (guard . isDoesNotExistError) (loadHead st "erebos") $ \_ -> do
-        putStr "Name: "
-        hFlush stdout
-        name <- T.getLine
+loadErebosHead st = loadHeadDef st "erebos" $ do
+    putStr "Name: "
+    hFlush stdout
+    name <- T.getLine
 
-        (secret, public) <- generateKeys st
-        (_secretMsg, publicMsg) <- generateKeys st
-        (devSecret, devPublic) <- generateKeys st
-        (_devSecretMsg, devPublicMsg) <- generateKeys st
+    (secret, public) <- generateKeys st
+    (_secretMsg, publicMsg) <- generateKeys st
+    (devSecret, devPublic) <- generateKeys st
+    (_devSecretMsg, devPublicMsg) <- generateKeys st
 
-        owner <- wrappedStore st =<< sign secret =<< wrappedStore st (emptyIdentity public publicMsg) { idName = Just name }
-        identity <- wrappedStore st =<< signAdd devSecret =<< sign secret =<<
-            wrappedStore st (emptyIdentity devPublic devPublicMsg) { idOwner = Just owner }
+    owner <- wrappedStore st =<< sign secret =<< wrappedStore st (emptyIdentity public publicMsg) { idName = Just name }
+    identity <- wrappedStore st =<< signAdd devSecret =<< sign secret =<<
+        wrappedStore st (emptyIdentity devPublic devPublicMsg) { idOwner = Just owner }
 
-        msgs <- emptySList st
-        let erebos = Erebos
-                { erbIdentity = identity
-                , erbMessages = msgs
-                }
-
-        Right h <- replaceHead erebos (Left (st, "erebos"))
-        return h
+    msgs <- emptySList st
+    return $ Erebos
+        { erbIdentity = identity
+        , erbMessages = msgs
+        }
 
 updateErebosHead_ :: Storage -> (Stored Erebos -> IO (Stored Erebos)) -> IO ()
 updateErebosHead_ st f = updateErebosHead st (fmap (,()) . f)
 
 updateErebosHead :: Storage -> (Stored Erebos -> IO (Stored Erebos, a)) -> IO a
 updateErebosHead st f = do
-    erebosHead <- loadHead st "erebos"
+    Just erebosHead <- loadHead st "erebos"
     (erebos, x) <- f $ wrappedLoad (headRef erebosHead)
     Right _ <- replaceHead erebos (Right erebosHead)
     return x
@@ -211,7 +205,7 @@ cmdHistory = void $ runMaybeT $ do
     Just peer <- gets csPeer
     Just powner <- return $ finalOwner <$> peerIdentity peer
 
-    erebosHead <- liftIO $ loadHead st "erebos"
+    Just erebosHead <- liftIO $ loadHead st "erebos"
     let erebos = wrappedLoad (headRef erebosHead)
     Just thread <- return $ find ((==powner) . msgPeer) $ fromSList $ erbMessages $ fromStored erebos
     tzone <- liftIO $ getCurrentTimeZone

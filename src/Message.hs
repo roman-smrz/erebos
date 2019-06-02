@@ -76,4 +76,4 @@ threadToList thread = helper S.empty $ msgHead thread
               | msg : msgs' <- filter (`S.notMember` seen) $ reverse $ sortBy (comparing cmpView) msgs =
                   fromStored msg : helper (S.insert msg seen) (msgs' ++ msgPrev (fromStored msg))
               | otherwise = []
-          cmpView msg = (zonedTimeToUTC $ msgTime $ fromStored msg, storedRef msg)
+          cmpView msg = (zonedTimeToUTC $ msgTime $ fromStored msg, msg)

@@ -1,20 +1,113 @@
 module Storage.Internal where
 
-import Control.Exception
+import Codec.Compression.Zlib
 
+import Control.Concurrent
+import Control.Exception
+import Control.Monad
+import Control.Monad.Identity
+
+import Crypto.Hash
+
+import Data.ByteArray (ByteArrayAccess, ScrubbedBytes)
+import qualified Data.ByteArray as BA
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Char8 as BC
 import qualified Data.ByteString.Lazy as BL
+import Data.List
+import Data.Map (Map)
+import qualified Data.Map as M
 
 import System.Directory
 import System.FilePath
 import System.IO
+import System.IO.Error
 import System.Posix.Files
 import System.Posix.IO
 import System.Posix.Types
 
-data Storage = Storage FilePath
-    deriving (Eq, Ord)
+
+data Storage' c = Storage
+    { stBacking :: StorageBacking c
+    , stParent :: Maybe (Storage' Identity)
+    }
+    deriving (Eq)
+
+instance Show (Storage' c) where
+    show st@(Storage { stBacking = StorageDir path }) = "dir" ++ showParentStorage st ++ ":" ++ path
+    show st@(Storage { stBacking = StorageMemory {} }) = "mem" ++ showParentStorage st
+
+showParentStorage :: Storage' c -> String
+showParentStorage Storage { stParent = Nothing } = ""
+showParentStorage Storage { stParent = Just st } = "@" ++ show st
+
+data StorageBacking c
+         = StorageDir FilePath
+         | StorageMemory { memHeads :: MVar [Head' c]
+                         , memObjs :: MVar (Map RefDigest BL.ByteString)
+                         , memKeys :: MVar (Map RefDigest ScrubbedBytes)
+                         }
+    deriving (Eq)
+
+
+type RefDigest = Digest Blake2b_256
+
+data Ref' c = Ref (Storage' c) RefDigest
+    deriving (Eq)
+
+instance Show (Ref' c) where
+    show ref@(Ref st _) = show st ++ ":" ++ BC.unpack (showRef ref)
+
+instance ByteArrayAccess (Ref' c) where
+    length (Ref _ dgst) = BA.length dgst
+    withByteArray (Ref _ dgst) = BA.withByteArray dgst
+
+refDigest :: Ref' c -> RefDigest
+refDigest (Ref _ dgst) = dgst
+
+showRef :: Ref' c -> ByteString
+showRef = showRefDigest . refDigest
+
+showRefDigest :: RefDigest -> ByteString
+showRefDigest = B.concat . map showHexByte . BA.unpack
+    where showHex x | x < 10    = x + 48
+                    | otherwise = x + 87
+          showHexByte x = B.pack [ showHex (x `div` 16), showHex (x `mod` 16) ]
+
+
+data Head' c = Head String (Ref' c)
+    deriving (Show)
+
+
+class (Traversable compl, Monad compl) => StorageCompleteness compl where
+    type LoadResult compl a :: *
+    returnLoadResult :: compl a -> LoadResult compl a
+    ioLoadBytes :: Ref' compl -> IO (compl BL.ByteString)
+
+instance StorageCompleteness Identity where
+    type LoadResult Identity a = a
+    returnLoadResult = runIdentity
+    ioLoadBytes ref@(Ref st dgst) = maybe (error $ "Ref not found in complete storage: "++show ref) Identity
+        <$> ioLoadBytesFromStorage st dgst
+
+instance StorageCompleteness Maybe where
+    type LoadResult Maybe a = Maybe a
+    returnLoadResult = id
+    ioLoadBytes (Ref st dgst) = ioLoadBytesFromStorage st dgst
+
+ioLoadBytesFromStorage :: Storage' c -> RefDigest -> IO (Maybe BL.ByteString)
+ioLoadBytesFromStorage st dgst = loadCurrent st >>=
+    \case Just bytes -> return $ Just bytes
+          Nothing | Just parent <- stParent st -> ioLoadBytesFromStorage parent dgst
+                  | otherwise                  -> return Nothing
+    where loadCurrent Storage { stBacking = StorageDir spath } = handleJust (guard . isDoesNotExistError) (const $ return Nothing) $
+              Just . decompress <$> (BL.readFile $ refPath spath dgst)
+          loadCurrent Storage { stBacking = StorageMemory { memObjs = tobjs } } = M.lookup dgst <$> readMVar tobjs
+
+refPath :: FilePath -> RefDigest -> FilePath
+refPath spath dgst = intercalate "/" [spath, "objects", pref, rest]
+    where (pref, rest) = splitAt 2 $ BC.unpack $ showRefDigest dgst
 
 
 openFdParents :: FilePath -> OpenMode -> Maybe FileMode -> OpenFileFlags -> IO Fd

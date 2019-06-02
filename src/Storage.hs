@@ -1,18 +1,22 @@
 module Storage (
-    Storage,
-    openStorage,
+    Storage, PartialStorage,
+    openStorage, memoryStorage,
+    deriveEphemeralStorage, derivePartialStorage,
 
-    Ref,
+    Ref, PartialRef,
+    RefDigest, refDigest,
     readRef, showRef,
+    copyRef, partialRef,
 
-    Object(..), RecItem(..),
+    Object, PartialObject, Object'(..), RecItem, RecItem'(..),
     serializeObject, deserializeObject, deserializeObjects,
     storeRawBytes, lazyLoadBytes,
+    storeObject,
     collectObjects, collectStoredObjects,
 
     Head,
     headName, headRef, headObject,
-    loadHeads, loadHead, replaceHead,
+    loadHeads, loadHead, loadHeadDef, replaceHead,
 
     Storable(..),
     StorableText(..), StorableDate(..),
@@ -51,8 +55,12 @@ import qualified Codec.MIME.Type as MIME
 import qualified Codec.MIME.Parse as MIME
 
 import Control.Arrow
+import Control.Concurrent
+import Control.DeepSeq
+import Control.Exception
 import Control.Monad
 import Control.Monad.Except
+import Control.Monad.Identity
 import Control.Monad.Reader
 import Control.Monad.Writer
 
@@ -85,29 +93,43 @@ import Data.Time.Format
 import Data.Time.LocalTime
 
 import System.Directory
+import System.IO.Error
 import System.IO.Unsafe
 
 import Storage.Internal
 
 
+type Storage = Storage' Identity
+type PartialStorage = Storage' Maybe
+
 openStorage :: FilePath -> IO Storage
 openStorage path = do
     createDirectoryIfMissing True $ path ++ "/objects"
     createDirectoryIfMissing True $ path ++ "/heads"
-    return $ Storage path
+    return $ Storage { stBacking = StorageDir path, stParent = Nothing }
 
+memoryStorage' :: IO (Storage' c')
+memoryStorage' = do
+    backing <- StorageMemory <$> newMVar [] <*> newMVar M.empty <*> newMVar M.empty
+    return $ Storage { stBacking = backing, stParent = Nothing }
 
-data Ref = Ref Storage (Digest Blake2b_256)
-    deriving (Eq, Ord)
+memoryStorage :: IO Storage
+memoryStorage = memoryStorage'
 
-instance Show Ref where
-    show ref@(Ref (Storage path) _) = path ++ ":" ++ BC.unpack (showRef ref)
+deriveEphemeralStorage :: Storage -> IO Storage
+deriveEphemeralStorage parent = do
+    st <- memoryStorage
+    return $ st { stParent = Just parent }
 
-instance BA.ByteArrayAccess Ref where
-    length (Ref _ dgst) = BA.length dgst
-    withByteArray (Ref _ dgst) = BA.withByteArray dgst
+derivePartialStorage :: Storage -> IO PartialStorage
+derivePartialStorage parent = do
+    st <- memoryStorage'
+    return $ st { stParent = Just parent }
 
-zeroRef :: Storage -> Ref
+type Ref = Ref' Identity
+type PartialRef = Ref' Maybe
+
+zeroRef :: Storage' c -> Ref' c
 zeroRef s = Ref s h
     where h = case digestFromByteString $ B.replicate (hashDigestSize $ digestAlgo h) 0 of
                    Nothing -> error $ "Failed to create zero hash"
@@ -115,12 +137,12 @@ zeroRef s = Ref s h
           digestAlgo :: Digest a -> a
           digestAlgo = undefined
 
-isZeroRef :: Ref -> Bool
+isZeroRef :: Ref' c -> Bool
 isZeroRef (Ref _ h) = all (==0) $ BA.unpack h
 
 
-unsafeReadRef :: Storage -> ByteString -> Maybe Ref
-unsafeReadRef s = Just . Ref s <=< digestFromByteString . B.concat <=< readHex
+readRefDigest :: ByteString -> Maybe RefDigest
+readRefDigest = digestFromByteString . B.concat <=< readHex
     where readHex bs | B.null bs = Just []
           readHex bs = do (bx, bs') <- B.uncons bs
                           (by, bs'') <- B.uncons bs'
@@ -132,59 +154,93 @@ unsafeReadRef s = Just . Ref s <=< digestFromByteString . B.concat <=< readHex
                      | otherwise                = Nothing
           o = fromIntegral . ord
 
+refFromDigest :: Storage' c -> RefDigest -> IO (Maybe (Ref' c))
+refFromDigest st dgst = fmap (const $ Ref st dgst) <$> ioLoadBytesFromStorage st dgst
+
 readRef :: Storage -> ByteString -> IO (Maybe Ref)
 readRef s b =
-    case unsafeReadRef s b of
+    case readRefDigest b of
          Nothing -> return Nothing
-         Just ref -> do
-             doesFileExist (refPath ref) >>= \case
-                 True -> return $ Just ref
-                 False -> return Nothing
+         Just dgst -> refFromDigest s dgst
 
-showRef :: Ref -> ByteString
-showRef (Ref _ h) = B.concat $ map showHexByte $ BA.unpack h
-    where showHex x | x < 10    = x + 48
-                    | otherwise = x + 87
-          showHexByte x = B.pack [ showHex (x `div` 16), showHex (x `mod` 16) ]
+copyRef' :: forall c c'. (StorageCompleteness c, StorageCompleteness c') => Storage' c' -> Ref' c -> IO (c (Ref' c'))
+copyRef' st ref'@(Ref _ dgst) = refFromDigest st dgst >>= \case Just ref -> return $ return ref
+                                                                Nothing  -> doCopy
+    where doCopy = do mbobj' <- ioLoadObject ref'
+                      mbobj <- sequence $ copyObject' st <$> mbobj'
+                      sequence $ storeObject st <$> join mbobj
 
-refPath :: Ref -> FilePath
-refPath ref@(Ref (Storage spath) _) = intercalate "/" [spath, "objects", pref, rest]
-    where (pref, rest) = splitAt 2 $ BC.unpack $ showRef ref
+copyObject' :: forall c c'. (StorageCompleteness c, StorageCompleteness c') => Storage' c' -> Object' c -> IO (c (Object' c'))
+copyObject' _ (Blob bs) = return $ return $ Blob bs
+copyObject' st (Rec rs) = fmap Rec . sequence <$> mapM copyItem rs
+    where copyItem :: (ByteString, RecItem' c) -> IO (c (ByteString, RecItem' c'))
+          copyItem (n, item) = fmap (n,) <$> case item of
+              RecInt x -> return $ return $ RecInt x
+              RecNum x -> return $ return $ RecNum x
+              RecText x -> return $ return $ RecText x
+              RecBinary x -> return $ return $ RecBinary x
+              RecDate x -> return $ return $ RecDate x
+              RecJson x -> return $ return $ RecJson x
+              RecRef x -> fmap RecRef <$> copyRef' st x
+copyObject' _ ZeroObject = return $ return ZeroObject
+
+copyRef :: forall c c'. (StorageCompleteness c, StorageCompleteness c') => Storage' c' -> Ref' c -> IO (LoadResult c (Ref' c'))
+copyRef st ref' = returnLoadResult <$> copyRef' st ref'
+
+copyObject :: forall c c'. (StorageCompleteness c, StorageCompleteness c') => Storage' c' -> Object' c -> IO (LoadResult c (Object' c'))
+copyObject st obj' = returnLoadResult <$> copyObject' st obj'
+
+partialRef :: PartialStorage -> Ref -> PartialRef
+partialRef st (Ref _ dgst) = Ref st dgst
 
 
-data Object = Blob ByteString
-            | Rec [(ByteString, RecItem)]
-            | ZeroObject
+data Object' c
+    = Blob ByteString
+    | Rec [(ByteString, RecItem' c)]
+    | ZeroObject
     deriving (Show)
 
-data RecItem = RecInt Integer
-             | RecNum Rational
-             | RecText Text
-             | RecBinary ByteString
-             | RecDate ZonedTime
-             | RecJson J.Value
-             | RecRef Ref
+type Object = Object' Identity
+type PartialObject = Object' Maybe
+
+data RecItem' c
+    = RecInt Integer
+    | RecNum Rational
+    | RecText Text
+    | RecBinary ByteString
+    | RecDate ZonedTime
+    | RecJson J.Value
+    | RecRef (Ref' c)
     deriving (Show)
 
-serializeObject :: Object -> BL.ByteString
+type RecItem = RecItem' Identity
+
+serializeObject :: Object' c -> BL.ByteString
 serializeObject = \case
     Blob cnt -> BL.fromChunks [BC.pack "blob ", BC.pack (show $ B.length cnt), BC.singleton '\n', cnt]
     Rec rec -> let cnt = BL.fromChunks $ concatMap (uncurry serializeRecItem) rec
                 in BL.fromChunks [BC.pack "rec ", BC.pack (show $ BL.length cnt), BC.singleton '\n'] `BL.append` cnt
     ZeroObject -> BL.empty
 
-storeObject :: Storage -> Object -> IO Ref
+storeObject :: Storage' c -> Object' c -> IO (Ref' c)
 storeObject storage = \case
     ZeroObject -> return $ zeroRef storage
-    obj -> storeRawBytes storage $ serializeObject obj
+    obj -> unsafeStoreRawBytes storage $ serializeObject obj
 
-storeRawBytes :: Storage -> BL.ByteString -> IO Ref
-storeRawBytes st raw = do
-  let ref = Ref st $ hashFinalize $ hashUpdates hashInit $ BL.toChunks raw
-  writeFileOnce (refPath ref) $ compress raw
-  return ref
+storeRawBytes :: PartialStorage -> BL.ByteString -> IO PartialRef
+storeRawBytes = unsafeStoreRawBytes
 
-serializeRecItem :: ByteString -> RecItem -> [ByteString]
+unsafeStoreRawBytes :: Storage' c -> BL.ByteString -> IO (Ref' c)
+unsafeStoreRawBytes st raw = do
+    let dgst = hashFinalize $ hashUpdates hashInit $ BL.toChunks raw
+    case stBacking st of
+         StorageDir sdir -> writeFileOnce (refPath sdir dgst) $ compress raw
+         StorageMemory { memObjs = tobjs } ->
+             dgst `deepseq` -- the TVar may be accessed when evaluating the data to be written
+                 modifyMVar_ tobjs (return . M.insert dgst raw)
+    return $ Ref st dgst
+
+serializeRecItem :: ByteString -> RecItem' c -> [ByteString]
 serializeRecItem name (RecInt x) = [name, BC.pack ":i", BC.singleton ' ', BC.pack (show x), BC.singleton '\n']
 serializeRecItem name (RecNum x) = [name, BC.pack ":n", BC.singleton ' ', BC.pack (showRatio x), BC.singleton '\n']
 serializeRecItem name (RecText x) = [name, BC.pack ":t", BC.singleton ' ', escaped, BC.singleton '\n']
@@ -197,27 +253,29 @@ serializeRecItem name (RecDate x) = [name, BC.pack ":d", BC.singleton ' ', BC.pa
 serializeRecItem name (RecJson x) = [name, BC.pack ":j", BC.singleton ' '] ++ BL.toChunks (J.encode x) ++ [BC.singleton '\n']
 serializeRecItem name (RecRef x) = [name, BC.pack ":r.b2 ", showRef x, BC.singleton '\n']
 
-lazyLoadObject :: Ref -> Object
-lazyLoadObject = fst . lazyLoadObject'
+lazyLoadObject :: forall c. StorageCompleteness c => Ref' c -> LoadResult c (Object' c)
+lazyLoadObject = returnLoadResult . unsafePerformIO . ioLoadObject
 
-lazyLoadBytes :: Ref -> BL.ByteString
-lazyLoadBytes = snd . lazyLoadObject'
+ioLoadObject :: forall c. StorageCompleteness c => Ref' c -> IO (c (Object' c))
+ioLoadObject ref | isZeroRef ref = return $ return ZeroObject
+ioLoadObject ref@(Ref st rhash) = do
+    file' <- ioLoadBytes ref
+    return $ do
+        file <- file'
+        let chash = hashFinalize $ hashUpdates hashInit $ BL.toChunks file
+        when (chash /= rhash) $ error $ "Hash mismatch on object " ++ BC.unpack (showRef ref) {- TODO throw -}
+        return $ case runExcept $ unsafeDeserializeObject st file of
+                      Left err -> error $ err ++ ", ref " ++ BC.unpack (showRef ref) {- TODO throw -}
+                      Right (x, rest) | BL.null rest -> x
+                                      | otherwise -> error $ "Superfluous content after " ++ BC.unpack (showRef ref) {- TODO throw -}
 
-lazyLoadObject' :: Ref -> (Object, BL.ByteString)
-lazyLoadObject' ref | isZeroRef ref = (ZeroObject, BL.empty)
-lazyLoadObject' ref@(Ref st rhash) = unsafePerformIO $ do
-    file <- decompress <$> (BL.readFile $ refPath ref)
-    let Ref _ chash = Ref st $ hashFinalize $ hashUpdates hashInit $ BL.toChunks file
-    when (chash /= rhash) $ error $ "Hash mismatch on object " ++ BC.unpack (showRef ref) {- TODO throw -}
-    let obj = case runExcept $ deserializeObject st file of
-                   Left err -> error $ err ++ ", ref " ++ BC.unpack (showRef ref) {- TODO throw -}
-                   Right (x, rest) | BL.null rest -> x
-                                   | otherwise -> error $ "Superfluous content after " ++ BC.unpack (showRef ref) {- TODO throw -}
-    return (obj, file)
+lazyLoadBytes :: forall c. StorageCompleteness c => Ref' c -> LoadResult c BL.ByteString
+lazyLoadBytes ref | isZeroRef ref = returnLoadResult (return BL.empty :: c BL.ByteString)
+lazyLoadBytes ref = returnLoadResult $ unsafePerformIO $ ioLoadBytes ref
 
-deserializeObject :: Storage -> BL.ByteString -> Except String (Object, BL.ByteString)
-deserializeObject _  bytes | BL.null bytes = return (ZeroObject, bytes)
-deserializeObject st bytes =
+unsafeDeserializeObject :: Storage' c -> BL.ByteString -> Except String (Object' c, BL.ByteString)
+unsafeDeserializeObject _  bytes | BL.null bytes = return (ZeroObject, bytes)
+unsafeDeserializeObject st bytes =
     case BLC.break (=='\n') bytes of
         (line, rest) | Just (otype, len) <- splitObjPrefix line -> do
             let (content, next) = first BL.toStrict $ BL.splitAt (fromIntegral len) $ BL.drop 1 rest
@@ -251,11 +309,14 @@ deserializeObject st bytes =
                           "b" -> either (const Nothing) (Just . RecBinary) $ convertFromBase Base64 content
                           "d" -> RecDate <$> parseTimeM False defaultTimeLocale "%s %z" (BC.unpack content)
                           "j" -> RecJson <$> J.decode (BL.fromStrict content)
-                          "r.b2" -> RecRef <$> unsafeReadRef st content
+                          "r.b2" -> RecRef . Ref st <$> readRefDigest content
                           _   -> Nothing
               return (name, val)
 
-deserializeObjects :: Storage -> BL.ByteString -> Except String [Object]
+deserializeObject :: PartialStorage -> BL.ByteString -> Except String (PartialObject, BL.ByteString)
+deserializeObject = unsafeDeserializeObject
+
+deserializeObjects :: PartialStorage -> BL.ByteString -> Except String [PartialObject]
 deserializeObjects _  bytes | BL.null bytes = return []
 deserializeObjects st bytes = do (obj, rest) <- deserializeObject st bytes
                                  (obj:) <$> deserializeObjects st rest
@@ -267,17 +328,18 @@ collectObjects obj = obj : map fromStored (fst $ collectOtherStored S.empty obj)
 collectStoredObjects :: Stored Object -> [Stored Object]
 collectStoredObjects obj = obj : (fst $ collectOtherStored S.empty $ fromStored obj)
 
-collectOtherStored :: Set Ref -> Object -> ([Stored Object], Set Ref)
+collectOtherStored :: Set RefDigest -> Object -> ([Stored Object], Set RefDigest)
 collectOtherStored seen (Rec items) = foldr helper ([], seen) $ map snd items
-    where helper (RecRef r) (xs, s) | r `S.notMember` s = let o = wrappedLoad r
-                                                              (xs', s') = collectOtherStored (S.insert r s) $ fromStored o
-                                                           in ((o : xs') ++ xs, s')
+    where helper (RecRef ref) (xs, s) | r <- refDigest ref
+                                      , r `S.notMember` s
+                                      = let o = wrappedLoad ref
+                                            (xs', s') = collectOtherStored (S.insert r s) $ fromStored o
+                                         in ((o : xs') ++ xs, s')
           helper _          (xs, s) = (xs, s)
 collectOtherStored seen _ = ([], seen)
 
 
-data Head = Head String Ref
-    deriving (Show)
+type Head = Head' Identity
 
 headName :: Head -> String
 headName (Head name _) = name
@@ -290,39 +352,63 @@ headObject = load . headRef
 
 
 loadHeads :: Storage -> IO [Head]
-loadHeads s@(Storage spath) = do
+loadHeads s@(Storage { stBacking = StorageDir spath }) = do
     let hpath = spath ++ "/heads/"
     files <- filterM (doesFileExist . (hpath++)) =<< getDirectoryContents hpath
     forM files $ \hname -> do
         (h:_) <- BC.lines <$> B.readFile (hpath ++ "/" ++ hname)
         Just ref <- readRef s h
         return $ Head hname ref
+loadHeads Storage { stBacking = StorageMemory { memHeads = theads } } = readMVar theads
 
-loadHead :: Storage -> String -> IO Head
-loadHead s@(Storage spath) hname = do
-    let hpath = spath ++ "/heads/"
-    (h:_) <- BC.lines <$> B.readFile (hpath ++ hname)
-    Just ref <- readRef s h
-    return $ Head hname ref
+loadHead :: Storage -> String -> IO (Maybe Head)
+loadHead s@(Storage { stBacking = StorageDir spath }) hname = do
+    handleJust (guard . isDoesNotExistError) (const $ return Nothing) $ do
+        let hpath = spath ++ "/heads/"
+        (h:_) <- BC.lines <$> B.readFile (hpath ++ hname)
+        Just ref <- readRef s h
+        return $ Just $ Head hname ref
+loadHead Storage { stBacking = StorageMemory { memHeads = theads } } hname =
+    find ((==hname) . headName) <$> readMVar theads
+
+loadHeadDef :: Storable a => Storage -> String -> IO a -> IO Head
+loadHeadDef s hname gen = loadHead s hname >>= \case
+        Just h  -> return h
+        Nothing -> do obj <- gen
+                      Right h <- replaceHead obj (Left (s, hname))
+                      return h
 
 replaceHead :: Storable a => a -> Either (Storage, String) Head -> IO (Either (Maybe Head) Head)
 replaceHead obj prev = do
+    let (st, name) = either id (\(Head n (Ref s _)) -> (s, n)) prev
     ref <- store st obj
-    writeFileChecked filename (either (const Nothing) (Just . showRefL . headRef) prev) (showRefL ref) >>= \case
-        Left Nothing -> return $ Left Nothing
-        Left (Just bs) -> do Just oref <- readRef st $ BC.takeWhile (/='\n') bs
-                             return $ Left $ Just $ Head name oref
-        Right () -> return $ Right $ Head name ref
-    where (st@(Storage spath), name) = either id (\(Head n (Ref s _)) -> (s, n)) prev
-          filename = spath ++ "/heads/" ++ name
-          showRefL ref = showRef ref `B.append` BC.singleton '\n'
+    case stBacking st of
+         StorageDir spath -> do
+             let filename = spath ++ "/heads/" ++ name
+                 showRefL r = showRef r `B.append` BC.singleton '\n'
+
+             writeFileChecked filename (either (const Nothing) (Just . showRefL . headRef) prev) (showRefL ref) >>= \case
+                 Left Nothing -> return $ Left Nothing
+                 Left (Just bs) -> do Just oref <- readRef st $ BC.takeWhile (/='\n') bs
+                                      return $ Left $ Just $ Head name oref
+                 Right () -> return $ Right $ Head name ref
+
+         StorageMemory { memHeads = theads } -> modifyMVar theads $ \hs ->
+             case (partition ((== name) . headName) hs, prev) of
+                  (([], _), Left _)  -> let h = Head name ref
+                                         in return (h:hs, Right h)
+                  (([], _), Right _) -> return (hs, Left Nothing)
+                  ((h:_, _), Left _) -> return (hs, Left (Just h))
+                  ((h:_, hs'), Right h') | headRef h == headRef h' -> let nh = Head name ref
+                                                                       in return (nh:hs', Right nh)
+                                         | otherwise -> return (hs, Left (Just h))
 
 
 class Storable a where
     store' :: a -> Store
     load' :: Load a
 
-    store :: Storage -> a -> IO Ref
+    store :: StorageCompleteness c => Storage' c -> a -> IO (Ref' c)
     store st = storeObject st <=< evalStore st . store'
     load :: Ref -> a
     load ref = let Load f = load'
@@ -332,15 +418,15 @@ class Storable a => ZeroStorable a where
     fromZero :: Storage -> a
 
 data Store = StoreBlob ByteString
-           | StoreRec (Storage -> [IO [(ByteString, RecItem)]])
+           | StoreRec (forall c. StorageCompleteness c => Storage' c -> [IO [(ByteString, RecItem' c)]])
            | StoreZero
 
-evalStore :: Storage -> Store -> IO Object
+evalStore :: StorageCompleteness c => Storage' c -> Store -> IO (Object' c)
 evalStore _ (StoreBlob x) = return $ Blob x
 evalStore s (StoreRec f) = Rec . concat <$> sequence (f s)
 evalStore _ StoreZero = return ZeroObject
 
-type StoreRec = ReaderT Storage (Writer [IO [(ByteString, RecItem)]]) ()
+type StoreRec c = ReaderT (Storage' c) (Writer [IO [(ByteString, RecItem' c)]]) ()
 
 data Load a = Load (Ref -> Object -> Either String a)
 
@@ -349,12 +435,14 @@ type LoadRec a = ReaderT (Ref, [(ByteString, RecItem)]) (Either String) a
 
 instance Storable Object where
     store' (Blob bs) = StoreBlob bs
-    store' (Rec xs) = StoreRec $ const $ map (return.return) xs
+    store' (Rec xs) = StoreRec $ \st -> return $ do
+        Rec xs' <- copyObject st (Rec xs)
+        return xs'
     store' ZeroObject = StoreZero
 
     load' = Load $ const return
 
-    store = storeObject
+    store st = storeObject st <=< copyObject st
     load = lazyLoadObject
 
 instance Storable ByteString where
@@ -382,7 +470,7 @@ instance Storable a => ZeroStorable [a] where
 storeBlob :: ByteString -> Store
 storeBlob = StoreBlob
 
-storeRec :: StoreRec -> Store
+storeRec :: (forall c. StorageCompleteness c => StoreRec c) -> Store
 storeRec r = StoreRec $ execWriter . runReaderT r
 
 storeZero :: Store
@@ -420,59 +508,63 @@ instance StorableDate Day where
     fromDate = utctDay . fromDate
 
 
-storeInt :: Integral a => String -> a -> StoreRec
+storeInt :: Integral a => String -> a -> StoreRec c
 storeInt name x = tell [return [(BC.pack name, RecInt $ toInteger x)]]
 
-storeMbInt :: Integral a => String -> Maybe a -> StoreRec
+storeMbInt :: Integral a => String -> Maybe a -> StoreRec c
 storeMbInt name = maybe (return ()) (storeInt name)
 
-storeNum :: (Real a, Fractional a) => String -> a -> StoreRec
+storeNum :: (Real a, Fractional a) => String -> a -> StoreRec c
 storeNum name x = tell [return [(BC.pack name, RecNum $ toRational x)]]
 
-storeMbNum :: (Real a, Fractional a) => String -> Maybe a -> StoreRec
+storeMbNum :: (Real a, Fractional a) => String -> Maybe a -> StoreRec c
 storeMbNum name = maybe (return ()) (storeNum name)
 
-storeText :: StorableText a => String -> a -> StoreRec
+storeText :: StorableText a => String -> a -> StoreRec c
 storeText name x = tell [return [(BC.pack name, RecText $ toText x)]]
 
-storeMbText :: StorableText a => String -> Maybe a -> StoreRec
+storeMbText :: StorableText a => String -> Maybe a -> StoreRec c
 storeMbText name = maybe (return ()) (storeText name)
 
-storeBinary :: BA.ByteArrayAccess a => String -> a -> StoreRec
+storeBinary :: BA.ByteArrayAccess a => String -> a -> StoreRec c
 storeBinary name x = tell [return [(BC.pack name, RecBinary $ BA.convert x)]]
 
-storeMbBinary :: BA.ByteArrayAccess a => String -> Maybe a -> StoreRec
+storeMbBinary :: BA.ByteArrayAccess a => String -> Maybe a -> StoreRec c
 storeMbBinary name = maybe (return ()) (storeBinary name)
 
-storeDate :: StorableDate a => String -> a -> StoreRec
+storeDate :: StorableDate a => String -> a -> StoreRec c
 storeDate name x = tell [return [(BC.pack name, RecDate $ toDate x)]]
 
-storeMbDate :: StorableDate a => String -> Maybe a -> StoreRec
+storeMbDate :: StorableDate a => String -> Maybe a -> StoreRec c
 storeMbDate name = maybe (return ()) (storeDate name)
 
-storeJson :: J.ToJSON a => String -> a -> StoreRec
+storeJson :: J.ToJSON a => String -> a -> StoreRec c
 storeJson name x = tell [return [(BC.pack name, RecJson $ J.toJSON x)]]
 
-storeMbJson :: J.ToJSON a => String -> Maybe a -> StoreRec
+storeMbJson :: J.ToJSON a => String -> Maybe a -> StoreRec c
 storeMbJson name = maybe (return ()) (storeJson name)
 
-storeRef :: Storable a => String -> a -> StoreRec
+storeRef :: Storable a => StorageCompleteness c => String -> a -> StoreRec c
 storeRef name x = do
     s <- ask
     tell $ (:[]) $ do
         ref <- store s x
         return [(BC.pack name, RecRef ref)]
 
-storeMbRef :: Storable a => String -> Maybe a -> StoreRec
+storeMbRef :: Storable a => StorageCompleteness c => String -> Maybe a -> StoreRec c
 storeMbRef name = maybe (return ()) (storeRef name)
 
-storeRawRef :: String -> Ref -> StoreRec
-storeRawRef name ref = tell [return [(BC.pack name, RecRef ref)]]
+storeRawRef :: StorageCompleteness c => String -> Ref -> StoreRec c
+storeRawRef name ref = do
+    st <- ask
+    tell $ (:[]) $ do
+        ref' <- copyRef st ref
+        return [(BC.pack name, RecRef ref')]
 
-storeMbRawRef :: String -> Maybe Ref -> StoreRec
+storeMbRawRef :: StorageCompleteness c => String -> Maybe Ref -> StoreRec c
 storeMbRawRef name = maybe (return ()) (storeRawRef name)
 
-storeZRef :: ZeroStorable a => String -> a -> StoreRec
+storeZRef :: (ZeroStorable a, StorageCompleteness c) => String -> a -> StoreRec c
 storeZRef name x = do
     s <- ask
     tell $ (:[]) $ do
@@ -588,14 +680,13 @@ data Stored a = Stored Ref a
     deriving (Show)
 
 instance Eq (Stored a) where
-    Stored r1 _ == Stored r2 _  =  r1 == r2
+    Stored r1 _ == Stored r2 _  =  refDigest r1 == refDigest r2
 
 instance Ord (Stored a) where
-    compare (Stored r1 _) (Stored r2 _) = compare r1 r2
+    compare (Stored r1 _) (Stored r2 _) = compare (refDigest r1) (refDigest r2)
 
 instance Storable a => Storable (Stored a) where
-    store st (Stored ref@(Ref st' _) x) | st' == st = return ref
-                                        | otherwise = store st x
+    store st = copyRef st . storedRef
     store' (Stored _ x) = store' x
     load' = Load $ \ref obj ->
                 let Load fres = load'
@@ -632,7 +723,7 @@ makeStoreInfo = StoreInfo
     <$> getZonedTime
     <*> pure Nothing
 
-storeInfoRec :: StoreInfo -> StoreRec
+storeInfoRec :: StoreInfo -> StoreRec c
 storeInfoRec info = do
     storeDate "date" $ infoDate info
     storeMbText "note" $ infoNote info
@@ -785,23 +876,23 @@ findSListRef _ (Stored _ ListNil) = Nothing
 findSListRef x (Stored ref (ListItem _ _ y next)) | y == Just x = Just ref
                                                   | otherwise   = findSListRef x next
 
-mapFromSList :: Storable a => StoredList a -> Map Ref (Stored a)
+mapFromSList :: Storable a => StoredList a -> Map RefDigest (Stored a)
 mapFromSList list = helper list M.empty
-    where helper :: Storable a => StoredList a -> Map Ref (Stored a) -> Map Ref (Stored a)
+    where helper :: Storable a => StoredList a -> Map RefDigest (Stored a) -> Map RefDigest (Stored a)
           helper (Stored _ ListNil) cur = cur
           helper (Stored _ (ListItem (Just rref) _ (Just x) rest)) cur =
               let rxref = case load rref of
                                ListItem _ _ (Just rx) _  -> sameType rx x $ storedRef rx
                                _ -> error "mapFromSList: malformed list"
-               in helper rest $ case M.lookup (storedRef x) cur of
-                                     Nothing -> M.insert rxref x cur
-                                     Just x' -> M.insert rxref x' cur
+               in helper rest $ case M.lookup (refDigest $ storedRef x) cur of
+                                     Nothing -> M.insert (refDigest rxref) x cur
+                                     Just x' -> M.insert (refDigest rxref) x' cur
           helper (Stored _ (ListItem _ _ _ rest)) cur = helper rest cur
           sameType :: a -> a -> b -> b
           sameType _ _ x = x
 
-updateOld :: Map Ref (Stored a) -> Stored a -> Stored a
-updateOld m x = fromMaybe x $ M.lookup (storedRef x) m
+updateOld :: Map RefDigest (Stored a) -> Stored a -> Stored a
+updateOld m x = fromMaybe x $ M.lookup (refDigest $ storedRef x) m
 
 
 data StoreUpdate a = StoreKeep

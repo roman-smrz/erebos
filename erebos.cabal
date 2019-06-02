@@ -32,8 +32,10 @@ executable erebos
                        FunctionalDependencies,
                        LambdaCase,
                        MultiWayIf,
+                       RankNTypes,
                        ScopedTypeVariables,
-                       TupleSections
+                       TupleSections,
+                       TypeFamilies
 
   -- other-extensions:
   build-depends:       aeson >=1.4 && <1.5,
@@ -42,6 +44,7 @@ executable erebos
                        cereal >= 0.5 && <0.6,
                        containers >= 0.6 && <0.7,
                        cryptonite >=0.25 && <0.26,
+                       deepseq >= 1.4 && <1.5,
                        directory >= 1.3 && <1.4,
                        filepath >=1.4 && <1.5,
                        haskeline >=0.7 && <0.8,
