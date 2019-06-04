@@ -89,9 +89,8 @@ instance Storable ChannelAcceptData where
             <*> loadRef "key"
 
 
-createChannelRequest :: Stored Identity -> Stored Identity -> IO (Stored ChannelRequest)
-createChannelRequest self peer = do
-    let st = storedStorage self
+createChannelRequest :: Storage -> Stored Identity -> Stored Identity -> IO (Stored ChannelRequest)
+createChannelRequest st self peer = do
     (_, xpublic) <- generateKeys st
     Just skey <- loadKey $ idKeyMessage $ fromStored $ signedData $ fromStored self
     wrappedStore st =<< sign skey =<< wrappedStore st ChannelRequest { crPeers = sort [self, peer], crKey = xpublic }
@@ -101,7 +100,7 @@ acceptChannelRequest self peer req = do
     guard $ (crPeers $ fromStored $ signedData $ fromStored req) == sort [self, peer]
     guard $ (idKeyMessage $ fromStored $ signedData $ fromStored peer) `elem` (map (sigKey . fromStored) $ signedSignature $ fromStored req)
 
-    let st = storedStorage self
+    let st = storedStorage req
         KeySizeFixed ksize = cipherKeySize (undefined :: AES128)
     liftIO $ do
         (xsecret, xpublic) <- generateKeys st
@@ -116,7 +115,7 @@ acceptChannelRequest self peer req = do
 
 acceptedChannel :: Stored Identity -> Stored Identity -> Stored ChannelAccept -> ExceptT [String] IO (Stored Channel)
 acceptedChannel self peer acc = do
-    let st = storedStorage self
+    let st = storedStorage acc
         req = caRequest $ fromStored $ signedData $ fromStored acc
         KeySizeFixed ksize = cipherKeySize (undefined :: AES128)
 

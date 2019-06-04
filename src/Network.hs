@@ -33,6 +33,7 @@ data Peer = Peer
     , peerIdentity :: Maybe (Stored Identity)
     , peerChannels :: [Channel]
     , peerSocket :: Socket
+    , peerStorage :: Storage
     , peerInStorage :: PartialStorage
     }
     deriving (Show)
@@ -139,40 +140,42 @@ startServer logd bhost sidentity = do
                    , Right (obj:objs) <- runExcept $ deserializeObjects (peerInStorage peer) $ BL.fromStrict plain
                    , Just (ServiceHeader svc ref) <- serviceFromObject obj
                    -> do forM_ objs $ storeObject $ peerInStorage peer
-                         copyRef (storedStorage sidentity) ref >>= \case
+                         copyRef (peerStorage peer) ref >>= \case
                              Just pref -> writeChan chanSvc (peer, svc, pref)
                              Nothing   -> logd $ show paddr ++ ": incomplete service packet"
 
                    | otherwise -> do
-                       ist <- case mbpeer of
-                                   Just peer -> return $ peerInStorage peer
-                                   Nothing   -> derivePartialStorage $ storedStorage sidentity
+                       (pst, ist) <- case mbpeer of
+                                          Just peer -> return (peerStorage peer, peerInStorage peer)
+                                          Nothing   -> do pst <- deriveEphemeralStorage $ storedStorage sidentity
+                                                          ist <- derivePartialStorage pst
+                                                          return (pst, ist)
                        if | Right (obj:objs) <- runExcept $ deserializeObjects ist $ BL.fromStrict msg
                           , Just tpack <- transportFromObject obj
-                          -> packet sock paddr tpack objs ist
+                          -> packet sock paddr tpack objs pst ist
 
                           | otherwise -> logd $ show paddr ++ ": invalid packet"
 
-        packet sock paddr (AnnouncePacket ref) _ ist = do
+        packet sock paddr (AnnouncePacket ref) _ _ ist = do
             logd $ "Got announce: " ++ show ref ++ " from " ++ show paddr
             when (refDigest ref /= refDigest (storedRef sidentity)) $ void $ sendTo sock (BL.toStrict $ BL.concat
                 [ serializeObject $ transportToObject $ IdentityRequest ref (partialRef ist $ storedRef sidentity)
                 , BL.concat $ map (lazyLoadBytes . storedRef) $ collectStoredObjects $ wrappedLoad $ storedRef sidentity
                 ]) paddr
 
-        packet _ paddr (IdentityRequest ref from) [] _ = do
+        packet _ paddr (IdentityRequest ref from) [] _ _ = do
             logd $ "Got identity request: for " ++ show ref ++ " by " ++ show from ++ " from " ++ show paddr ++ " without content"
 
-        packet sock paddr (IdentityRequest ref from) (obj:objs) ist = do
+        packet sock paddr (IdentityRequest ref from) (obj:objs) pst ist = do
             logd $ "Got identity request: for " ++ show ref ++ " by " ++ show from ++ " from " ++ show paddr
             logd $ show (obj:objs)
             from' <- storeObject ist obj
             if from == from'
                then do forM_ objs $ storeObject ist
-                       copyRef (storedStorage sidentity) from >>= \case
+                       copyRef pst from >>= \case
                            Nothing -> logd $ "Incomplete peer identity"
                            Just sfrom -> do
-                               let peer = Peer (DatagramAddress paddr) (Just $ wrappedLoad sfrom) [] sock ist
+                               let peer = Peer (DatagramAddress paddr) (Just $ wrappedLoad sfrom) [] sock pst ist
                                modifyMVar_ peers $ return . M.insert paddr peer
                                writeChan chanPeer peer
                                void $ sendTo sock (BL.toStrict $ BL.concat
@@ -181,23 +184,23 @@ startServer logd bhost sidentity = do
                                    ]) paddr
                else logd $ "Mismatched content"
 
-        packet _ paddr (IdentityResponse ref) [] _ = do
+        packet _ paddr (IdentityResponse ref) [] _ _ = do
             logd $ "Got identity response: by " ++ show ref ++ " from " ++ show paddr ++ " without content"
 
-        packet sock paddr (IdentityResponse ref) (obj:objs) ist = do
+        packet sock paddr (IdentityResponse ref) (obj:objs) pst ist = do
             logd $ "Got identity response: by " ++ show ref ++ " from " ++ show paddr
             logd $ show (obj:objs)
             ref' <- storeObject ist obj
             if ref == ref'
                then do forM_ objs $ storeObject ist
-                       copyRef (storedStorage sidentity) ref >>= \case
+                       copyRef pst ref >>= \case
                            Nothing -> logd $ "Incomplete peer identity"
                            Just sref -> do
                                let pidentity = wrappedLoad sref
-                                   peer = Peer (DatagramAddress paddr) (Just pidentity) [] sock ist
+                                   peer = Peer (DatagramAddress paddr) (Just pidentity) [] sock pst ist
                                modifyMVar_ peers $ return . M.insert paddr peer
                                writeChan chanPeer peer
-                               req <- createChannelRequest sidentity pidentity
+                               req <- createChannelRequest pst sidentity pidentity
                                void $ sendTo sock (BL.toStrict $ BL.concat
                                    [ serializeObject $ transportToObject $ TrChannelRequest (partialRef ist $ storedRef req)
                                    , lazyLoadBytes $ storedRef req
@@ -207,16 +210,16 @@ startServer logd bhost sidentity = do
                                    ]) paddr
                else logd $ "Mismatched content"
 
-        packet _ paddr (TrChannelRequest _) [] _ = do
+        packet _ paddr (TrChannelRequest _) [] _ _ = do
             logd $ "Got channel request: from " ++ show paddr ++ " without content"
 
-        packet sock paddr (TrChannelRequest ref) (obj:objs) ist = do
+        packet sock paddr (TrChannelRequest ref) (obj:objs) pst ist = do
             logd $ "Got channel request: from " ++ show paddr
             logd $ show (obj:objs)
             ref' <- storeObject ist obj
             if ref == ref'
                then do forM_ objs $ storeObject ist
-                       copyRef (storedStorage sidentity) ref >>= \case
+                       copyRef pst ref >>= \case
                            Nothing -> logd $ "Incomplete channel request"
                            Just sref -> do
                                let request = wrappedLoad sref :: Stored ChannelRequest
@@ -242,16 +245,16 @@ startServer logd bhost sidentity = do
                                            return pval
                else logd $ "Mismatched content"
 
-        packet _ paddr (TrChannelAccept _) [] _ = do
+        packet _ paddr (TrChannelAccept _) [] _ _ = do
             logd $ "Got channel accept: from " ++ show paddr ++ " without content"
 
-        packet _ paddr (TrChannelAccept ref) (obj:objs) ist = do
+        packet _ paddr (TrChannelAccept ref) (obj:objs) pst ist = do
             logd $ "Got channel accept: from " ++ show paddr
             logd $ show (obj:objs)
             ref' <- storeObject ist obj
             if ref == ref'
                then do forM_ objs $ storeObject ist
-                       copyRef (storedStorage sidentity) ref >>= \case
+                       copyRef pst ref >>= \case
                            Nothing -> logd $ "Incomplete channel accept"
                            Just sref -> do
                                let accepted = wrappedLoad sref :: Stored ChannelAccept
