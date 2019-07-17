@@ -17,7 +17,6 @@ import Control.Monad.Fail
 
 import Crypto.Cipher.AES
 import Crypto.Cipher.Types
-import Crypto.Data.Padding
 import Crypto.Error
 import Crypto.Random
 
@@ -135,17 +134,17 @@ channelEncrypt :: (ByteArray ba, MonadRandom m, MonadFail m) => Channel -> ba ->
 channelEncrypt ch plain = do
     CryptoPassed (cipher :: AES128) <- return $ cipherInit $ chKey ch
     let bsize = blockSize cipher
-    (iv :: ByteString) <- getRandomBytes bsize
+    (iv :: ByteString) <- getRandomBytes 12
     CryptoPassed aead <- return $ aeadInit AEAD_GCM cipher iv
-    let (tag, ctext) = aeadSimpleEncrypt aead B.empty (pad (PKCS7 bsize) plain) bsize
-    return $ BA.concat [ convert iv, convert tag, ctext ]
+    let (tag, ctext) = aeadSimpleEncrypt aead B.empty plain bsize
+    return $ BA.concat [ convert iv, ctext, convert tag ]
 
 channelDecrypt :: (ByteArray ba, MonadFail m) => Channel -> ba -> m ba
 channelDecrypt ch body = do
     CryptoPassed (cipher :: AES128) <- return $ cipherInit $ chKey ch
     let bsize = blockSize cipher
-        (iv, body') = BA.splitAt bsize body
-        (tag, ctext) = BA.splitAt bsize body'
+        (iv, body') = BA.splitAt 12 body
+        (ctext, tag) = BA.splitAt (BA.length body' - bsize) body'
     CryptoPassed aead <- return $ aeadInit AEAD_GCM cipher iv
-    Just plain <- return $ unpad (PKCS7 bsize) =<< aeadSimpleDecrypt aead B.empty ctext (AuthTag $ convert tag)
+    Just plain <- return $ aeadSimpleDecrypt aead B.empty ctext (AuthTag $ convert tag)
     return plain
