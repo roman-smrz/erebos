@@ -119,11 +119,17 @@ main = runInputT defaultSettings $ do
                    | otherwise -> extPrint $ "Owner mismatch"
             | otherwise -> extPrint $ "Unknown service: " ++ T.unpack svc
 
+    let getInputLines prompt = do
+            Just input <- lift $ getInputLine prompt
+            case reverse input of
+                 '\\':rest -> (reverse ('\n':rest) ++) <$> getInputLines ">> "
+                 _         -> return input
+
     let process cstate = do
             let pname = case csPeer cstate of
                              Nothing -> ""
                              Just peer -> maybe "<unnamed>" T.unpack $ idName . fromStored . signedData . fromStored . finalOwner <=< peerIdentity $ peer
-            Just input <- lift $ getInputLine $ pname ++ "> "
+            input <- getInputLines $ pname ++ "> "
             let (cmd, line) = case input of
                     '/':rest -> let (scmd, args) = dropWhile isSpace <$> span isAlphaNum rest
                                  in if all isDigit scmd
