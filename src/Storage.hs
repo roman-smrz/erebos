@@ -245,8 +245,7 @@ serializeRecItem name (RecInt x) = [name, BC.pack ":i", BC.singleton ' ', BC.pac
 serializeRecItem name (RecNum x) = [name, BC.pack ":n", BC.singleton ' ', BC.pack (showRatio x), BC.singleton '\n']
 serializeRecItem name (RecText x) = [name, BC.pack ":t", BC.singleton ' ', escaped, BC.singleton '\n']
     where escaped = BC.concatMap escape $ encodeUtf8 x
-          escape '\\' = BC.pack "\\\\"
-          escape '\n' = BC.pack "\\n"
+          escape '\n' = BC.pack "\n\t"
           escape c    = BC.singleton c
 serializeRecItem name (RecBinary x) = [name, BC.pack ":b ", convertToBase Base64 x, BC.singleton '\n']
 serializeRecItem name (RecDate x) = [name, BC.pack ":d", BC.singleton ' ', BC.pack (formatTime defaultTimeLocale "%s %z" x), BC.singleton '\n']
@@ -283,7 +282,7 @@ unsafeDeserializeObject st bytes =
             (,next) <$> case otype of
                  _ | otype == BC.pack "blob" -> return $ Blob content
                    | otype == BC.pack "rec" -> maybe (throwError $ "Malformed record item ")
-                                                   (return . Rec) $ sequence $ map parseRecLine $ BC.lines content
+                                                   (return . Rec) $ sequence $ map parseRecLine $ mergeCont [] $ BC.lines content
                    | otherwise -> throwError $ "Unknown object type"
         _ -> throwError $ "Malformed object"
     where splitObjPrefix line = do
@@ -291,6 +290,10 @@ unsafeDeserializeObject st bytes =
               (len, rest) <- BLC.readInt tlen
               guard $ BL.null rest
               return (BL.toStrict otype, len)
+
+          mergeCont cs (a:b:rest) | Just ('\t', b') <- BC.uncons b = mergeCont (b':BC.pack "\n":cs) (a:rest)
+          mergeCont cs (a:rest) = B.concat (a : reverse cs) : mergeCont [] rest
+          mergeCont _ [] = []
 
           parseRecLine line = do
               colon <- BC.elemIndex ':' line
