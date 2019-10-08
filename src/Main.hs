@@ -6,6 +6,8 @@ import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Trans.Maybe
 
+import qualified Data.ByteString.Char8 as BC
+import qualified Data.ByteString.Lazy as BL
 import Data.Char
 import Data.List
 import Data.Maybe
@@ -72,10 +74,31 @@ updateErebosHead st f = do
     return x
 
 main :: IO ()
-main = runInputT defaultSettings $ do
-    bhost <- liftIO getArgs >>= \case [bhost] -> return bhost
-                                      _       -> error "Expecting broadcast address"
+main = do
     st <- liftIO $ openStorage "test"
+    getArgs >>= \case
+        ["cat-file", sref] -> do
+            readRef st (BC.pack sref) >>= \case
+                Nothing -> error "ref does not exist"
+                Just ref -> BL.putStr $ lazyLoadBytes ref
+
+        ["cat-file", objtype, sref] -> do
+            readRef st (BC.pack sref) >>= \case
+                Nothing -> error "ref does not exist"
+                Just ref -> case objtype of
+                    "signed" -> do
+                        let signed = load ref :: Signed Object
+                        BL.putStr $ lazyLoadBytes $ storedRef $ signedData signed
+                        forM_ (signedSignature signed) $ \sig -> do
+                            putStr $ "SIG "
+                            BC.putStrLn $ showRef $ storedRef $ sigKey $ fromStored sig
+                    _ -> error $ "unknown object type '" ++ objtype ++ "'"
+
+        [bhost] -> interactiveLoop st bhost
+        _       -> error "Expecting broadcast address"
+
+interactiveLoop :: Storage -> String -> IO ()
+interactiveLoop st bhost = runInputT defaultSettings $ do
     erebosHead <- liftIO $ loadErebosHead st
     let serebos = wrappedLoad (headRef erebosHead) :: Stored Erebos
         self = erbIdentity $ fromStored serebos
