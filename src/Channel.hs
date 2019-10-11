@@ -32,7 +32,7 @@ import PubKey
 import Storage
 
 data Channel = Channel
-    { chPeers :: [Stored Identity]
+    { chPeers :: [Stored (Signed IdentityData)]
     , chKey :: ScrubbedBytes
     }
     deriving (Show)
@@ -40,7 +40,7 @@ data Channel = Channel
 type ChannelRequest = Signed ChannelRequestData
 
 data ChannelRequestData = ChannelRequest
-    { crPeers :: [Stored Identity]
+    { crPeers :: [Stored (Signed IdentityData)]
     , crKey :: Stored PublicKexKey
     }
 
@@ -88,22 +88,22 @@ instance Storable ChannelAcceptData where
             <*> loadRef "key"
 
 
-createChannelRequest :: Storage -> Stored Identity -> Stored Identity -> IO (Stored ChannelRequest)
+createChannelRequest :: Storage -> UnifiedIdentity -> UnifiedIdentity -> IO (Stored ChannelRequest)
 createChannelRequest st self peer = do
     (_, xpublic) <- generateKeys st
-    Just skey <- loadKey $ idKeyMessage $ fromStored $ signedData $ fromStored self
-    wrappedStore st =<< sign skey =<< wrappedStore st ChannelRequest { crPeers = sort [self, peer], crKey = xpublic }
+    Just skey <- loadKey $ idKeyMessage self
+    wrappedStore st =<< sign skey =<< wrappedStore st ChannelRequest { crPeers = sort [idData self, idData peer], crKey = xpublic }
 
-acceptChannelRequest :: Stored Identity -> Stored Identity -> Stored ChannelRequest -> ExceptT [String] IO (Stored ChannelAccept, Stored Channel)
+acceptChannelRequest :: UnifiedIdentity -> UnifiedIdentity -> Stored ChannelRequest -> ExceptT [String] IO (Stored ChannelAccept, Stored Channel)
 acceptChannelRequest self peer req = do
-    guard $ (crPeers $ fromStored $ signedData $ fromStored req) == sort [self, peer]
-    guard $ (idKeyMessage $ fromStored $ signedData $ fromStored peer) `elem` (map (sigKey . fromStored) $ signedSignature $ fromStored req)
+    guard $ (crPeers $ fromStored $ signedData $ fromStored req) == sort (map idData [self, peer])
+    guard $ (idKeyMessage peer) `elem` (map (sigKey . fromStored) $ signedSignature $ fromStored req)
 
     let st = storedStorage req
         KeySizeFixed ksize = cipherKeySize (undefined :: AES128)
     liftIO $ do
         (xsecret, xpublic) <- generateKeys st
-        Just skey <- loadKey $ idKeyMessage $ fromStored $ signedData $ fromStored self
+        Just skey <- loadKey $ idKeyMessage self
         acc <- wrappedStore st =<< sign skey =<< wrappedStore st ChannelAccept { caRequest = req, caKey = xpublic }
         ch <- wrappedStore st Channel
             { chPeers = crPeers $ fromStored $ signedData $ fromStored req
@@ -112,15 +112,15 @@ acceptChannelRequest self peer req = do
             }
         return (acc, ch)
 
-acceptedChannel :: Stored Identity -> Stored Identity -> Stored ChannelAccept -> ExceptT [String] IO (Stored Channel)
+acceptedChannel :: UnifiedIdentity -> UnifiedIdentity -> Stored ChannelAccept -> ExceptT [String] IO (Stored Channel)
 acceptedChannel self peer acc = do
     let st = storedStorage acc
         req = caRequest $ fromStored $ signedData $ fromStored acc
         KeySizeFixed ksize = cipherKeySize (undefined :: AES128)
 
-    guard $ (crPeers $ fromStored $ signedData $ fromStored req) == sort [self, peer]
-    guard $ (idKeyMessage $ fromStored $ signedData $ fromStored peer) `elem` (map (sigKey . fromStored) $ signedSignature $ fromStored acc)
-    guard $ (idKeyMessage $ fromStored $ signedData $ fromStored self) `elem` (map (sigKey . fromStored) $ signedSignature $ fromStored req)
+    guard $ (crPeers $ fromStored $ signedData $ fromStored req) == sort (map idData [self, peer])
+    guard $ idKeyMessage peer `elem` (map (sigKey . fromStored) $ signedSignature $ fromStored acc)
+    guard $ idKeyMessage self `elem` (map (sigKey . fromStored) $ signedSignature $ fromStored req)
 
     Just xsecret <- liftIO $ loadKey $ crKey $ fromStored $ signedData $ fromStored req
     liftIO $ wrappedStore st Channel

@@ -28,7 +28,7 @@ import Storage
 
 
 data Erebos = Erebos
-    { erbIdentity :: Stored Identity
+    { erbIdentity :: Stored (Signed IdentityData)
     , erbMessages :: StoredList DirectMessageThread
     }
 
@@ -53,9 +53,10 @@ loadErebosHead st = loadHeadDef st "erebos" $ do
     (devSecret, devPublic) <- generateKeys st
     (_devSecretMsg, devPublicMsg) <- generateKeys st
 
-    owner <- wrappedStore st =<< sign secret =<< wrappedStore st (emptyIdentity public publicMsg) { idName = Just name }
-    identity <- wrappedStore st =<< signAdd devSecret =<< sign secret =<<
-        wrappedStore st (emptyIdentity devPublic devPublicMsg) { idOwner = Just owner }
+    owner <- wrappedStore st =<< sign secret =<< wrappedStore st (emptyIdentityData public)
+        { iddName = Just name, iddKeyMessage = Just publicMsg }
+    identity <- wrappedStore st =<< signAdd devSecret =<< sign secret =<< wrappedStore st (emptyIdentityData devPublic)
+        { iddOwner = Just owner, iddKeyMessage = Just devPublicMsg }
 
     msgs <- emptySList st
     return $ Erebos
@@ -101,7 +102,7 @@ interactiveLoop :: Storage -> String -> IO ()
 interactiveLoop st bhost = runInputT defaultSettings $ do
     erebosHead <- liftIO $ loadErebosHead st
     let serebos = wrappedLoad (headRef erebosHead) :: Stored Erebos
-        self = erbIdentity $ fromStored serebos
+        Just self = verifyIdentity $ erbIdentity $ fromStored serebos
     outputStrLn $ T.unpack $ displayIdentity self
 
     haveTerminalUI >>= \case True -> return ()
@@ -109,7 +110,7 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
     extPrint <- getExternalPrint
     let extPrintLn str = extPrint $ str ++ "\n";
     (chanPeer, chanSvc) <- liftIO $
-        startServer extPrintLn bhost $ erbIdentity $ fromStored serebos
+        startServer extPrintLn bhost self
 
     peers <- liftIO $ newMVar []
 
@@ -131,9 +132,9 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
                     msg = fromStored smsg
                 extPrintLn $ formatMessage tzone msg
                 if | Just powner <- finalOwner <$> peerIdentity peer
-                   , powner == msgFrom msg
+                   , idData powner == msgFrom msg
                    -> updateErebosHead_ st $ \erb -> do
-                          slist <- case find ((== powner) . msgPeer . fromStored) (storedFromSList $ erbMessages $ fromStored erb) of
+                          slist <- case find ((== idData powner) . msgPeer . fromStored) (storedFromSList $ erbMessages $ fromStored erb) of
                                         Just thread -> do thread' <- wrappedStore st (fromStored thread) { msgHead = smsg : msgHead (fromStored thread) }
                                                           slistReplaceS thread thread' $ erbMessages $ fromStored erb
                                         Nothing -> slistAdd (emptyDirectThread powner) { msgHead = [smsg] } $ erbMessages $ fromStored erb
@@ -151,7 +152,7 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
     let process cstate = do
             let pname = case csPeer cstate of
                              Nothing -> ""
-                             Just peer -> maybe "<unnamed>" T.unpack $ idName . fromStored . signedData . fromStored . finalOwner <=< peerIdentity $ peer
+                             Just peer -> maybe "<unnamed>" T.unpack $ idName . finalOwner <=< peerIdentity $ peer
             input <- getInputLines $ pname ++ "> "
             let (cmd, line) = case input of
                     '/':rest -> let (scmd, args) = dropWhile isSpace <$> span isAlphaNum rest
@@ -171,7 +172,7 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
 
 
 data CommandInput = CommandInput
-    { ciSelf :: Stored Identity
+    { ciSelf :: UnifiedIdentity
     , ciLine :: String
     , ciPeers :: CommandM [Peer]
     }
@@ -207,13 +208,13 @@ cmdSetPeer n | n < 1     = liftIO $ putStrLn "Invalid peer index"
 cmdSend :: Command
 cmdSend = void $ runMaybeT $ do
     self <- asks ciSelf
-    let st = storedStorage self
+    let st = storedStorage $ idData self
     Just peer <- gets csPeer
     Just powner <- return $ finalOwner <$> peerIdentity peer
     _:_ <- return $ peerChannels peer
     text <- asks ciLine
     smsg <- liftIO $ updateErebosHead st $ \erb -> do
-        (slist, smsg) <- case find ((== powner) . msgPeer . fromStored) (storedFromSList $ erbMessages $ fromStored erb) of
+        (slist, smsg) <- case find ((== idData powner) . msgPeer . fromStored) (storedFromSList $ erbMessages $ fromStored erb) of
             Just thread -> do
                 (smsg, thread') <- createDirectMessage self (fromStored thread) (T.pack text)
                 (,smsg) <$> slistReplaceS thread thread' (erbMessages $ fromStored erb)
@@ -230,13 +231,13 @@ cmdSend = void $ runMaybeT $ do
 cmdHistory :: Command
 cmdHistory = void $ runMaybeT $ do
     self <- asks ciSelf
-    let st = storedStorage self
+    let st = storedStorage $ idData self
     Just peer <- gets csPeer
     Just powner <- return $ finalOwner <$> peerIdentity peer
 
     Just erebosHead <- liftIO $ loadHead st "erebos"
     let erebos = wrappedLoad (headRef erebosHead)
-    Just thread <- return $ find ((==powner) . msgPeer) $ fromSList $ erbMessages $ fromStored erebos
+    Just thread <- return $ find ((== idData powner) . msgPeer) $ fromSList $ erbMessages $ fromStored erebos
     tzone <- liftIO $ getCurrentTimeZone
     liftIO $ mapM_ (putStrLn . formatMessage tzone) $ reverse $ take 50 $ threadToList thread
 
@@ -244,7 +245,7 @@ cmdHistory = void $ runMaybeT $ do
 formatMessage :: TimeZone -> DirectMessage -> String
 formatMessage tzone msg = concat
     [ formatTime defaultTimeLocale "[%H:%M] " $ utcToLocalTime tzone $ zonedTimeToUTC $ msgTime msg
-    , maybe "<unnamed>" T.unpack $ idName $ fromStored $ signedData $ fromStored $ msgFrom msg
+    , maybe "<unnamed>" T.unpack $ iddName $ fromStored $ signedData $ fromStored $ msgFrom msg
     , ": "
     , T.unpack $ msgText msg
     ]

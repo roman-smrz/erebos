@@ -11,17 +11,18 @@ import Data.Text (Text)
 import Data.Time.LocalTime
 
 import Identity
+import PubKey
 import Storage
 
 data DirectMessage = DirectMessage
-    { msgFrom :: Stored Identity
+    { msgFrom :: Stored (Signed IdentityData)
     , msgPrev :: [Stored DirectMessage]
     , msgTime :: ZonedTime
     , msgText :: Text
     }
 
 data DirectMessageThread = DirectMessageThread
-    { msgPeer :: Stored Identity
+    { msgPeer :: Stored (Signed IdentityData)
     , msgHead :: [Stored DirectMessage]
     , msgSeen :: [Stored DirectMessage]
     }
@@ -51,15 +52,15 @@ instance Storable DirectMessageThread where
         <*> loadRefs "seen"
 
 
-emptyDirectThread :: Stored Identity -> DirectMessageThread
-emptyDirectThread peer = DirectMessageThread peer [] []
+emptyDirectThread :: UnifiedIdentity -> DirectMessageThread
+emptyDirectThread peer = DirectMessageThread (idData peer) [] []
 
-createDirectMessage :: Stored Identity -> DirectMessageThread -> Text -> IO (Stored DirectMessage, Stored DirectMessageThread)
+createDirectMessage :: UnifiedIdentity -> DirectMessageThread -> Text -> IO (Stored DirectMessage, Stored DirectMessageThread)
 createDirectMessage self thread msg = do
-    let st = storedStorage self
+    let st = storedStorage $ idData self
     time <- getZonedTime
     smsg <- wrappedStore st DirectMessage
-        { msgFrom = finalOwner self
+        { msgFrom = idData $ finalOwner self
         , msgPrev = msgHead thread
         , msgTime = time
         , msgText = msg

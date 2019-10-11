@@ -30,7 +30,7 @@ discoveryPort = "29665"
 
 data Peer = Peer
     { peerAddress :: PeerAddress
-    , peerIdentity :: Maybe (Stored Identity)
+    , peerIdentity :: Maybe UnifiedIdentity
     , peerChannels :: [Channel]
     , peerSocket :: Socket
     , peerStorage :: Storage
@@ -113,8 +113,9 @@ serviceFromObject (Rec items)
 serviceFromObject _ = Nothing
 
 
-startServer :: (String -> IO ()) -> String -> Stored Identity -> IO (Chan Peer, Chan (Peer, T.Text, Ref))
-startServer logd bhost sidentity = do
+startServer :: (String -> IO ()) -> String -> UnifiedIdentity -> IO (Chan Peer, Chan (Peer, T.Text, Ref))
+startServer logd bhost identity = do
+    let sidentity = idData identity
     chanPeer <- newChan
     chanSvc <- newChan
     peers <- newMVar M.empty
@@ -174,14 +175,15 @@ startServer logd bhost sidentity = do
                then do forM_ objs $ storeObject ist
                        copyRef pst from >>= \case
                            Nothing -> logd $ "Incomplete peer identity"
-                           Just sfrom -> do
-                               let peer = Peer (DatagramAddress paddr) (Just $ wrappedLoad sfrom) [] sock pst ist
+                           Just sfrom | Just pidentity <- verifyIdentity (wrappedLoad sfrom) -> do
+                               let peer = Peer (DatagramAddress paddr) (Just pidentity) [] sock pst ist
                                modifyMVar_ peers $ return . M.insert paddr peer
                                writeChan chanPeer peer
                                void $ sendTo sock (BL.toStrict $ BL.concat
                                    [ serializeObject $ transportToObject $ IdentityResponse (partialRef ist $ storedRef sidentity)
                                    , BL.concat $ map (lazyLoadBytes . storedRef) $ collectStoredObjects $ wrappedLoad $ storedRef sidentity
                                    ]) paddr
+                           Just _ -> logd $ "Peer identity verification failed"
                else logd $ "Mismatched content"
 
         packet _ paddr (IdentityResponse ref) [] _ _ = do
@@ -195,12 +197,11 @@ startServer logd bhost sidentity = do
                then do forM_ objs $ storeObject ist
                        copyRef pst ref >>= \case
                            Nothing -> logd $ "Incomplete peer identity"
-                           Just sref -> do
-                               let pidentity = wrappedLoad sref
-                                   peer = Peer (DatagramAddress paddr) (Just pidentity) [] sock pst ist
+                           Just sref | Just pidentity <- verifyIdentity (wrappedLoad sref) -> do
+                               let peer = Peer (DatagramAddress paddr) (Just pidentity) [] sock pst ist
                                modifyMVar_ peers $ return . M.insert paddr peer
                                writeChan chanPeer peer
-                               req <- createChannelRequest pst sidentity pidentity
+                               req <- createChannelRequest pst identity pidentity
                                void $ sendTo sock (BL.toStrict $ BL.concat
                                    [ serializeObject $ transportToObject $ TrChannelRequest (partialRef ist $ storedRef req)
                                    , lazyLoadBytes $ storedRef req
@@ -208,6 +209,7 @@ startServer logd bhost sidentity = do
                                    , lazyLoadBytes $ storedRef $ crKey $ fromStored $ signedData $ fromStored req
                                    , BL.concat $ map (lazyLoadBytes . storedRef) $ signedSignature $ fromStored req
                                    ]) paddr
+                           Just _ -> logd $ "Peer identity verification failed"
                else logd $ "Mismatched content"
 
         packet _ paddr (TrChannelRequest _) [] _ _ = do
@@ -225,7 +227,7 @@ startServer logd bhost sidentity = do
                                let request = wrappedLoad sref :: Stored ChannelRequest
                                modifyMVar_ peers $ \pval -> case M.lookup paddr pval of
                                    Just peer | Just pid <- peerIdentity peer ->
-                                       runExceptT (acceptChannelRequest sidentity pid request) >>= \case
+                                       runExceptT (acceptChannelRequest identity pid request) >>= \case
                                            Left errs -> do mapM_ logd ("Invalid channel request" : errs)
                                                            return pval
                                            Right (acc, channel) -> do
@@ -260,7 +262,7 @@ startServer logd bhost sidentity = do
                                let accepted = wrappedLoad sref :: Stored ChannelAccept
                                modifyMVar_ peers $ \pval -> case M.lookup paddr pval of
                                    Just peer | Just pid <- peerIdentity peer ->
-                                       runExceptT (acceptedChannel sidentity pid accepted) >>= \case
+                                       runExceptT (acceptedChannel identity pid accepted) >>= \case
                                            Left errs -> do mapM_ logd ("Invalid channel accept" : errs)
                                                            return pval
                                            Right channel -> do
@@ -284,7 +286,7 @@ startServer logd bhost sidentity = do
     return (chanPeer, chanSvc)
 
 
-sendToPeer :: Storable a => Stored Identity -> Peer -> T.Text -> a -> IO ()
+sendToPeer :: Storable a => UnifiedIdentity -> Peer -> T.Text -> a -> IO ()
 sendToPeer _ peer@Peer { peerChannels = ch:_ } svc obj = do
     let st = peerInStorage peer
     ref <- store st obj

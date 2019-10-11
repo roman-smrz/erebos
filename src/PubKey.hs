@@ -2,7 +2,7 @@ module PubKey (
     PublicKey, SecretKey,
     KeyPair(generateKeys), loadKey,
     Signature(sigKey), Signed, signedData, signedSignature,
-    sign, signAdd,
+    sign, signAdd, isSignedBy,
 
     PublicKexKey, SecretKexKey,
     dhSecret,
@@ -102,6 +102,9 @@ signAdd (SecretKey secret spublic) (Signed val sigs) = do
         sig = ED.sign secret public $ storedRef val
     ssig <- wrappedStore (storedStorage val) $ Signature spublic sig
     return $ Signed val (ssig : sigs)
+
+isSignedBy :: Signed a -> Stored PublicKey -> Bool
+isSignedBy sig key = key `elem` map (sigKey . fromStored) (signedSignature sig)
 
 
 data PublicKexKey = PublicKexKey CX.PublicKey
