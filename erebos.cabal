@@ -23,9 +23,11 @@ executable erebos
                        Message,
                        Network,
                        PubKey,
+                       State,
                        Storage,
                        Storage.Internal
                        Storage.Key
+                       Util
 
   default-extensions:  FlexibleContexts,
                        FlexibleInstances,
