@@ -32,6 +32,7 @@ executable erebos
   default-extensions:  FlexibleContexts,
                        FlexibleInstances,
                        FunctionalDependencies,
+                       GeneralizedNewtypeDeriving
                        LambdaCase,
                        MultiWayIf,
                        RankNTypes,

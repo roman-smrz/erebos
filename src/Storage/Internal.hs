@@ -63,6 +63,9 @@ instance ByteArrayAccess (Ref' c) where
     length (Ref _ dgst) = BA.length dgst
     withByteArray (Ref _ dgst) = BA.withByteArray dgst
 
+refStorage :: Ref' c -> Storage' c
+refStorage (Ref st _) = st
+
 refDigest :: Ref' c -> RefDigest
 refDigest (Ref _ dgst) = dgst
 
@@ -80,21 +83,24 @@ data Head' c = Head String (Ref' c)
     deriving (Show)
 
 
+type Complete = Identity
+type Partial = Either RefDigest
+
 class (Traversable compl, Monad compl) => StorageCompleteness compl where
     type LoadResult compl a :: *
     returnLoadResult :: compl a -> LoadResult compl a
     ioLoadBytes :: Ref' compl -> IO (compl BL.ByteString)
 
-instance StorageCompleteness Identity where
-    type LoadResult Identity a = a
+instance StorageCompleteness Complete where
+    type LoadResult Complete a = a
     returnLoadResult = runIdentity
     ioLoadBytes ref@(Ref st dgst) = maybe (error $ "Ref not found in complete storage: "++show ref) Identity
         <$> ioLoadBytesFromStorage st dgst
 
-instance StorageCompleteness Maybe where
-    type LoadResult Maybe a = Maybe a
+instance StorageCompleteness Partial where
+    type LoadResult Partial a = Either RefDigest a
     returnLoadResult = id
-    ioLoadBytes (Ref st dgst) = ioLoadBytesFromStorage st dgst
+    ioLoadBytes (Ref st dgst) = maybe (Left dgst) Right <$> ioLoadBytesFromStorage st dgst
 
 ioLoadBytesFromStorage :: Storage' c -> RefDigest -> IO (Maybe BL.ByteString)
 ioLoadBytesFromStorage st dgst = loadCurrent st >>=

@@ -3,13 +3,14 @@ module Storage (
     openStorage, memoryStorage,
     deriveEphemeralStorage, derivePartialStorage,
 
-    Ref, PartialRef,
-    RefDigest, refDigest,
-    readRef, showRef,
-    copyRef, partialRef,
+    Ref, PartialRef, RefDigest,
+    refStorage, refDigest,
+    readRef, showRef, showRefDigest,
+    copyRef, partialRef, partialRefFromDigest,
 
     Object, PartialObject, Object'(..), RecItem, RecItem'(..),
     serializeObject, deserializeObject, deserializeObjects,
+    ioLoadObject, ioLoadBytes,
     storeRawBytes, lazyLoadBytes,
     storeObject,
     collectObjects, collectStoredObjects,
@@ -60,7 +61,6 @@ import Control.DeepSeq
 import Control.Exception
 import Control.Monad
 import Control.Monad.Except
-import Control.Monad.Identity
 import Control.Monad.Reader
 import Control.Monad.Writer
 
@@ -99,8 +99,8 @@ import System.IO.Unsafe
 import Storage.Internal
 
 
-type Storage = Storage' Identity
-type PartialStorage = Storage' Maybe
+type Storage = Storage' Complete
+type PartialStorage = Storage' Partial
 
 openStorage :: FilePath -> IO Storage
 openStorage path = do
@@ -126,8 +126,8 @@ derivePartialStorage parent = do
     st <- memoryStorage'
     return $ st { stParent = Just parent }
 
-type Ref = Ref' Identity
-type PartialRef = Ref' Maybe
+type Ref = Ref' Complete
+type PartialRef = Ref' Partial
 
 zeroRef :: Storage' c -> Ref' c
 zeroRef s = Ref s h
@@ -184,14 +184,17 @@ copyObject' st (Rec rs) = fmap Rec . sequence <$> mapM copyItem rs
               RecRef x -> fmap RecRef <$> copyRef' st x
 copyObject' _ ZeroObject = return $ return ZeroObject
 
-copyRef :: forall c c'. (StorageCompleteness c, StorageCompleteness c') => Storage' c' -> Ref' c -> IO (LoadResult c (Ref' c'))
-copyRef st ref' = returnLoadResult <$> copyRef' st ref'
+copyRef :: forall c c' m. (StorageCompleteness c, StorageCompleteness c', MonadIO m) => Storage' c' -> Ref' c -> m (LoadResult c (Ref' c'))
+copyRef st ref' = liftIO $ returnLoadResult <$> copyRef' st ref'
 
 copyObject :: forall c c'. (StorageCompleteness c, StorageCompleteness c') => Storage' c' -> Object' c -> IO (LoadResult c (Object' c'))
 copyObject st obj' = returnLoadResult <$> copyObject' st obj'
 
 partialRef :: PartialStorage -> Ref -> PartialRef
 partialRef st (Ref _ dgst) = Ref st dgst
+
+partialRefFromDigest :: PartialStorage -> RefDigest -> PartialRef
+partialRefFromDigest st dgst = Ref st dgst
 
 
 data Object' c
@@ -200,8 +203,8 @@ data Object' c
     | ZeroObject
     deriving (Show)
 
-type Object = Object' Identity
-type PartialObject = Object' Maybe
+type Object = Object' Complete
+type PartialObject = Object' Partial
 
 data RecItem' c
     = RecInt Integer
@@ -213,7 +216,7 @@ data RecItem' c
     | RecRef (Ref' c)
     deriving (Show)
 
-type RecItem = RecItem' Identity
+type RecItem = RecItem' Complete
 
 serializeObject :: Object' c -> BL.ByteString
 serializeObject = \case
@@ -342,7 +345,7 @@ collectOtherStored seen (Rec items) = foldr helper ([], seen) $ map snd items
 collectOtherStored seen _ = ([], seen)
 
 
-type Head = Head' Identity
+type Head = Head' Complete
 
 headName :: Head -> String
 headName (Head name _) = name
@@ -679,8 +682,10 @@ loadZRef name = loadMbRef name >>= \case
                     Just x  -> return x
 
 
-data Stored a = Stored Ref a
+data Stored' c a = Stored (Ref' c) a
     deriving (Show)
+
+type Stored a = Stored' Complete a
 
 instance Eq (Stored a) where
     Stored r1 _ == Stored r2 _  =  refDigest r1 == refDigest r2
