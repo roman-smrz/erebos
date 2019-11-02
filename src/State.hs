@@ -8,6 +8,7 @@ module State (
 ) where
 
 import Data.List
+import Data.Maybe
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 
@@ -57,21 +58,34 @@ loadLocalState st = loadHeadDef st "erebos" $ do
     hFlush stdout
     name <- T.getLine
 
-    (secret, public) <- generateKeys st
-    (_secretMsg, publicMsg) <- generateKeys st
+    putStr "Device: "
+    hFlush stdout
+    devName <- T.getLine
+
+    (owner, secret) <- if
+        | T.null name -> return (Nothing, Nothing)
+        | otherwise -> do
+            (secret, public) <- generateKeys st
+            (_secretMsg, publicMsg) <- generateKeys st
+
+            return . (, Just secret) . Just =<< wrappedStore st =<< sign secret =<<
+                wrappedStore st (emptyIdentityData public)
+                { iddName = Just name, iddKeyMessage = Just publicMsg }
+
     (devSecret, devPublic) <- generateKeys st
     (_devSecretMsg, devPublicMsg) <- generateKeys st
 
-    owner <- wrappedStore st =<< sign secret =<< wrappedStore st (emptyIdentityData public)
-        { iddName = Just name, iddKeyMessage = Just publicMsg }
-    identity <- wrappedStore st =<< signAdd devSecret =<< sign secret =<< wrappedStore st (emptyIdentityData devPublic)
-        { iddOwner = Just owner, iddKeyMessage = Just devPublicMsg }
+    identity <- wrappedStore st =<< maybe return signAdd secret =<< sign devSecret =<< wrappedStore st (emptyIdentityData devPublic)
+        { iddName = if T.null devName then Nothing else Just devName
+        , iddOwner = owner
+        , iddKeyMessage = Just devPublicMsg
+        }
 
     msgs <- emptySList st
 
     shared <- wrappedStore st $ SharedState
         { ssPrev = []
-        , ssIdentity = [owner]
+        , ssIdentity = [fromMaybe identity owner]
         }
     return $ LocalState
         { lsIdentity = identity
