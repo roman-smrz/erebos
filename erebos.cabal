@@ -21,15 +21,18 @@ executable erebos
   other-modules:       Identity,
                        Channel,
                        Message,
+                       Message.Service
                        Network,
                        PubKey,
+                       Service
                        State,
                        Storage,
                        Storage.Internal
                        Storage.Key
                        Util
 
-  default-extensions:  FlexibleContexts,
+  default-extensions:  ExistentialQuantification
+                       FlexibleContexts,
                        FlexibleInstances,
                        FunctionalDependencies,
                        GeneralizedNewtypeDeriving

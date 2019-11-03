@@ -17,7 +17,6 @@ import Data.Char
 import Data.List
 import Data.Maybe
 import qualified Data.Text as T
-import Data.Time.Format
 import Data.Time.LocalTime
 
 import System.Console.Haskeline
@@ -25,8 +24,10 @@ import System.Environment
 
 import Identity
 import Message
+import Message.Service
 import Network
 import PubKey
+import Service
 import State
 import Storage
 
@@ -67,8 +68,10 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
                              False -> error "Requires terminal"
     extPrint <- getExternalPrint
     let extPrintLn str = extPrint $ str ++ "\n";
-    (chanPeer, chanSvc) <- liftIO $
+    chanPeer <- liftIO $
         startServer extPrintLn bhost self
+            [ (T.pack "dmsg", SomeService (emptyServiceState :: DirectMessageService))
+            ]
 
     peers <- liftIO $ newMVar []
 
@@ -82,25 +85,6 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
                  op <- modifyMVar peers (return . update)
                  let shown = showPeer peer
                  when (Just shown /= (showPeer <$> op)) $ extPrint shown
-
-    tzone <- liftIO $ getCurrentTimeZone
-    void $ liftIO $ forkIO $ forever $ readChan chanSvc >>= \case
-        (peer, svc, ref)
-            | svc == T.pack "dmsg" -> do
-                let smsg = wrappedLoad ref
-                    msg = fromStored smsg
-                extPrintLn $ formatMessage tzone msg
-                if | PeerIdentityFull powner <- peerOwner peer
-                   , idData powner == msgFrom msg
-                   -> updateLocalState_ st $ \erb -> do
-                          slist <- case find ((== idData powner) . msgPeer . fromStored) (storedFromSList $ lsMessages $ fromStored erb) of
-                                        Just thread -> do thread' <- wrappedStore st (fromStored thread) { msgHead = smsg : msgHead (fromStored thread) }
-                                                          slistReplaceS thread thread' $ lsMessages $ fromStored erb
-                                        Nothing -> slistAdd (emptyDirectThread powner) { msgHead = [smsg] } $ lsMessages $ fromStored erb
-                          wrappedStore st (fromStored erb) { lsMessages = slist }
-
-                   | otherwise -> extPrint $ "Owner mismatch"
-            | otherwise -> extPrint $ "Unknown service: " ++ T.unpack svc
 
     let getInputLines prompt = do
             Just input <- lift $ getInputLine prompt
@@ -229,12 +213,3 @@ cmdUpdateIdentity :: Command
 cmdUpdateIdentity = void $ do
     st <- asks $ storedStorage . idData . ciSelf
     liftIO $ updateIdentity st
-
-
-formatMessage :: TimeZone -> DirectMessage -> String
-formatMessage tzone msg = concat
-    [ formatTime defaultTimeLocale "[%H:%M] " $ utcToLocalTime tzone $ zonedTimeToUTC $ msgTime msg
-    , maybe "<unnamed>" T.unpack $ iddName $ fromStored $ signedData $ fromStored $ msgFrom msg
-    , ": "
-    , T.unpack $ msgText msg
-    ]

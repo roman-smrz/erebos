@@ -4,6 +4,7 @@ module Network (
     PeerIdentity(..), peerIdentityRef,
     PeerChannel(..),
     WaitingRef, wrDigest,
+    Service(..),
     startServer,
     sendToPeer,
 ) where
@@ -13,8 +14,6 @@ import Control.Exception
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.State
-
-import Crypto.Random
 
 import qualified Data.ByteString.Char8 as BC
 import qualified Data.ByteString.Lazy as BL
@@ -28,6 +27,7 @@ import Network.Socket.ByteString (recvFrom, sendTo)
 import Channel
 import Identity
 import PubKey
+import Service
 import Storage
 
 
@@ -43,6 +43,7 @@ data Peer = Peer
     , peerSocket :: Socket
     , peerStorage :: Storage
     , peerInStorage :: PartialStorage
+    , peerServiceState :: M.Map T.Text SomeService
     , peerServiceQueue :: [(T.Text, WaitingRef)]
     , peerWaitingRefs :: [WaitingRef]
     }
@@ -149,8 +150,8 @@ receivedWaitingRef nref wr@(WaitingRef _ _ mvar) = do
     checkWaitingRef wr
 
 
-startServer :: (String -> IO ()) -> String -> UnifiedIdentity -> IO (Chan Peer, Chan (Peer, T.Text, Ref))
-startServer logd bhost identity = do
+startServer :: (String -> IO ()) -> String -> UnifiedIdentity -> [(T.Text, SomeService)] -> IO (Chan Peer)
+startServer logd bhost identity services = do
     let sidentity = idData identity
     chanPeer <- newChan
     chanSvc <- newChan
@@ -191,6 +192,7 @@ startServer logd bhost identity = do
                                   , peerSocket = sock
                                   , peerStorage = pst
                                   , peerInStorage = ist
+                                  , peerServiceState = M.empty
                                   , peerServiceQueue = []
                                   , peerWaitingRefs = []
                                   }
@@ -220,7 +222,28 @@ startServer logd bhost identity = do
         addr:_ <- getAddrInfo (Just hints) Nothing (Just discoveryPort)
         bracket (open addr) close loop
 
-    return (chanPeer, chanSvc)
+    void $ forkIO $ forever $ readChan chanSvc >>= \case
+        (peer, svc, ref)
+            | PeerIdentityFull peerId <- peerIdentity peer
+            , PeerIdentityFull peerOwnerId <- peerOwner peer
+            , DatagramAddress paddr <- peerAddress peer
+            -> case maybe (lookup svc services) Just $ M.lookup svc (peerServiceState peer) of
+                    Nothing -> logd $ "unhandled service '" ++ T.unpack svc ++ "'"
+                    Just (SomeService s) -> do
+                        let inp = ServiceInput
+                                { svcPeer = peerId, svcPeerOwner = peerOwnerId
+                                , svcPrintOp = logd
+                                }
+                        (rsp, s') <- handleServicePacket (storedStorage sidentity) inp s (wrappedLoad ref)
+                        modifyMVar_ peers $ return . M.adjust (\p -> p { peerServiceState = M.insert svc (SomeService s') $ peerServiceState p }) paddr
+                        runExceptT (maybe (return ()) (sendToPeer identity peer svc) rsp) >>= \case
+                            Left err -> logd $ "failed to send response to peer: " ++ show err
+                            Right () -> return ()
+
+            | DatagramAddress paddr <- peerAddress peer -> do
+                logd $ "service packet from peer with incomplete identity " ++ show paddr
+
+    return chanPeer
 
 type PacketHandler a = StateT PacketHandlerState (ExceptT String IO) a
 
@@ -452,7 +475,7 @@ handleServices chan = gets (peerServiceQueue . phPeer) >>= \case
         updatePeer $ \p -> p { peerServiceQueue = queue' }
 
 
-sendToPeer :: (Storable a, MonadIO m, MonadError String m, MonadRandom m) => UnifiedIdentity -> Peer -> T.Text -> a -> m ()
+sendToPeer :: (Storable a, MonadIO m, MonadError String m) => UnifiedIdentity -> Peer -> T.Text -> a -> m ()
 sendToPeer _ peer@Peer { peerChannel = ChannelEstablished ch } svc obj = do
     let st = peerInStorage peer
     ref <- liftIO $ store st obj
