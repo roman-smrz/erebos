@@ -170,7 +170,7 @@ copyRef' st ref'@(Ref _ dgst) = refFromDigest st dgst >>= \case Just ref -> retu
                                                                 Nothing  -> doCopy
     where doCopy = do mbobj' <- ioLoadObject ref'
                       mbobj <- sequence $ copyObject' st <$> mbobj'
-                      sequence $ storeObject st <$> join mbobj
+                      sequence $ unsafeStoreObject st <$> join mbobj
 
 copyObject' :: forall c c'. (StorageCompleteness c, StorageCompleteness c') => Storage' c' -> Object' c -> IO (c (Object' c'))
 copyObject' _ (Blob bs) = return $ return $ Blob bs
@@ -227,10 +227,13 @@ serializeObject = \case
                 in BL.fromChunks [BC.pack "rec ", BC.pack (show $ BL.length cnt), BC.singleton '\n'] `BL.append` cnt
     ZeroObject -> BL.empty
 
-storeObject :: Storage' c -> Object' c -> IO (Ref' c)
-storeObject storage = \case
+unsafeStoreObject :: Storage' c -> Object' c -> IO (Ref' c)
+unsafeStoreObject storage = \case
     ZeroObject -> return $ zeroRef storage
     obj -> unsafeStoreRawBytes storage $ serializeObject obj
+
+storeObject :: PartialStorage -> PartialObject -> IO PartialRef
+storeObject = unsafeStoreObject
 
 storeRawBytes :: PartialStorage -> BL.ByteString -> IO PartialRef
 storeRawBytes = unsafeStoreRawBytes
@@ -417,7 +420,7 @@ class Storable a where
     load' :: Load a
 
     store :: StorageCompleteness c => Storage' c -> a -> IO (Ref' c)
-    store st = storeObject st <=< evalStore st . store'
+    store st = unsafeStoreObject st <=< evalStore st . store'
     load :: Ref -> a
     load ref = let Load f = load'
                 in either (error {- TODO throw -} . ((BC.unpack (showRef ref) ++ ": ")++)) id $ f ref $ lazyLoadObject ref
@@ -450,7 +453,7 @@ instance Storable Object where
 
     load' = Load $ const return
 
-    store st = storeObject st <=< copyObject st
+    store st = unsafeStoreObject st <=< copyObject st
     load = lazyLoadObject
 
 instance Storable ByteString where
