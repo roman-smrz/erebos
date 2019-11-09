@@ -48,7 +48,11 @@ signedSignature = signedSignature_
 instance KeyPair SecretKey PublicKey where
     keyGetPublic (SecretKey _ pub) = pub
     keyGetData (SecretKey sec _) = convert sec
-    keyFromData kdata spub = SecretKey <$> maybeCryptoError (ED.secretKey kdata) <*> pure spub
+    keyFromData kdata spub = do
+        skey <- maybeCryptoError $ ED.secretKey kdata
+        let PublicKey pkey = fromStored spub
+        guard $ ED.toPublic skey == pkey
+        return $ SecretKey skey spub
     generateKeys st = do
         secret <- ED.generateSecretKey
         public <- wrappedStore st $ PublicKey $ ED.toPublic secret
@@ -115,7 +119,11 @@ data SecretKexKey = SecretKexKey CX.SecretKey (Stored PublicKexKey)
 instance KeyPair SecretKexKey PublicKexKey where
     keyGetPublic (SecretKexKey _ pub) = pub
     keyGetData (SecretKexKey sec _) = convert sec
-    keyFromData kdata spub = SecretKexKey <$> maybeCryptoError (CX.secretKey kdata) <*> pure spub
+    keyFromData kdata spub = do
+        skey <- maybeCryptoError $ CX.secretKey kdata
+        let PublicKexKey pkey = fromStored spub
+        guard $ CX.toPublic skey == pkey
+        return $ SecretKexKey skey spub
     generateKeys st = do
         secret <- CX.generateSecretKey
         public <- wrappedStore st $ PublicKexKey $ CX.toPublic secret

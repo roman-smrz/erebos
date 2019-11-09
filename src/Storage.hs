@@ -29,12 +29,14 @@ module Storage (
 
     loadBlob, loadRec, loadZero,
     loadInt, loadNum, loadText, loadBinary, loadDate, loadJson, loadRef,
-    loadMbInt, loadMbNum, loadMbText, loadMbBinary, loadMbDate, loadMbJson, loadMbRef, loadRefs,
+    loadMbInt, loadMbNum, loadMbText, loadMbBinary, loadMbDate, loadMbJson, loadMbRef,
+    loadBinaries, loadRefs,
     loadZRef,
 
     Stored,
     fromStored, storedRef, storedStorage,
     wrappedStore, wrappedLoad,
+    copyStored,
 
     StoreInfo(..), makeStoreInfo,
 
@@ -631,6 +633,12 @@ loadMbBinary name = asks (lookup (BC.pack name) . snd) >>= \case
     Just (RecBinary x) -> return $ Just $ BA.convert x
     Just _ -> throwError $ "Expecting type binary of record item '"++name++"'"
 
+loadBinaries :: BA.ByteArray a => String -> LoadRec [a]
+loadBinaries name = do
+    items <- map snd . filter ((BC.pack name ==) . fst) <$> asks snd
+    forM items $ \case RecBinary x -> return $ BA.convert x
+                       _ -> throwError $ "Expecting type binary of record item '"++name++"'"
+
 loadDate :: StorableDate a => String -> LoadRec a
 loadDate name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbDate name
 
@@ -718,6 +726,10 @@ wrappedStore st x = do ref <- store st x
 
 wrappedLoad :: Storable a => Ref -> Stored a
 wrappedLoad ref = Stored ref (load ref)
+
+copyStored :: forall c c' m a. (StorageCompleteness c, StorageCompleteness c', MonadIO m) =>
+    Storage' c' -> Stored' c a -> m (LoadResult c (Stored' c' a))
+copyStored st (Stored ref' x) = liftIO $ returnLoadResult . fmap (flip Stored x) <$> copyRef' st ref'
 
 
 data StoreInfo = StoreInfo

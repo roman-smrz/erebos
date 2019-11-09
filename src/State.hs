@@ -4,6 +4,10 @@ module State (
 
     loadLocalState,
     updateLocalState, updateLocalState_,
+    updateSharedState, updateSharedState_,
+    mergeSharedStates,
+
+    mergeSharedIdentity,
     updateIdentity,
 ) where
 
@@ -118,6 +122,15 @@ mergeSharedStates ss@(s:_) = wrappedStore (storedStorage s) $ SharedState
         , ssIdentity = uniq $ sort $ concatMap (ssIdentity . fromStored) $ ss -- TODO: ancestor elimination
         }
 mergeSharedStates [] = error "mergeSharedStates: empty list"
+
+
+mergeSharedIdentity :: Storage -> IO UnifiedIdentity
+mergeSharedIdentity st = updateSharedState st $ \sshared -> do
+    let shared = fromStored sshared
+        Just cidentity = verifyIdentityF $ ssIdentity shared
+    identity <- mergeIdentity cidentity
+    sshared' <- wrappedStore st $ shared { ssIdentity = [idData identity] }
+    return (sshared', identity)
 
 updateIdentity :: Storage -> IO ()
 updateIdentity st = updateSharedState_ st $ \sshared -> do

@@ -6,7 +6,7 @@ module Network (
     WaitingRef, wrDigest,
     Service(..),
     startServer,
-    sendToPeer,
+    sendToPeer, sendToPeerWith,
 ) where
 
 import Control.Concurrent
@@ -43,7 +43,7 @@ data Peer = Peer
     , peerSocket :: Socket
     , peerStorage :: Storage
     , peerInStorage :: PartialStorage
-    , peerServiceState :: M.Map T.Text SomeService
+    , peerServiceState :: MVar (M.Map T.Text SomeService)
     , peerServiceQueue :: [(T.Text, WaitingRef)]
     , peerWaitingRefs :: [WaitingRef]
     }
@@ -184,6 +184,7 @@ startServer logd bhost identity services = do
                     | otherwise -> do
                           pst <- deriveEphemeralStorage $ storedStorage sidentity
                           ist <- derivePartialStorage pst
+                          svcs <- newMVar M.empty
                           let peer = Peer
                                   { peerAddress = DatagramAddress paddr
                                   , peerIdentity = PeerIdentityUnknown
@@ -192,7 +193,7 @@ startServer logd bhost identity services = do
                                   , peerSocket = sock
                                   , peerStorage = pst
                                   , peerInStorage = ist
-                                  , peerServiceState = M.empty
+                                  , peerServiceState = svcs
                                   , peerServiceQueue = []
                                   , peerWaitingRefs = []
                                   }
@@ -226,19 +227,20 @@ startServer logd bhost identity services = do
         (peer, svc, ref)
             | PeerIdentityFull peerId <- peerIdentity peer
             , PeerIdentityFull peerOwnerId <- peerOwner peer
-            , DatagramAddress paddr <- peerAddress peer
-            -> case maybe (lookup svc services) Just $ M.lookup svc (peerServiceState peer) of
-                    Nothing -> logd $ "unhandled service '" ++ T.unpack svc ++ "'"
-                    Just (SomeService s) -> do
-                        let inp = ServiceInput
-                                { svcPeer = peerId, svcPeerOwner = peerOwnerId
-                                , svcPrintOp = logd
-                                }
-                        (rsp, s') <- handleServicePacket (storedStorage sidentity) inp s (wrappedLoad ref)
-                        modifyMVar_ peers $ return . M.adjust (\p -> p { peerServiceState = M.insert svc (SomeService s') $ peerServiceState p }) paddr
-                        runExceptT (maybe (return ()) (sendToPeer identity peer svc) rsp) >>= \case
-                            Left err -> logd $ "failed to send response to peer: " ++ show err
-                            Right () -> return ()
+            -> modifyMVar_ (peerServiceState peer) $ \svcs ->
+                   case maybe (lookup svc services) Just $ M.lookup svc svcs of
+                        Nothing -> do logd $ "unhandled service '" ++ T.unpack svc ++ "'"
+                                      return svcs
+                        Just (SomeService s) -> do
+                            let inp = ServiceInput
+                                    { svcPeer = peerId, svcPeerOwner = peerOwnerId
+                                    , svcPrintOp = logd
+                                    }
+                            (rsp, s') <- handleServicePacket (storedStorage sidentity) inp s (wrappedLoad ref)
+                            runExceptT (maybe (return ()) (sendToPeer identity peer svc) rsp) >>= \case
+                                Left err -> logd $ "failed to send response to peer: " ++ show err
+                                Right () -> return ()
+                            return $ M.insert svc (SomeService s') svcs
 
             | DatagramAddress paddr <- peerAddress peer -> do
                 logd $ "service packet from peer with incomplete identity " ++ show paddr
@@ -491,3 +493,14 @@ sendToPeer _ peer@Peer { peerChannel = ChannelEstablished ch } svc obj = do
     void $ liftIO $ sendTo (peerSocket peer) ctext paddr
 
 sendToPeer _ _ _ _ = throwError $ "no channel to peer"
+
+sendToPeerWith :: (Service s, MonadIO m, MonadError String m) => UnifiedIdentity -> Peer -> T.Text -> (s -> ExceptT String IO (Maybe (ServicePacket s), s)) -> m ()
+sendToPeerWith identity peer svc fobj = do
+    res <- liftIO $ modifyMVar (peerServiceState peer) $ \svcs -> do
+        runExceptT (fobj $ fromMaybe emptyServiceState $ fromService =<< M.lookup svc svcs) >>= \case
+            Right (obj, s') -> return $ (M.insert svc (SomeService s') svcs, Right obj)
+            Left err -> return $ (svcs, Left err)
+    case res of
+         Right (Just obj) -> sendToPeer identity peer svc obj
+         Right Nothing -> return ()
+         Left err -> throwError err

@@ -1,5 +1,5 @@
 module Message.Service (
-    DirectMessageService,
+    DirectMessageService(..),
     formatMessage,
 ) where
 

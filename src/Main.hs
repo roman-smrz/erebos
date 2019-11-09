@@ -22,6 +22,7 @@ import Data.Time.LocalTime
 import System.Console.Haskeline
 import System.Environment
 
+import Attach
 import Identity
 import Message
 import Message.Service
@@ -70,7 +71,8 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
     let extPrintLn str = extPrint $ str ++ "\n";
     chanPeer <- liftIO $
         startServer extPrintLn bhost self
-            [ (T.pack "dmsg", SomeService (emptyServiceState :: DirectMessageService))
+            [ (T.pack "attach", SomeService (emptyServiceState :: AttachService))
+            , (T.pack "dmsg", SomeService (emptyServiceState :: DirectMessageService))
             ]
 
     peers <- liftIO $ newMVar []
@@ -110,6 +112,7 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
             res <- liftIO $ runExceptT $ flip execStateT cstate $ runReaderT cmd CommandInput
                 { ciSelf = self
                 , ciLine = line
+                , ciPrint = extPrintLn
                 , ciPeers = liftIO $ readMVar peers
                 }
             case res of
@@ -125,6 +128,7 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
 data CommandInput = CommandInput
     { ciSelf :: UnifiedIdentity
     , ciLine :: String
+    , ciPrint :: String -> IO ()
     , ciPeers :: CommandM [Peer]
     }
 
@@ -149,6 +153,8 @@ commands =
     , ("peers", cmdPeers)
     , ("send", cmdSend)
     , ("update-identity", cmdUpdateIdentity)
+    , ("attach", cmdAttach)
+    , ("attach-accept", cmdAttachAccept)
     ]
 
 cmdUnknown :: String -> Command
@@ -213,3 +219,15 @@ cmdUpdateIdentity :: Command
 cmdUpdateIdentity = void $ do
     st <- asks $ storedStorage . idData . ciSelf
     liftIO $ updateIdentity st
+
+cmdAttach :: Command
+cmdAttach = join $ attachToOwner
+    <$> asks ciPrint
+    <*> asks ciSelf
+    <*> (maybe (throwError "no peer selected") return =<< gets csPeer)
+
+cmdAttachAccept :: Command
+cmdAttachAccept = join $ attachAccept
+    <$> asks ciPrint
+    <*> asks ciSelf
+    <*> (maybe (throwError "no peer selected") return =<< gets csPeer)
