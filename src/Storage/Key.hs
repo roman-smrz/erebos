@@ -31,13 +31,13 @@ storeKey :: KeyPair sec pub => sec -> IO ()
 storeKey key = do
     let spub = keyGetPublic key
     case stBacking $ storedStorage spub of
-         StorageDir dir -> writeFileOnce (keyFilePath dir spub) (BL.fromStrict $ convert $ keyGetData key)
+         StorageDir { dirPath = dir } -> writeFileOnce (keyFilePath dir spub) (BL.fromStrict $ convert $ keyGetData key)
          StorageMemory { memKeys = kstore } -> modifyMVar_ kstore $ return . M.insert (refDigest $ storedRef spub) (keyGetData key)
 
 loadKey :: KeyPair sec pub => Stored pub -> IO (Maybe sec)
 loadKey spub = do
     case stBacking $ storedStorage spub of
-         StorageDir dir -> tryIOError (BC.readFile (keyFilePath dir spub)) >>= \case
+         StorageDir { dirPath = dir } -> tryIOError (BC.readFile (keyFilePath dir spub)) >>= \case
              Right kdata -> return $ keyFromData (convert kdata) spub
              Left _ -> return Nothing
          StorageMemory { memKeys = kstore } -> (flip keyFromData spub <=< M.lookup (refDigest $ storedRef spub)) <$> readMVar kstore

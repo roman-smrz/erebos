@@ -18,6 +18,7 @@ module Storage (
     Head,
     headName, headRef, headObject,
     loadHeads, loadHead, loadHeadDef, replaceHead,
+    watchHead,
 
     Storable(..),
     StorableText(..), StorableDate(..),
@@ -95,6 +96,7 @@ import Data.Time.Format
 import Data.Time.LocalTime
 
 import System.Directory
+import System.INotify
 import System.IO.Error
 import System.IO.Unsafe
 
@@ -108,11 +110,12 @@ openStorage :: FilePath -> IO Storage
 openStorage path = do
     createDirectoryIfMissing True $ path ++ "/objects"
     createDirectoryIfMissing True $ path ++ "/heads"
-    return $ Storage { stBacking = StorageDir path, stParent = Nothing }
+    watchers <- newMVar (Nothing, [])
+    return $ Storage { stBacking = StorageDir path watchers, stParent = Nothing }
 
 memoryStorage' :: IO (Storage' c')
 memoryStorage' = do
-    backing <- StorageMemory <$> newMVar [] <*> newMVar M.empty <*> newMVar M.empty
+    backing <- StorageMemory <$> newMVar [] <*> newMVar M.empty <*> newMVar M.empty <*> newMVar []
     return $ Storage { stBacking = backing, stParent = Nothing }
 
 memoryStorage :: IO Storage
@@ -242,7 +245,7 @@ unsafeStoreRawBytes :: Storage' c -> BL.ByteString -> IO (Ref' c)
 unsafeStoreRawBytes st raw = do
     let dgst = hashFinalize $ hashUpdates hashInit $ BL.toChunks raw
     case stBacking st of
-         StorageDir sdir -> writeFileOnce (refPath sdir dgst) $ compress raw
+         StorageDir { dirPath = sdir } -> writeFileOnce (refPath sdir dgst) $ compress raw
          StorageMemory { memObjs = tobjs } ->
              dgst `deepseq` -- the TVar may be accessed when evaluating the data to be written
                  modifyMVar_ tobjs (return . M.insert dgst raw)
@@ -363,7 +366,7 @@ headObject = load . headRef
 
 
 loadHeads :: Storage -> IO [Head]
-loadHeads s@(Storage { stBacking = StorageDir spath }) = do
+loadHeads s@(Storage { stBacking = StorageDir { dirPath = spath }}) = do
     let hpath = spath ++ "/heads/"
     files <- filterM (doesFileExist . (hpath++)) =<< getDirectoryContents hpath
     forM files $ \hname -> do
@@ -373,7 +376,7 @@ loadHeads s@(Storage { stBacking = StorageDir spath }) = do
 loadHeads Storage { stBacking = StorageMemory { memHeads = theads } } = readMVar theads
 
 loadHead :: Storage -> String -> IO (Maybe Head)
-loadHead s@(Storage { stBacking = StorageDir spath }) hname = do
+loadHead s@(Storage { stBacking = StorageDir { dirPath = spath }}) hname = do
     handleJust (guard . isDoesNotExistError) (const $ return Nothing) $ do
         let hpath = spath ++ "/heads/"
         (h:_) <- BC.lines <$> B.readFile (hpath ++ hname)
@@ -394,7 +397,7 @@ replaceHead obj prev = do
     let (st, name) = either id (\(Head n (Ref s _)) -> (s, n)) prev
     ref <- store st obj
     case stBacking st of
-         StorageDir spath -> do
+         StorageDir { dirPath = spath } -> do
              let filename = spath ++ "/heads/" ++ name
                  showRefL r = showRef r `B.append` BC.singleton '\n'
 
@@ -404,15 +407,38 @@ replaceHead obj prev = do
                                       return $ Left $ Just $ Head name oref
                  Right () -> return $ Right $ Head name ref
 
-         StorageMemory { memHeads = theads } -> modifyMVar theads $ \hs ->
-             case (partition ((== name) . headName) hs, prev) of
-                  (([], _), Left _)  -> let h = Head name ref
-                                         in return (h:hs, Right h)
-                  (([], _), Right _) -> return (hs, Left Nothing)
-                  ((h:_, _), Left _) -> return (hs, Left (Just h))
-                  ((h:_, hs'), Right h') | headRef h == headRef h' -> let nh = Head name ref
-                                                                       in return (nh:hs', Right nh)
-                                         | otherwise -> return (hs, Left (Just h))
+         StorageMemory { memHeads = theads, memWatchers = twatch } -> do
+             res <- modifyMVar theads $ \hs -> do
+                 ws <- map snd . filter ((==name) . fst) <$> readMVar twatch
+                 case (partition ((== name) . headName) hs, prev) of
+                      (([], _), Left _)  -> let h = Head name ref
+                                             in return (h:hs, Right (h, ws))
+                      (([], _), Right _) -> return (hs, Left Nothing)
+                      ((h:_, _), Left _) -> return (hs, Left (Just h))
+                      ((h:_, hs'), Right h') | headRef h == headRef h' -> let nh = Head name ref
+                                                                           in return (nh:hs', Right (nh, ws))
+                                             | otherwise -> return (hs, Left (Just h))
+             case res of
+                  Right (h, ws) -> mapM_ ($h) ws >> return (Right h)
+                  Left x -> return $ Left x
+
+watchHead :: Head -> (Head -> IO ()) -> IO ()
+watchHead (Head name (Ref st _)) cb = do
+    case stBacking st of
+         StorageDir { dirPath = spath, dirWatchers = mvar } -> modifyMVar_ mvar $ \(mbi, watchers) -> do
+             inotify <- (\f -> maybe f return mbi) $ do
+                 inotify <- initINotify
+                 void $ addWatch inotify [Move] (BC.pack $ spath ++ "/heads") $ \case
+                     MovedIn { filePath = fpath } -> do
+                         let cname = BC.unpack fpath
+                         loadHead st cname >>= \case
+                             Just h -> mapM_ ($h) . map snd . filter ((== cname) . fst) . snd =<< readMVar mvar
+                             Nothing -> return ()
+                     _ -> return ()
+                 return inotify
+             return (Just inotify, (name, cb) : watchers)
+
+         StorageMemory { memWatchers = mvar } -> modifyMVar_ mvar $ return . ((name, cb) :)
 
 
 class Storable a where

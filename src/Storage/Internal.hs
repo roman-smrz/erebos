@@ -21,6 +21,7 @@ import qualified Data.Map as M
 
 import System.Directory
 import System.FilePath
+import System.INotify (INotify)
 import System.IO
 import System.IO.Error
 import System.Posix.Files
@@ -35,7 +36,7 @@ data Storage' c = Storage
     deriving (Eq)
 
 instance Show (Storage' c) where
-    show st@(Storage { stBacking = StorageDir path }) = "dir" ++ showParentStorage st ++ ":" ++ path
+    show st@(Storage { stBacking = StorageDir { dirPath = path }}) = "dir" ++ showParentStorage st ++ ":" ++ path
     show st@(Storage { stBacking = StorageMemory {} }) = "mem" ++ showParentStorage st
 
 showParentStorage :: Storage' c -> String
@@ -43,10 +44,13 @@ showParentStorage Storage { stParent = Nothing } = ""
 showParentStorage Storage { stParent = Just st } = "@" ++ show st
 
 data StorageBacking c
-         = StorageDir FilePath
+         = StorageDir { dirPath :: FilePath
+                      , dirWatchers :: MVar (Maybe INotify, [(String, Head' c -> IO ())])
+                      }
          | StorageMemory { memHeads :: MVar [Head' c]
                          , memObjs :: MVar (Map RefDigest BL.ByteString)
                          , memKeys :: MVar (Map RefDigest ScrubbedBytes)
+                         , memWatchers :: MVar [(String, Head' c -> IO ())]
                          }
     deriving (Eq)
 
@@ -107,7 +111,7 @@ ioLoadBytesFromStorage st dgst = loadCurrent st >>=
     \case Just bytes -> return $ Just bytes
           Nothing | Just parent <- stParent st -> ioLoadBytesFromStorage parent dgst
                   | otherwise                  -> return Nothing
-    where loadCurrent Storage { stBacking = StorageDir spath } = handleJust (guard . isDoesNotExistError) (const $ return Nothing) $
+    where loadCurrent Storage { stBacking = StorageDir { dirPath = spath } } = handleJust (guard . isDoesNotExistError) (const $ return Nothing) $
               Just . decompress <$> (BL.readFile $ refPath spath dgst)
           loadCurrent Storage { stBacking = StorageMemory { memObjs = tobjs } } = M.lookup dgst <$> readMVar tobjs
 
