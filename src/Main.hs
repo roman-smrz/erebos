@@ -17,6 +17,7 @@ import Data.Char
 import Data.List
 import Data.Maybe
 import qualified Data.Text as T
+import qualified Data.Text.IO as T
 import Data.Time.LocalTime
 
 import System.Console.Haskeline
@@ -51,6 +52,19 @@ main = do
                         forM_ (signedSignature signed) $ \sig -> do
                             putStr $ "SIG "
                             BC.putStrLn $ showRef $ storedRef $ sigKey $ fromStored sig
+                    "identity" -> case verifyIdentity (wrappedLoad ref) of
+                        Just identity -> do
+                            let disp idt = do
+                                    maybe (return ()) (T.putStrLn . (T.pack "Name: " `T.append`)) $ idName idt
+                                    BC.putStrLn . (BC.pack "KeyId: " `BC.append`) . showRefDigest . refDigest . storedRef $ idKeyIdentity idt
+                                    BC.putStrLn . (BC.pack "KeyMsg: " `BC.append`) . showRefDigest . refDigest . storedRef $ idKeyMessage idt
+                                    case idOwner idt of
+                                         Nothing -> return ()
+                                         Just owner -> do
+                                             putStrLn $ "OWNER " ++ BC.unpack (showRefDigest $ refDigest $ storedRef $ idData owner)
+                                             disp owner
+                            disp identity
+                        Nothing -> putStrLn $ "Identity verification failed"
                     _ -> error $ "unknown object type '" ++ objtype ++ "'"
 
         ["update-identity"] -> updateIdentity st
