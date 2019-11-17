@@ -75,16 +75,15 @@ main = do
 interactiveLoop :: Storage -> String -> IO ()
 interactiveLoop st bhost = runInputT defaultSettings $ do
     erebosHead <- liftIO $ loadLocalState st
-    let serebos = wrappedLoad (headRef erebosHead) :: Stored LocalState
-        Just self = verifyIdentity $ lsIdentity $ fromStored serebos
-    outputStrLn $ T.unpack $ displayIdentity self
+    outputStrLn $ T.unpack $ maybe (error "failed to verify local identity") displayIdentity $
+        verifyIdentity $ lsIdentity $ fromStored $ wrappedLoad $ headRef erebosHead
 
     haveTerminalUI >>= \case True -> return ()
                              False -> error "Requires terminal"
     extPrint <- getExternalPrint
     let extPrintLn str = extPrint $ str ++ "\n";
     chanPeer <- liftIO $
-        startServer extPrintLn bhost self
+        startServer erebosHead extPrintLn bhost
             [ (T.pack "attach", SomeService (emptyServiceState :: AttachService))
             , (T.pack "dmsg", SomeService (emptyServiceState :: DirectMessageService))
             ]
@@ -123,8 +122,10 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
                                        then (cmdSetPeer $ read scmd, args)
                                        else (fromMaybe (cmdUnknown scmd) $ lookup scmd commands, args)
                     _        -> (cmdSend, input)
+            curHead <- liftIO $ loadLocalState st
             res <- liftIO $ runExceptT $ flip execStateT cstate $ runReaderT cmd CommandInput
-                { ciSelf = self
+                { ciSelf = fromMaybe (error "failed to verify local identity") $
+                    verifyIdentity $ lsIdentity $ fromStored $ wrappedLoad $ headRef curHead
                 , ciLine = line
                 , ciPrint = extPrintLn
                 , ciPeers = liftIO $ readMVar peers

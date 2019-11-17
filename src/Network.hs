@@ -28,11 +28,15 @@ import Channel
 import Identity
 import PubKey
 import Service
+import State
 import Storage
 
 
 discoveryPort :: ServiceName
 discoveryPort = "29665"
+
+announceIntervalSeconds :: Int
+announceIntervalSeconds = 60
 
 
 data Peer = Peer
@@ -150,12 +154,16 @@ receivedWaitingRef nref wr@(WaitingRef _ _ mvar) = do
     checkWaitingRef wr
 
 
-startServer :: (String -> IO ()) -> String -> UnifiedIdentity -> [(T.Text, SomeService)] -> IO (Chan Peer)
-startServer logd bhost identity services = do
-    let sidentity = idData identity
+startServer :: Head -> (String -> IO ()) -> String -> [(T.Text, SomeService)] -> IO (Chan Peer)
+startServer origHead logd bhost services = do
+    let storage = refStorage $ headRef origHead
     chanPeer <- newChan
     chanSvc <- newChan
     peers <- newMVar M.empty
+
+    Just self <- return $ verifyIdentity $ lsIdentity $
+        fromStored $ wrappedLoad $ headRef origHead
+    midentity <- newMVar $ self
 
     let open addr = do
             sock <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
@@ -166,9 +174,21 @@ startServer logd bhost identity services = do
             return sock
 
         loop sock = do
-            st <- derivePartialStorage $ storedStorage sidentity
-            baddr:_ <- getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just bhost) (Just discoveryPort)
-            void $ sendTo sock (BL.toStrict $ serializeObject $ transportToObject $ TransportHeader [ AnnounceSelf $ partialRef st $ storedRef sidentity ]) (addrAddress baddr)
+            let announce identity = do
+                    st <- derivePartialStorage storage
+                    baddr:_ <- getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just bhost) (Just discoveryPort)
+                    void $ sendTo sock (BL.toStrict $ serializeObject $ transportToObject $ TransportHeader [ AnnounceSelf $ partialRef st $ storedRef $ idData identity ]) (addrAddress baddr)
+
+            void $ forkIO $ forever $ do
+                announce =<< readMVar midentity
+                threadDelay $ announceIntervalSeconds * 1000 * 1000
+
+            watchHead origHead $ \h -> do
+                idt <- modifyMVar midentity $ \cur -> do
+                    return $ (\x -> (x,x)) $ fromMaybe cur $ verifyIdentity $ lsIdentity $
+                        fromStored $ wrappedLoad $ headRef h
+                announce idt
+
             forever $ do
                 (msg, paddr) <- recvFrom sock 4096
                 mbpeer <- M.lookup paddr <$> readMVar peers
@@ -182,7 +202,7 @@ startServer logd bhost identity services = do
                     -> return (peer, msg, False)
 
                     | otherwise -> do
-                          pst <- deriveEphemeralStorage $ storedStorage sidentity
+                          pst <- deriveEphemeralStorage storage
                           ist <- derivePartialStorage pst
                           svcs <- newMVar M.empty
                           let peer = Peer
@@ -203,6 +223,7 @@ startServer logd bhost identity services = do
                      Right (obj:objs)
                          | Just header <- transportFromObject obj -> do
                                forM_ objs $ storeObject $ peerInStorage peer
+                               identity <- readMVar midentity
                                handlePacket logd identity secure peer chanSvc header >>= \case
                                    Just peer' -> do
                                        modifyMVar_ peers $ return . M.insert paddr peer'
@@ -236,7 +257,8 @@ startServer logd bhost identity services = do
                                     { svcPeer = peerId, svcPeerOwner = peerOwnerId
                                     , svcPrintOp = logd
                                     }
-                            (rsp, s') <- handleServicePacket (storedStorage sidentity) inp s (wrappedLoad ref)
+                            (rsp, s') <- handleServicePacket storage inp s (wrappedLoad ref)
+                            identity <- readMVar midentity
                             runExceptT (maybe (return ()) (sendToPeer identity peer svc) rsp) >>= \case
                                 Left err -> logd $ "failed to send response to peer: " ++ show err
                                 Right () -> return ()
