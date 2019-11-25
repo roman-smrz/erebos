@@ -2,17 +2,22 @@
 
 module Identity (
     Identity, ComposedIdentity, UnifiedIdentity, IdentityData(..),
-    idData, idDataF, idName, idOwner, idKeyIdentity, idKeyMessage,
+    idData, idDataF, idName, idOwner, idUpdates, idKeyIdentity, idKeyMessage,
 
     emptyIdentityData,
-    verifyIdentity, verifyIdentityF,
-    mergeIdentity, toComposedIdentity,
+    validateIdentity, validateIdentityF,
+    loadIdentity,
+
+    mergeIdentity, toUnifiedIdentity, toComposedIdentity,
+    updateIdentity, updateOwners,
+    sameIdentity,
 
     finalOwner,
     displayIdentity,
 ) where
 
 import Control.Monad
+import Control.Monad.Except
 import qualified Control.Monad.Identity as I
 
 import Data.Foldable
@@ -27,11 +32,13 @@ import qualified Data.Text as T
 
 import PubKey
 import Storage
+import Storage.Merge
 
 data Identity m = Identity
     { idData_ :: m (Stored (Signed IdentityData))
     , idName_ :: Maybe Text
-    , idOwner_ :: Maybe UnifiedIdentity
+    , idOwner_ :: Maybe ComposedIdentity
+    , idUpdates_ :: [Stored (Signed IdentityData)]
     , idKeyIdentity_ :: Stored PublicKey
     , idKeyMessage_ :: Stored PublicKey
     }
@@ -55,14 +62,14 @@ data IdentityData = IdentityData
 
 instance Storable IdentityData where
     store' idt = storeRec $ do
-        mapM_ (storeRef "PREV") $ iddPrev idt
+        mapM_ (storeRef "SPREV") $ iddPrev idt
         storeMbText "name" $ iddName idt
         storeMbRef "owner" $ iddOwner idt
         storeRef "key-id" $ iddKeyIdentity idt
         storeMbRef "key-msg" $ iddKeyMessage idt
 
     load' = loadRec $ IdentityData
-        <$> loadRefs "PREV"
+        <$> loadRefs "SPREV"
         <*> loadMbText "name"
         <*> loadMbRef "owner"
         <*> loadRef "key-id"
@@ -77,8 +84,11 @@ idDataF = idData_
 idName :: Identity m -> Maybe Text
 idName = idName_
 
-idOwner :: Identity m -> Maybe UnifiedIdentity
+idOwner :: Identity m -> Maybe ComposedIdentity
 idOwner = idOwner_
+
+idUpdates :: Identity m -> [Stored (Signed IdentityData)]
+idUpdates = idUpdates_
 
 idKeyIdentity :: Identity m -> Stored PublicKey
 idKeyIdentity = idKeyIdentity_
@@ -96,11 +106,11 @@ emptyIdentityData key = IdentityData
     , iddKeyMessage = Nothing
     }
 
-verifyIdentity :: Stored (Signed IdentityData) -> Maybe UnifiedIdentity
-verifyIdentity = verifyIdentityF . I.Identity
+validateIdentity :: Stored (Signed IdentityData) -> Maybe UnifiedIdentity
+validateIdentity = validateIdentityF . I.Identity
 
-verifyIdentityF :: Foldable m => m (Stored (Signed IdentityData)) -> Maybe (Identity m)
-verifyIdentityF mdata = do
+validateIdentityF :: Foldable m => m (Stored (Signed IdentityData)) -> Maybe (Identity m)
+validateIdentityF mdata = do
     let idata = toList mdata -- TODO: eliminate ancestors
     guard $ not $ null idata
     mapM_ verifySignatures $ gatherPrevious S.empty idata
@@ -109,9 +119,14 @@ verifyIdentityF mdata = do
         <*> pure (lookupProperty iddName idata)
         <*> case lookupProperty iddOwner idata of
                  Nothing    -> return Nothing
-                 Just owner -> Just <$> verifyIdentity owner
+                 Just owner -> Just <$> validateIdentityF [owner]
+        <*> pure []
         <*> pure (iddKeyIdentity $ fromStored $ signedData $ fromStored $ minimum idata)
         <*> lookupProperty iddKeyMessage idata
+
+loadIdentity :: String -> LoadRec ComposedIdentity
+loadIdentity name = maybe (throwError "identity validation failed") return . validateIdentityF =<< loadRefs name
+
 
 gatherPrevious :: Set (Stored (Signed IdentityData)) -> [Stored (Signed IdentityData)] -> Set (Stored (Signed IdentityData))
 gatherPrevious res (n:ns) | n `S.member` res = gatherPrevious res ns
@@ -138,11 +153,7 @@ lookupProperty sel topHeads = findResult filteredLayers
           propHeads = findPropHeads =<< topHeads
 
           historyLayers :: [Set (Stored (Signed IdentityData))]
-          historyLayers = flip unfoldr (map fst propHeads, S.empty) $ \(hs, cur) ->
-              case filter (`S.notMember` cur) $ (iddPrev . fromStored . signedData . fromStored) =<< hs of
-                   []    -> Nothing
-                   added -> let next = foldr S.insert cur added
-                             in Just (next, (added, next))
+          historyLayers = generations $ map fst propHeads
 
           filteredLayers :: [[(Stored (Signed IdentityData), a)]]
           filteredLayers = scanl (\cur obsolete -> filter ((`S.notMember` obsolete) . fst) cur) propHeads historyLayers
@@ -154,28 +165,57 @@ lookupProperty sel topHeads = findResult filteredLayers
           findResult (_:rest) = findResult rest
 
 mergeIdentity :: Foldable m => Identity m -> IO UnifiedIdentity
-mergeIdentity idt | [sdata] <- toList $ idDataF idt = return $ idt { idData_ = I.Identity sdata }
+mergeIdentity idt | Just idt' <- toUnifiedIdentity idt = return idt'
 mergeIdentity idt = do
+    (owner, ownerData) <- case idOwner_ idt of
+        Nothing -> return (Nothing, Nothing)
+        Just cowner | Just owner <- toUnifiedIdentity cowner -> return (Just owner, Nothing)
+                    | otherwise -> do owner <- mergeIdentity cowner
+                                      return (Just owner, Just $ idData owner)
+
     (sid:_) <- return $ toList $ idDataF idt
     let st = storedStorage sid
         public = idKeyIdentity idt
     Just secret <- loadKey public
     sdata <- wrappedStore st =<< sign secret =<< wrappedStore st (emptyIdentityData public)
-        { iddPrev = toList $ idDataF idt }
-    return $ idt { idData_ = I.Identity sdata }
+        { iddPrev = toList $ idDataF idt, iddOwner = ownerData }
+    return $ idt { idData_ = I.Identity sdata, idOwner_ = toComposedIdentity <$> owner }
 
+toUnifiedIdentity :: Foldable m => Identity m -> Maybe UnifiedIdentity
+toUnifiedIdentity idt
+    | [sdata] <- toList $ idDataF idt = Just idt { idData_ = I.Identity sdata }
+    | otherwise = Nothing
 
 toComposedIdentity :: Foldable m => Identity m -> ComposedIdentity
-toComposedIdentity idt = idt { idData_ = toList $ idDataF idt }
+toComposedIdentity idt = idt { idData_ = toList $ idDataF idt
+                             , idOwner_ = toComposedIdentity <$> idOwner_ idt
+                             }
 
 
-unfoldOwners :: (Foldable m, Applicative m) => Identity m -> [Identity m]
-unfoldOwners cur = cur : case idOwner cur of
-                              Nothing   -> []
-                              Just owner@Identity { idData_ = I.Identity pid } ->
-                                  unfoldOwners owner { idData_ = pure pid }
+updateIdentitySets :: Foldable m => [(Stored (Signed IdentityData), Set (Stored (Signed IdentityData)))] -> Identity m -> ComposedIdentity
+updateIdentitySets updates orig@Identity { idData_ = idata } =
+    case validateIdentityF $ map update $ toList idata of
+         Just updated -> updated { idOwner_ = updateIdentitySets updates <$> idOwner_ updated }
+         Nothing -> toComposedIdentity orig
+    where update x = foldl (\y (y', set) -> if y `S.member` set then y' else y) x updates
 
-finalOwner :: (Foldable m, Applicative m) => Identity m -> Identity m
+updateIdentity :: Foldable m => [Stored (Signed IdentityData)] -> Identity m -> ComposedIdentity
+updateIdentity = updateIdentitySets . map (\u -> (u, ancestors [u]))
+
+updateOwners :: [Stored (Signed IdentityData)] -> Identity m -> Identity m
+updateOwners updates orig@Identity { idOwner_ = Just owner, idUpdates_ = cupdates } =
+    orig { idOwner_ = Just $ updateIdentity updates owner, idUpdates_ = updates ++ cupdates {- TODO: eliminate ancestors -} }
+updateOwners _ orig@Identity { idOwner_ = Nothing } = orig
+
+sameIdentity :: (Foldable m, Foldable m') => Identity m -> Identity m' -> Bool
+sameIdentity x y = not $ S.null $ S.intersection (refset x) (refset y)
+    where refset idt = foldr S.insert (ancestors $ toList $ idDataF idt) (idDataF idt)
+
+
+unfoldOwners :: (Foldable m) => Identity m -> [ComposedIdentity]
+unfoldOwners = unfoldr (fmap (\i -> (i, idOwner i))) . Just . toComposedIdentity
+
+finalOwner :: (Foldable m, Applicative m) => Identity m -> ComposedIdentity
 finalOwner = last . unfoldOwners
 
 displayIdentity :: (Foldable m, Applicative m) => Identity m -> Text

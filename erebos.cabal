@@ -30,6 +30,7 @@ executable erebos
                        Storage,
                        Storage.Internal
                        Storage.Key
+                       Storage.Merge
                        Util
 
   default-extensions:  ExistentialQuantification

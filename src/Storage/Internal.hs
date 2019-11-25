@@ -86,6 +86,15 @@ showRefDigest = B.concat . map showHexByte . BA.unpack
 data Head' c = Head String (Ref' c)
     deriving (Show)
 
+data Stored' c a = Stored (Ref' c) a
+    deriving (Show)
+
+instance Eq (Stored' c a) where
+    Stored r1 _ == Stored r2 _  =  refDigest r1 == refDigest r2
+
+instance Ord (Stored' c a) where
+    compare (Stored r1 _) (Stored r2 _) = compare (refDigest r1) (refDigest r2)
+
 
 type Complete = Identity
 type Partial = Either RefDigest

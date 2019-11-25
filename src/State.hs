@@ -2,14 +2,18 @@ module State (
     LocalState(..),
     SharedState(..),
 
-    loadLocalState,
+    loadLocalState, loadLocalStateHead,
     updateLocalState, updateLocalState_,
     updateSharedState, updateSharedState_,
     mergeSharedStates,
 
+    loadLocalIdentity, headLocalIdentity,
+
     mergeSharedIdentity,
-    updateIdentity,
+    updateSharedIdentity,
 ) where
+
+import Control.Monad
 
 import Data.List
 import Data.Maybe
@@ -56,8 +60,11 @@ instance Storable SharedState where
         <*> loadRefs "id"
 
 
-loadLocalState :: Storage -> IO Head
-loadLocalState st = loadHeadDef st "erebos" $ do
+loadLocalState :: Storage -> IO (Stored LocalState)
+loadLocalState = return . wrappedLoad . headRef <=< loadLocalStateHead
+
+loadLocalStateHead :: Storage -> IO Head
+loadLocalStateHead st = loadHeadDef st "erebos" $ do
     putStr "Name: "
     hFlush stdout
     name <- T.getLine
@@ -97,6 +104,17 @@ loadLocalState st = loadHeadDef st "erebos" $ do
         , lsMessages = msgs
         }
 
+loadLocalIdentity :: Storage -> IO UnifiedIdentity
+loadLocalIdentity = return . headLocalIdentity <=< loadLocalStateHead
+
+headLocalIdentity :: Head -> UnifiedIdentity
+headLocalIdentity h =
+    let ls = load $ headRef h
+     in maybe (error "failed to verify local identity")
+            (updateOwners (ssIdentity . fromStored =<< lsShared ls))
+            (validateIdentity $ lsIdentity ls)
+
+
 updateLocalState_ :: Storage -> (Stored LocalState -> IO (Stored LocalState)) -> IO ()
 updateLocalState_ st f = updateLocalState st (fmap (,()) . f)
 
@@ -127,15 +145,15 @@ mergeSharedStates [] = error "mergeSharedStates: empty list"
 mergeSharedIdentity :: Storage -> IO UnifiedIdentity
 mergeSharedIdentity st = updateSharedState st $ \sshared -> do
     let shared = fromStored sshared
-        Just cidentity = verifyIdentityF $ ssIdentity shared
+        Just cidentity = validateIdentityF $ ssIdentity shared
     identity <- mergeIdentity cidentity
     sshared' <- wrappedStore st $ shared { ssIdentity = [idData identity] }
     return (sshared', identity)
 
-updateIdentity :: Storage -> IO ()
-updateIdentity st = updateSharedState_ st $ \sshared -> do
+updateSharedIdentity :: Storage -> IO ()
+updateSharedIdentity st = updateSharedState_ st $ \sshared -> do
     let shared = fromStored sshared
-        Just identity = verifyIdentityF $ ssIdentity shared
+        Just identity = validateIdentityF $ ssIdentity shared
         public = idKeyIdentity identity
 
     T.putStr $ T.concat $ concat

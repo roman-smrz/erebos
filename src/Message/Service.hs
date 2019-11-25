@@ -13,7 +13,6 @@ import Data.Time.LocalTime
 
 import Identity
 import Message
-import PubKey
 import Service
 import State
 import Storage
@@ -25,14 +24,14 @@ instance Service DirectMessageService where
     emptyServiceState = DirectMessageService
     serviceHandler smsg = do
         let msg = fromStored smsg
-        powner <- asks svcPeerOwner
+        powner <- asks $ finalOwner . svcPeer
         tzone <- liftIO $ getCurrentTimeZone
         svcPrint $ formatMessage tzone msg
-        if | idData powner == msgFrom msg
+        if | powner `sameIdentity` msgFrom msg
            -> do erb <- gets svcLocal
                  let st = storedStorage erb
                  erb' <- liftIO $ do
-                     slist <- case find ((== idData powner) . msgPeer . fromStored) (storedFromSList $ lsMessages $ fromStored erb) of
+                     slist <- case find (sameIdentity powner . msgPeer . fromStored) (storedFromSList $ lsMessages $ fromStored erb) of
                                    Just thread -> do thread' <- wrappedStore st (fromStored thread) { msgHead = smsg : msgHead (fromStored thread) }
                                                      slistReplaceS thread thread' $ lsMessages $ fromStored erb
                                    Nothing -> slistAdd (emptyDirectThread powner) { msgHead = [smsg] } $ lsMessages $ fromStored erb
@@ -46,7 +45,7 @@ instance Service DirectMessageService where
 formatMessage :: TimeZone -> DirectMessage -> String
 formatMessage tzone msg = concat
     [ formatTime defaultTimeLocale "[%H:%M] " $ utcToLocalTime tzone $ zonedTimeToUTC $ msgTime msg
-    , maybe "<unnamed>" T.unpack $ iddName $ fromStored $ signedData $ fromStored $ msgFrom msg
+    , maybe "<unnamed>" T.unpack $ idName $ msgFrom msg
     , ": "
     , T.unpack $ msgText msg
     ]

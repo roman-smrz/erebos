@@ -11,56 +11,55 @@ import Data.Text (Text)
 import Data.Time.LocalTime
 
 import Identity
-import PubKey
 import Storage
 
 data DirectMessage = DirectMessage
-    { msgFrom :: Stored (Signed IdentityData)
+    { msgFrom :: ComposedIdentity
     , msgPrev :: [Stored DirectMessage]
     , msgTime :: ZonedTime
     , msgText :: Text
     }
 
 data DirectMessageThread = DirectMessageThread
-    { msgPeer :: Stored (Signed IdentityData)
+    { msgPeer :: ComposedIdentity
     , msgHead :: [Stored DirectMessage]
     , msgSeen :: [Stored DirectMessage]
     }
 
 instance Storable DirectMessage where
     store' msg = storeRec $ do
-        storeRef "from" $ msgFrom msg
+        mapM_ (storeRef "from") $ idDataF $ msgFrom msg
         mapM_ (storeRef "prev") $ msgPrev msg
         storeDate "time" $ msgTime msg
         storeText "text" $ msgText msg
 
     load' = loadRec $ DirectMessage
-        <$> loadRef "from"
+        <$> loadIdentity "from"
         <*> loadRefs "prev"
         <*> loadDate "time"
         <*> loadText "text"
 
 instance Storable DirectMessageThread where
     store' msg = storeRec $ do
-        storeRef "peer" $ msgPeer msg
+        mapM_ (storeRef "peer") $ idDataF $ msgPeer msg
         mapM_ (storeRef "head") $ msgHead msg
         mapM_ (storeRef "seen") $ msgSeen msg
 
     load' = loadRec $ DirectMessageThread
-        <$> loadRef "peer"
+        <$> loadIdentity "peer"
         <*> loadRefs "head"
         <*> loadRefs "seen"
 
 
-emptyDirectThread :: UnifiedIdentity -> DirectMessageThread
-emptyDirectThread peer = DirectMessageThread (idData peer) [] []
+emptyDirectThread :: ComposedIdentity -> DirectMessageThread
+emptyDirectThread peer = DirectMessageThread peer [] []
 
 createDirectMessage :: UnifiedIdentity -> DirectMessageThread -> Text -> IO (Stored DirectMessage, Stored DirectMessageThread)
 createDirectMessage self thread msg = do
     let st = storedStorage $ idData self
     time <- getZonedTime
     smsg <- wrappedStore st DirectMessage
-        { msgFrom = idData $ finalOwner self
+        { msgFrom = toComposedIdentity $ finalOwner self
         , msgPrev = msgHead thread
         , msgTime = time
         , msgText = msg

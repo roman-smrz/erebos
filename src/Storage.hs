@@ -28,6 +28,7 @@ module Storage (
     storeMbInt, storeMbNum, storeMbText, storeMbBinary, storeMbDate, storeMbJson, storeMbRef,
     storeZRef,
 
+    LoadRec,
     loadBlob, loadRec, loadZero,
     loadInt, loadNum, loadText, loadBinary, loadDate, loadJson, loadRef,
     loadMbInt, loadMbNum, loadMbText, loadMbBinary, loadMbDate, loadMbJson, loadMbRef,
@@ -719,16 +720,7 @@ loadZRef name = loadMbRef name >>= \case
                     Just x  -> return x
 
 
-data Stored' c a = Stored (Ref' c) a
-    deriving (Show)
-
 type Stored a = Stored' Complete a
-
-instance Eq (Stored a) where
-    Stored r1 _ == Stored r2 _  =  refDigest r1 == refDigest r2
-
-instance Ord (Stored a) where
-    compare (Stored r1 _) (Stored r2 _) = compare (refDigest r1) (refDigest r2)
 
 instance Storable a => Storable (Stored a) where
     store st = copyRef st . storedRef

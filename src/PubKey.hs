@@ -85,11 +85,11 @@ instance Storable Signature where
 
 instance Storable a => Storable (Signed a) where
     store' sig = storeRec $ do
-        storeRef "data" $ signedData sig
+        storeRef "SDATA" $ signedData sig
         mapM_ (storeRef "sig") $ signedSignature sig
 
     load' = loadRec $ do
-        sdata <- loadRef "data"
+        sdata <- loadRef "SDATA"
         sigs <- loadRefs "sig"
         forM_ sigs $ \sig -> do
             let PublicKey pubkey = fromStored $ sigKey $ fromStored sig

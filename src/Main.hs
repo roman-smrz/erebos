@@ -52,37 +52,38 @@ main = do
                         forM_ (signedSignature signed) $ \sig -> do
                             putStr $ "SIG "
                             BC.putStrLn $ showRef $ storedRef $ sigKey $ fromStored sig
-                    "identity" -> case verifyIdentity (wrappedLoad ref) of
+                    "identity" -> case validateIdentity (wrappedLoad ref) of
                         Just identity -> do
-                            let disp idt = do
+                            let disp :: Identity m -> IO ()
+                                disp idt = do
                                     maybe (return ()) (T.putStrLn . (T.pack "Name: " `T.append`)) $ idName idt
                                     BC.putStrLn . (BC.pack "KeyId: " `BC.append`) . showRefDigest . refDigest . storedRef $ idKeyIdentity idt
                                     BC.putStrLn . (BC.pack "KeyMsg: " `BC.append`) . showRefDigest . refDigest . storedRef $ idKeyMessage idt
                                     case idOwner idt of
                                          Nothing -> return ()
                                          Just owner -> do
-                                             putStrLn $ "OWNER " ++ BC.unpack (showRefDigest $ refDigest $ storedRef $ idData owner)
+                                             mapM_ (putStrLn . ("OWNER " ++) . BC.unpack . showRefDigest . refDigest . storedRef) $ idDataF owner
                                              disp owner
                             disp identity
                         Nothing -> putStrLn $ "Identity verification failed"
                     _ -> error $ "unknown object type '" ++ objtype ++ "'"
 
-        ["update-identity"] -> updateIdentity st
+        ["update-identity"] -> updateSharedIdentity st
 
         [bhost] -> interactiveLoop st bhost
         _       -> error "Expecting broadcast address"
 
 interactiveLoop :: Storage -> String -> IO ()
 interactiveLoop st bhost = runInputT defaultSettings $ do
-    erebosHead <- liftIO $ loadLocalState st
-    outputStrLn $ T.unpack $ maybe (error "failed to verify local identity") displayIdentity $
-        verifyIdentity $ lsIdentity $ fromStored $ wrappedLoad $ headRef erebosHead
+    origIdentity <- liftIO $ loadLocalIdentity st
+    outputStrLn $ T.unpack $ displayIdentity origIdentity
 
     haveTerminalUI >>= \case True -> return ()
                              False -> error "Requires terminal"
     extPrint <- getExternalPrint
     let extPrintLn str = extPrint $ str ++ "\n";
-    chanPeer <- liftIO $
+    chanPeer <- liftIO $ do
+        erebosHead <- loadLocalStateHead st
         startServer erebosHead extPrintLn bhost
             [ (T.pack "attach", SomeService (emptyServiceState :: AttachService))
             , (T.pack "dmsg", SomeService (emptyServiceState :: DirectMessageService))
@@ -92,14 +93,15 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
 
     void $ liftIO $ forkIO $ void $ forever $ do
         peer <- readChan chanPeer
-        let update [] = ([peer], Nothing)
-            update (p:ps) | peerIdentityRef p == peerIdentityRef peer = (peer : ps, Just p)
-                          | otherwise                                 = first (p:) $ update ps
-        if | PeerIdentityUnknown <- peerIdentity peer -> return ()
-           | otherwise -> do
+        if | PeerIdentityFull pid <- peerIdentity peer -> do
+                 let update [] = ([peer], Nothing)
+                     update (p:ps) | PeerIdentityFull pid' <- peerIdentity p
+                                   , pid' `sameIdentity` pid = (peer : ps, Just p)
+                                   | otherwise               = first (p:) $ update ps
                  op <- modifyMVar peers (return . update)
                  let shown = showPeer peer
                  when (Just shown /= (showPeer <$> op)) $ extPrint shown
+           | otherwise -> return ()
 
     let getInputLines prompt = do
             Just input <- lift $ getInputLine prompt
@@ -111,8 +113,8 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
         process cstate = do
             let pname = case csPeer cstate of
                              Nothing -> ""
-                             Just peer -> case peerOwner peer of
-                                 PeerIdentityFull pid -> maybe "<unnamed>" T.unpack $ idName pid
+                             Just peer -> case peerIdentity peer of
+                                 PeerIdentityFull pid -> maybe "<unnamed>" T.unpack $ idName $ finalOwner pid
                                  PeerIdentityRef wref -> "<" ++ BC.unpack (showRefDigest $ wrDigest wref) ++ ">"
                                  PeerIdentityUnknown  -> "<unknown>"
             input <- getInputLines $ pname ++ "> "
@@ -122,10 +124,9 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
                                        then (cmdSetPeer $ read scmd, args)
                                        else (fromMaybe (cmdUnknown scmd) $ lookup scmd commands, args)
                     _        -> (cmdSend, input)
-            curHead <- liftIO $ loadLocalState st
+            curIdentity <- liftIO $ loadLocalIdentity st
             res <- liftIO $ runExceptT $ flip execStateT cstate $ runReaderT cmd CommandInput
-                { ciSelf = fromMaybe (error "failed to verify local identity") $
-                    verifyIdentity $ lsIdentity $ fromStored $ wrappedLoad $ headRef curHead
+                { ciSelf = curIdentity
                 , ciLine = line
                 , ciPrint = extPrintLn
                 , ciPeers = liftIO $ readMVar peers
@@ -200,10 +201,11 @@ cmdSend = void $ do
     self <- asks ciSelf
     let st = storedStorage $ idData self
     Just peer <- gets csPeer
-    PeerIdentityFull powner <- return $ peerOwner peer
+    PeerIdentityFull pid <- return $ peerIdentity peer
+    let powner = finalOwner pid :: ComposedIdentity
     text <- asks ciLine
     smsg <- liftIO $ updateLocalState st $ \erb -> do
-        (slist, smsg) <- case find ((== idData powner) . msgPeer . fromStored) (storedFromSList $ lsMessages $ fromStored erb) of
+        (slist, smsg) <- case find (sameIdentity powner . msgPeer . fromStored) (storedFromSList $ lsMessages $ fromStored erb) of
             Just thread -> do
                 (smsg, thread') <- createDirectMessage self (fromStored thread) (T.pack text)
                 (,smsg) <$> slistReplaceS thread thread' (lsMessages $ fromStored erb)
@@ -222,18 +224,19 @@ cmdHistory = void $ do
     self <- asks ciSelf
     let st = storedStorage $ idData self
     Just peer <- gets csPeer
-    PeerIdentityFull powner <- return $ peerOwner peer
+    PeerIdentityFull pid <- return $ peerIdentity peer
+    let powner = finalOwner pid
 
     Just erebosHead <- liftIO $ loadHead st "erebos"
     let erebos = wrappedLoad (headRef erebosHead)
-    Just thread <- return $ find ((== idData powner) . msgPeer) $ fromSList $ lsMessages $ fromStored erebos
+    Just thread <- return $ find (sameIdentity powner . msgPeer) $ fromSList $ lsMessages $ fromStored erebos
     tzone <- liftIO $ getCurrentTimeZone
     liftIO $ mapM_ (putStrLn . formatMessage tzone) $ reverse $ take 50 $ threadToList thread
 
 cmdUpdateIdentity :: Command
 cmdUpdateIdentity = void $ do
     st <- asks $ storedStorage . idData . ciSelf
-    liftIO $ updateIdentity st
+    liftIO $ updateSharedIdentity st
 
 cmdAttach :: Command
 cmdAttach = join $ attachToOwner

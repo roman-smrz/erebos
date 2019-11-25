@@ -87,7 +87,7 @@ instance Service AttachService where
         (OurRequest nonce, AttachResponse pnonce) -> do
             peer <- asks $ svcPeer
             self <- maybe (throwError "failed to verify own identity") return =<<
-                gets (verifyIdentity . lsIdentity . fromStored . svcLocal)
+                gets (validateIdentity . lsIdentity . fromStored . svcLocal)
             svcPrint $ "Attach to " ++ T.unpack (displayIdentity peer) ++ ": " ++ confirmationNumber (nonceDigest self peer nonce pnonce)
             svcSet $ OurRequestConfirm Nothing
             return $ Just $ AttachRequestNonce nonce
@@ -127,7 +127,7 @@ instance Service AttachService where
         (PeerRequest nonce dgst, AttachRequestNonce pnonce) -> do
             peer <- asks $ svcPeer
             self <- maybe (throwError "failed to verify own identity") return =<<
-                gets (verifyIdentity . lsIdentity . fromStored . svcLocal)
+                gets (validateIdentity . lsIdentity . fromStored . svcLocal)
             if dgst == nonceDigest peer self pnonce BA.empty
                then do svcPrint $ "Attach from " ++ T.unpack (displayIdentity peer) ++ ": " ++ confirmationNumber (nonceDigest peer self pnonce nonce)
                        svcSet PeerRequestConfirm
@@ -209,7 +209,7 @@ verifyAttachedIdentity sdata = do
     return $ do
         guard $ iddKeyIdentity (fromStored $ signedData $ fromStored sdata) ==
             iddKeyIdentity (fromStored $ signedData $ fromStored curid)
-        identity <- verifyIdentity sdata'
+        identity <- validateIdentity sdata'
         guard $ iddPrev (fromStored $ signedData $ fromStored $ idData identity) == [curid]
         return identity
 
@@ -224,7 +224,7 @@ finalizeAttach st identity skeys = do
         mshared <- mergeSharedStates (lsShared $ fromStored slocal)
         shared <- wrappedStore st $ (fromStored mshared)
             { ssPrev = lsShared $ fromStored slocal
-            , ssIdentity = [idData owner]
+            , ssIdentity = idDataF owner
             }
         wrappedStore st (fromStored slocal)
             { lsIdentity = idData identity

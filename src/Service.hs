@@ -32,7 +32,6 @@ fromService (SomeService s) = cast s
 
 data ServiceInput = ServiceInput
     { svcPeer :: UnifiedIdentity
-    , svcPeerOwner :: UnifiedIdentity
     , svcPrintOp :: String -> IO ()
     }
 
@@ -46,7 +45,7 @@ newtype ServiceHandler s a = ServiceHandler (ReaderT ServiceInput (StateT (Servi
 
 handleServicePacket :: Service s => Storage -> ServiceInput -> s -> Stored (ServicePacket s) -> IO (Maybe (ServicePacket s), s)
 handleServicePacket st input svc packet = do
-    herb <- loadLocalState st
+    herb <- loadLocalStateHead st
     let erb = wrappedLoad $ headRef herb
         sstate = ServiceState { svcValue = svc, svcLocal = erb }
         ServiceHandler handler = serviceHandler packet
