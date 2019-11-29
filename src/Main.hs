@@ -32,6 +32,7 @@ import PubKey
 import Service
 import State
 import Storage
+import Storage.List
 
 main :: IO ()
 main = do

@@ -26,6 +26,7 @@ import Identity
 import Message
 import PubKey
 import Storage
+import Storage.List
 import Util
 
 data LocalState = LocalState

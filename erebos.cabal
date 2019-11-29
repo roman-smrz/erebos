@@ -29,6 +29,7 @@ executable erebos
                        State,
                        Storage,
                        Storage.Internal
+                       Storage.List
                        Storage.Key
                        Storage.Merge
                        Util

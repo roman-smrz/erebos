@@ -16,6 +16,7 @@ import Message
 import Service
 import State
 import Storage
+import Storage.List
 
 data DirectMessageService = DirectMessageService
 

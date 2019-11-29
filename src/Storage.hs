@@ -20,18 +20,18 @@ module Storage (
     loadHeads, loadHead, loadHeadDef, replaceHead,
     watchHead,
 
-    Storable(..),
+    Storable(..), ZeroStorable(..),
     StorableText(..), StorableDate(..),
 
     storeBlob, storeRec, storeZero,
-    storeInt, storeNum, storeText, storeBinary, storeDate, storeJson, storeRef,
-    storeMbInt, storeMbNum, storeMbText, storeMbBinary, storeMbDate, storeMbJson, storeMbRef,
+    storeInt, storeNum, storeText, storeBinary, storeDate, storeJson, storeRef, storeRawRef,
+    storeMbInt, storeMbNum, storeMbText, storeMbBinary, storeMbDate, storeMbJson, storeMbRef, storeMbRawRef,
     storeZRef,
 
     LoadRec,
     loadBlob, loadRec, loadZero,
-    loadInt, loadNum, loadText, loadBinary, loadDate, loadJson, loadRef,
-    loadMbInt, loadMbNum, loadMbText, loadMbBinary, loadMbDate, loadMbJson, loadMbRef,
+    loadInt, loadNum, loadText, loadBinary, loadDate, loadJson, loadRef, loadRawRef,
+    loadMbInt, loadMbNum, loadMbText, loadMbBinary, loadMbDate, loadMbJson, loadMbRef, loadMbRawRef,
     loadBinaries, loadRefs,
     loadZRef,
 
@@ -45,14 +45,6 @@ module Storage (
     StoredHistory,
     fromHistory, fromHistoryAt, storedFromHistory, storedHistoryList,
     beginHistory, modifyHistory,
-
-    StoredList,
-    emptySList, fromSList, storedFromSList,
-    slistAdd, slistAddS, slistInsert, slistInsertS, slistRemove, slistReplace, slistReplaceS,
-    mapFromSList, updateOld,
-
-    StoreUpdate(..),
-    withStoredListItem, withStoredListItemS,
 ) where
 
 import Codec.Compression.Zlib
@@ -81,7 +73,6 @@ import qualified Data.ByteString.Lazy.Char8 as BLC
 import Data.Char
 import Data.Function
 import Data.List
-import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Maybe
 import Data.Ratio
@@ -450,7 +441,7 @@ class Storable a where
     store st = unsafeStoreObject st <=< evalStore st . store'
     load :: Ref -> a
     load ref = let Load f = load'
-                in either (error {- TODO throw -} . ((BC.unpack (showRef ref) ++ ": ")++)) id $ f ref $ lazyLoadObject ref
+                in either (error {- TODO throw -} . ((BC.unpack (showRef ref) ++ ": ")++)) id $ runReaderT f (ref, lazyLoadObject ref)
 
 class Storable a => ZeroStorable a where
     fromZero :: Storage -> a
@@ -466,7 +457,8 @@ evalStore _ StoreZero = return ZeroObject
 
 type StoreRec c = ReaderT (Storage' c) (Writer [IO [(ByteString, RecItem' c)]]) ()
 
-data Load a = Load (Ref -> Object -> Either String a)
+newtype Load a = Load (ReaderT (Ref, Object) (Either String) a)
+    deriving (Functor, Applicative, Monad, MonadReader (Ref, Object), MonadError String)
 
 type LoadRec a = ReaderT (Ref, [(ByteString, RecItem)]) (Either String) a
 
@@ -478,7 +470,7 @@ instance Storable Object where
         return xs'
     store' ZeroObject = StoreZero
 
-    load' = Load $ const return
+    load' = asks snd
 
     store st = unsafeStoreObject st <=< copyObject st
     load = lazyLoadObject
@@ -493,13 +485,11 @@ instance Storable a => Storable [a] where
         storeRef "i" x
         storeRef "n" xs
 
-    load' = Load $ \ref -> \case
-              ZeroObject -> return []
-              obj        ->
-                let Load fres = loadRec $ (:)
-                        <$> loadRef "i"
-                        <*> loadRef "n"
-                 in fres ref obj
+    load' = asks snd >>= \case
+                ZeroObject -> return []
+                _          -> loadRec $ (:)
+                                  <$> loadRef "i"
+                                  <*> loadRef "n"
 
 instance Storable a => ZeroStorable [a] where
     fromZero _ = []
@@ -612,17 +602,17 @@ storeZRef name x = do
 
 
 loadBlob :: (ByteString -> a) -> Load a
-loadBlob f = Load $ const $ \case
+loadBlob f = asks snd >>= \case
     Blob x -> return $ f x
     _      -> throwError "Expecting blob"
 
 loadRec :: LoadRec a -> Load a
-loadRec lrec = Load $ \ref -> \case
-    Rec rs -> runReaderT lrec (ref, rs)
-    _      -> throwError "Expecting record"
+loadRec lrec = ask >>= \case
+    (ref, Rec rs) -> either throwError return $ runReaderT lrec (ref, rs)
+    _             -> throwError "Expecting record"
 
 loadZero :: a -> Load a
-loadZero x = Load $ const $ \case
+loadZero x = asks snd >>= \case
     ZeroObject -> return x
     _          -> throwError "Expecting zero"
 
@@ -725,9 +715,7 @@ type Stored a = Stored' Complete a
 instance Storable a => Storable (Stored a) where
     store st = copyRef st . storedRef
     store' (Stored _ x) = store' x
-    load' = Load $ \ref obj ->
-                let Load fres = load'
-                 in Stored ref <$> fres ref obj
+    load' = Stored <$> asks fst <*> load'
 
 instance ZeroStorable a => ZeroStorable (Stored a) where
     fromZero st = Stored (zeroRef st) $ fromZero st
@@ -817,143 +805,6 @@ modifyHistory :: Storable a => StoreInfo -> (a -> a) -> StoredHistory a -> IO (S
 modifyHistory si f prev@(Stored (Ref st _) _) = do
     sx <- wrappedStore st $ f $ fromHistory prev
     wrappedStore st $ History si sx (Just prev)
-
-
-data List a = ListNil
-            | ListItem (Maybe Ref) (Maybe Ref) (Maybe (Stored a)) (StoredList a)
-    deriving (Show)
-
-type StoredList a = Stored (List a)
-
-instance Storable a => Storable (List a) where
-    store' ListNil = storeZero
-    store' (ListItem remove after item next) = storeRec $ do
-        storeMbRawRef "r" remove
-        storeMbRawRef "a" after
-        storeMbRef "i" item
-        storeRef "n" next
-
-    load' = Load $ \ref -> \case
-              ZeroObject -> return ListNil
-              obj        ->
-                let Load fres = loadRec $ ListItem
-                        <$> loadMbRawRef "r"
-                        <*> loadMbRawRef "a"
-                        <*> loadMbRef "i"
-                        <*> loadRef "n"
-                 in fres ref obj
-
-instance Storable a => ZeroStorable (List a) where
-    fromZero _ = ListNil
-
-
-emptySList :: Storable a => Storage -> IO (StoredList a)
-emptySList st = wrappedStore st ListNil
-
-fromSList :: StoredList a -> [a]
-fromSList = map fromStored . storedFromSList
-
-storedFromSList :: StoredList a -> [Stored a]
-storedFromSList = fromSList' []
-    where fromSList' :: [(Ref, Bool, [Stored a])] -> StoredList a -> [Stored a]
-          fromSList' _ (Stored _ ListNil) = []
-          fromSList' repl (Stored cref (ListItem rref aref x rest)) =
-              case (rref, aref) of
-                   (Nothing, Nothing) -> let (rx, repl') = findRepl cref x repl
-                                          in rx ++ fromSList' repl' rest
-                   (Just r , Nothing) -> fromSList' (addReplace cref r x repl) rest
-                   (Nothing, Just a ) -> fromSList' (addInsert  cref a x repl) rest
-                   (Just r , Just a ) -> fromSList' (addReplace cref r x $ addInsert cref a x repl) rest
-
-          addReplace = findAddRepl False
-          addInsert = findAddRepl True
-
-          findAddRepl :: Bool -> Ref -> Ref -> Maybe (Stored a) -> [(Ref, Bool, [Stored a])] -> [(Ref, Bool, [Stored a])]
-          findAddRepl keep c t x rs = let (x', rs') = findRepl c x rs
-                                       in addRepl keep c t x' rs'
-
-          addRepl :: Bool -> Ref -> Ref -> [Stored a] -> [(Ref, Bool, [Stored a])] -> [(Ref, Bool, [Stored a])]
-          addRepl keep _ t x [] = [(t, keep, x)]
-          addRepl keep c t x ((pr, pk, px) : rs)
-              | pr == c   = (t , keep, x ++ px) : rs
-              | pr == t   = (t , pk, px ++ x) : rs
-              | otherwise = (pr, pk, px) : addRepl keep c t x rs
-
-          findRepl :: Ref -> Maybe (Stored a) -> [(Ref, Bool, [Stored a])] -> ([Stored a], [(Ref, Bool, [Stored a])])
-          findRepl _ x [] = (maybeToList x, [])
-          findRepl c x ((pr, pk, px) : rs)
-              | pr == c   = (if pk then maybe id (:) x px else px, rs)
-              | otherwise = ((pr, pk, px):) <$> findRepl c x rs
-
-slistAdd :: Storable a => a -> StoredList a -> IO (StoredList a)
-slistAdd x next@(Stored (Ref st _) _) = do
-    sx <- wrappedStore st x
-    slistAddS sx next
-
-slistAddS :: Storable a => Stored a -> StoredList a -> IO (StoredList a)
-slistAddS sx next@(Stored (Ref st _) _) = wrappedStore st (ListItem Nothing Nothing (Just sx) next)
-
-slistInsert :: Storable a => Stored a -> a -> StoredList a -> IO (StoredList a)
-slistInsert after x next@(Stored (Ref st _) _) = do
-    sx <- wrappedStore st x
-    slistInsertS after sx next
-
-slistInsertS :: Storable a => Stored a -> Stored a -> StoredList a -> IO (StoredList a)
-slistInsertS after sx next@(Stored (Ref st _) _) = wrappedStore st $ ListItem Nothing (findSListRef after next) (Just sx) next
-
-slistRemove :: Storable a => Stored a -> StoredList a -> IO (StoredList a)
-slistRemove rm next@(Stored (Ref st _) _) = wrappedStore st $ ListItem (findSListRef rm next) Nothing Nothing next
-
-slistReplace :: Storable a => Stored a -> a -> StoredList a -> IO (StoredList a)
-slistReplace rm x next@(Stored (Ref st _) _) = do
-    sx <- wrappedStore st x
-    slistReplaceS rm sx next
-
-slistReplaceS :: Storable a => Stored a -> Stored a -> StoredList a -> IO (StoredList a)
-slistReplaceS rm sx next@(Stored (Ref st _) _) = wrappedStore st $ ListItem (findSListRef rm next) Nothing (Just sx) next
-
-findSListRef :: Stored a -> StoredList a -> Maybe Ref
-findSListRef _ (Stored _ ListNil) = Nothing
-findSListRef x (Stored ref (ListItem _ _ y next)) | y == Just x = Just ref
-                                                  | otherwise   = findSListRef x next
-
-mapFromSList :: Storable a => StoredList a -> Map RefDigest (Stored a)
-mapFromSList list = helper list M.empty
-    where helper :: Storable a => StoredList a -> Map RefDigest (Stored a) -> Map RefDigest (Stored a)
-          helper (Stored _ ListNil) cur = cur
-          helper (Stored _ (ListItem (Just rref) _ (Just x) rest)) cur =
-              let rxref = case load rref of
-                               ListItem _ _ (Just rx) _  -> sameType rx x $ storedRef rx
-                               _ -> error "mapFromSList: malformed list"
-               in helper rest $ case M.lookup (refDigest $ storedRef x) cur of
-                                     Nothing -> M.insert (refDigest rxref) x cur
-                                     Just x' -> M.insert (refDigest rxref) x' cur
-          helper (Stored _ (ListItem _ _ _ rest)) cur = helper rest cur
-          sameType :: a -> a -> b -> b
-          sameType _ _ x = x
-
-updateOld :: Map RefDigest (Stored a) -> Stored a -> Stored a
-updateOld m x = fromMaybe x $ M.lookup (refDigest $ storedRef x) m
-
-
-data StoreUpdate a = StoreKeep
-                   | StoreReplace a
-                   | StoreRemove
-
-withStoredListItem :: (Storable a) => (a -> Bool) -> StoredList a -> (a -> IO (StoreUpdate a)) -> IO (StoredList a)
-withStoredListItem p list f = withStoredListItemS (p . fromStored) list (suMap (wrappedStore $ storedStorage list) <=< f . fromStored)
-    where suMap :: Monad m => (a -> m b) -> StoreUpdate a -> m (StoreUpdate b)
-          suMap _ StoreKeep = return StoreKeep
-          suMap g (StoreReplace x) = return . StoreReplace =<< g x
-          suMap _ StoreRemove = return StoreRemove
-
-withStoredListItemS :: (Storable a) => (Stored a -> Bool) -> StoredList a -> (Stored a -> IO (StoreUpdate (Stored a))) -> IO (StoredList a)
-withStoredListItemS p list f = do
-    case find p $ storedFromSList list of
-         Just sx -> f sx >>= \case StoreKeep -> return list
-                                   StoreReplace nx -> slistReplaceS sx nx list
-                                   StoreRemove -> slistRemove sx list
-         Nothing -> return list
 
 
 showRatio :: Rational -> String
