@@ -206,7 +206,8 @@ cmdSend = void $ do
     let powner = finalOwner pid :: ComposedIdentity
     text <- asks ciLine
     smsg <- liftIO $ updateLocalState st $ \erb -> do
-        (slist, smsg) <- case find (sameIdentity powner . msgPeer . fromStored) (storedFromSList $ lsMessages $ fromStored erb) of
+        threads <- storedFromSList $ lsMessages $ fromStored erb
+        (slist, smsg) <- case find (sameIdentity powner . msgPeer . fromStored) threads of
             Just thread -> do
                 (smsg, thread') <- createDirectMessage self (fromStored thread) (T.pack text)
                 (,smsg) <$> slistReplaceS thread thread' (lsMessages $ fromStored erb)

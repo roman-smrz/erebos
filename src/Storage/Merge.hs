@@ -1,7 +1,12 @@
 module Storage.Merge (
+    Mergeable(..),
+    merge, storeMerge,
+    uniq,
+
     generations,
     ancestors,
     precedes,
+    filterAncestors,
 ) where
 
 import qualified Data.ByteString.Char8 as BC
@@ -12,6 +17,24 @@ import qualified Data.Set as S
 
 import Storage
 import Storage.Internal
+
+class Storable a => Mergeable a where
+    mergeSorted :: [Stored a] -> a
+
+merge :: Mergeable a => [Stored a] -> a
+merge [] = error "merge: empty list"
+merge [x] = fromStored x
+merge xs = mergeSorted $ filterAncestors xs
+
+storeMerge :: Mergeable a => [Stored a] -> IO (Stored a)
+storeMerge [] = error "merge: empty list"
+storeMerge [x] = return x
+storeMerge xs@(Stored ref _ : _) = wrappedStore (refStorage ref) $ mergeSorted $ filterAncestors xs
+
+uniq :: Eq a => [a] -> [a]
+uniq (x:x':xs) | x == x'   = uniq (x:xs)
+               | otherwise = x : uniq (x':xs)
+uniq xs = xs
 
 previous :: Storable a => Stored a -> [Stored a]
 previous (Stored ref _) = case load ref of
@@ -38,3 +61,6 @@ ancestors = last . (S.empty:) . generations
 
 precedes :: Storable a => Stored a -> Stored a -> Bool
 precedes x y = x `S.member` ancestors [y]
+
+filterAncestors :: Storable a => [Stored a] -> [Stored a]
+filterAncestors xs = uniq $ sort $ filter (`S.notMember` ancestors xs) xs

@@ -12,6 +12,7 @@ import Data.Time.LocalTime
 
 import Identity
 import Storage
+import Storage.Merge
 
 data DirectMessage = DirectMessage
     { msgFrom :: ComposedIdentity
@@ -29,13 +30,13 @@ data DirectMessageThread = DirectMessageThread
 instance Storable DirectMessage where
     store' msg = storeRec $ do
         mapM_ (storeRef "from") $ idDataF $ msgFrom msg
-        mapM_ (storeRef "prev") $ msgPrev msg
+        mapM_ (storeRef "PREV") $ msgPrev msg
         storeDate "time" $ msgTime msg
         storeText "text" $ msgText msg
 
     load' = loadRec $ DirectMessage
         <$> loadIdentity "from"
-        <*> loadRefs "prev"
+        <*> loadRefs "PREV"
         <*> loadDate "time"
         <*> loadText "text"
 
@@ -49,6 +50,13 @@ instance Storable DirectMessageThread where
         <$> loadIdentity "peer"
         <*> loadRefs "head"
         <*> loadRefs "seen"
+
+instance Mergeable DirectMessageThread where
+    mergeSorted ts = DirectMessageThread
+        { msgPeer = msgPeer $ fromStored $ head ts -- TODO: merge identity
+        , msgHead = filterAncestors $ msgHead . fromStored =<< ts
+        , msgSeen = filterAncestors $ msgSeen . fromStored =<< ts
+        }
 
 
 emptyDirectThread :: ComposedIdentity -> DirectMessageThread

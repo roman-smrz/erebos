@@ -32,7 +32,8 @@ instance Service DirectMessageService where
            -> do erb <- gets svcLocal
                  let st = storedStorage erb
                  erb' <- liftIO $ do
-                     slist <- case find (sameIdentity powner . msgPeer . fromStored) (storedFromSList $ lsMessages $ fromStored erb) of
+                     threads <- storedFromSList $ lsMessages $ fromStored erb
+                     slist <- case find (sameIdentity powner . msgPeer . fromStored) threads of
                                    Just thread -> do thread' <- wrappedStore st (fromStored thread) { msgHead = smsg : msgHead (fromStored thread) }
                                                      slistReplaceS thread thread' $ lsMessages $ fromStored erb
                                    Nothing -> slistAdd (emptyDirectThread powner) { msgHead = [smsg] } $ lsMessages $ fromStored erb
