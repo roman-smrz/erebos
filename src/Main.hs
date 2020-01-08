@@ -71,6 +71,14 @@ main = do
 
         ["update-identity"] -> updateSharedIdentity st
 
+        ("update-identity" : srefs) -> do
+            sequence <$> mapM (readRef st . BC.pack) srefs >>= \case
+                Nothing -> error "ref does not exist"
+                Just refs
+                    | Just idt <- validateIdentityF $ map wrappedLoad refs -> do
+                        BC.putStrLn . showRefDigest . refDigest . storedRef . idData =<< interactiveIdentityUpdate idt
+                    | otherwise -> error "invalid identity"
+
         [bhost] -> interactiveLoop st bhost
         _       -> error "Expecting broadcast address"
 

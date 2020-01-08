@@ -11,10 +11,12 @@ module State (
 
     mergeSharedIdentity,
     updateSharedIdentity,
+    interactiveIdentityUpdate,
 ) where
 
 import Control.Monad
 
+import Data.Foldable
 import Data.List
 import Data.Maybe
 import qualified Data.Text as T
@@ -155,6 +157,12 @@ updateSharedIdentity :: Storage -> IO ()
 updateSharedIdentity st = updateSharedState_ st $ \sshared -> do
     let shared = fromStored sshared
         Just identity = validateIdentityF $ ssIdentity shared
+    identity' <- interactiveIdentityUpdate identity
+    wrappedStore st shared { ssIdentity = [idData identity'] }
+
+interactiveIdentityUpdate :: Foldable m => Identity m -> IO UnifiedIdentity
+interactiveIdentityUpdate identity = do
+    let st = storedStorage $ head $ toList $ idDataF $ identity
         public = idKeyIdentity identity
 
     T.putStr $ T.concat $ concat
@@ -167,13 +175,11 @@ updateSharedIdentity st = updateSharedState_ st $ \sshared -> do
     hFlush stdout
     name <- T.getLine
 
-    identity' <- if
-        | T.null name -> idData <$> mergeIdentity identity
+    if  | T.null name -> mergeIdentity identity
         | otherwise -> do
             Just secret <- loadKey public
-            wrappedStore st =<< sign secret =<< wrappedStore st (emptyIdentityData public)
-                { iddPrev = ssIdentity shared
+            maybe (error "created invalid identity") return . validateIdentity =<<
+                wrappedStore st =<< sign secret =<< wrappedStore st (emptyIdentityData public)
+                { iddPrev = toList $ idDataF identity
                 , iddName = Just name
                 }
-
-    wrappedStore st shared { ssIdentity = [identity'] }
