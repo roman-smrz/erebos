@@ -336,7 +336,9 @@ handlePacket logd identity secure opeer chanSvc (TransportHeader headers) = do
                                              throwError $ "peer identity does not follow"
                                          _ -> updatePeer $ \p -> p { peerIdentity = PeerIdentityFull idt }
                                 | otherwise -> throwError $ "broken identity " ++ show pref
-                            Left wref -> updatePeer $ \p -> p { peerIdentity = PeerIdentityRef wref }
+                            Left wref -> do
+                                addHeader $ AnnounceSelf $ partialRef (peerInStorage peer) $ storedRef $ idData identity
+                                updatePeer $ \p -> p { peerIdentity = PeerIdentityRef wref }
 
             AnnounceUpdate ref -> do
                 peer <- gets phPeer
