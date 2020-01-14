@@ -21,17 +21,17 @@ module Storage (
     watchHead,
 
     Storable(..), ZeroStorable(..),
-    StorableText(..), StorableDate(..),
+    StorableText(..), StorableDate(..), StorableUUID(..),
 
     storeBlob, storeRec, storeZero,
-    storeInt, storeNum, storeText, storeBinary, storeDate, storeJson, storeRef, storeRawRef,
-    storeMbInt, storeMbNum, storeMbText, storeMbBinary, storeMbDate, storeMbJson, storeMbRef, storeMbRawRef,
+    storeInt, storeNum, storeText, storeBinary, storeDate, storeUUID, storeJson, storeRef, storeRawRef,
+    storeMbInt, storeMbNum, storeMbText, storeMbBinary, storeMbDate, storeMbUUID, storeMbJson, storeMbRef, storeMbRawRef,
     storeZRef,
 
     LoadRec,
     loadBlob, loadRec, loadZero,
-    loadInt, loadNum, loadText, loadBinary, loadDate, loadJson, loadRef, loadRawRef,
-    loadMbInt, loadMbNum, loadMbText, loadMbBinary, loadMbDate, loadMbJson, loadMbRef, loadMbRawRef,
+    loadInt, loadNum, loadText, loadBinary, loadDate, loadUUID, loadJson, loadRef, loadRawRef,
+    loadMbInt, loadMbNum, loadMbText, loadMbBinary, loadMbDate, loadMbUUID, loadMbJson, loadMbRef, loadMbRawRef,
     loadBinaries, loadRefs,
     loadZRef,
 
@@ -86,6 +86,8 @@ import Data.Time.Calendar
 import Data.Time.Clock
 import Data.Time.Format
 import Data.Time.LocalTime
+import Data.UUID (UUID)
+import qualified Data.UUID as U
 
 import System.Directory
 import System.INotify
@@ -177,6 +179,7 @@ copyObject' st (Rec rs) = fmap Rec . sequence <$> mapM copyItem rs
               RecText x -> return $ return $ RecText x
               RecBinary x -> return $ return $ RecBinary x
               RecDate x -> return $ return $ RecDate x
+              RecUUID x -> return $ return $ RecUUID x
               RecJson x -> return $ return $ RecJson x
               RecRef x -> fmap RecRef <$> copyRef' st x
 copyObject' _ ZeroObject = return $ return ZeroObject
@@ -209,6 +212,7 @@ data RecItem' c
     | RecText Text
     | RecBinary ByteString
     | RecDate ZonedTime
+    | RecUUID UUID
     | RecJson J.Value
     | RecRef (Ref' c)
     deriving (Show)
@@ -252,6 +256,7 @@ serializeRecItem name (RecText x) = [name, BC.pack ":t", BC.singleton ' ', escap
           escape c    = BC.singleton c
 serializeRecItem name (RecBinary x) = [name, BC.pack ":b ", convertToBase Base64 x, BC.singleton '\n']
 serializeRecItem name (RecDate x) = [name, BC.pack ":d", BC.singleton ' ', BC.pack (formatTime defaultTimeLocale "%s %z" x), BC.singleton '\n']
+serializeRecItem name (RecUUID x) = [name, BC.pack ":u", BC.singleton ' ', U.toASCIIBytes x, BC.singleton '\n']
 serializeRecItem name (RecJson x) = [name, BC.pack ":j", BC.singleton ' '] ++ BL.toChunks (J.encode x) ++ [BC.singleton '\n']
 serializeRecItem name (RecRef x) = [name, BC.pack ":r.b2 ", showRef x, BC.singleton '\n']
 
@@ -314,6 +319,7 @@ unsafeDeserializeObject st bytes =
                           "t" -> return $ RecText $ decodeUtf8With lenientDecode content
                           "b" -> either (const Nothing) (Just . RecBinary) $ convertFromBase Base64 content
                           "d" -> RecDate <$> parseTimeM False defaultTimeLocale "%s %z" (BC.unpack content)
+                          "u" -> RecUUID <$> U.fromASCIIBytes content
                           "j" -> RecJson <$> J.decode (BL.fromStrict content)
                           "r.b2" -> RecRef . Ref st <$> readRefDigest content
                           _   -> Nothing
@@ -536,6 +542,14 @@ instance StorableDate Day where
     fromDate = utctDay . fromDate
 
 
+class StorableUUID a where
+    toUUID :: a -> UUID
+    fromUUID :: UUID -> a
+
+instance StorableUUID UUID where
+    toUUID = id; fromUUID = id
+
+
 storeInt :: Integral a => String -> a -> StoreRec c
 storeInt name x = tell [return [(BC.pack name, RecInt $ toInteger x)]]
 
@@ -565,6 +579,12 @@ storeDate name x = tell [return [(BC.pack name, RecDate $ toDate x)]]
 
 storeMbDate :: StorableDate a => String -> Maybe a -> StoreRec c
 storeMbDate name = maybe (return ()) (storeDate name)
+
+storeUUID :: StorableUUID a => String -> a -> StoreRec c
+storeUUID name x = tell [return [(BC.pack name, RecUUID $ toUUID x)]]
+
+storeMbUUID :: StorableUUID a => String -> Maybe a -> StoreRec c
+storeMbUUID name = maybe (return ()) (storeUUID name)
 
 storeJson :: J.ToJSON a => String -> a -> StoreRec c
 storeJson name x = tell [return [(BC.pack name, RecJson $ J.toJSON x)]]
@@ -667,6 +687,15 @@ loadMbDate name = asks (lookup (BC.pack name) . snd) >>= \case
     Nothing -> return Nothing
     Just (RecDate x) -> return $ Just $ fromDate x
     Just _ -> throwError $ "Expecting type date of record item '"++name++"'"
+
+loadUUID :: StorableUUID a => String -> LoadRec a
+loadUUID name = maybe (throwError $ "Missing record iteem '"++name++"'") return =<< loadMbUUID name
+
+loadMbUUID :: StorableUUID a => String -> LoadRec (Maybe a)
+loadMbUUID name = asks (lookup (BC.pack name) . snd) >>= \case
+    Nothing -> return Nothing
+    Just (RecUUID x) -> return $ Just $ fromUUID x
+    Just _ -> throwError $ "Expecting type UUID of record item '"++name++"'"
 
 loadJson :: J.FromJSON a => String -> LoadRec a
 loadJson name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbJson name
