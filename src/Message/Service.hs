@@ -1,10 +1,10 @@
 module Message.Service (
-    DirectMessageService(..),
+    DirectMessageService,
+    ServicePacket(DirectMessagePacket),
     formatMessage,
 ) where
 
 import Control.Monad.Reader
-import Control.Monad.State
 
 import Data.List
 import qualified Data.Text as T
@@ -18,18 +18,24 @@ import State
 import Storage
 import Storage.List
 
-data DirectMessageService = DirectMessageService
+data DirectMessageService
 
 instance Service DirectMessageService where
-    type ServicePacket DirectMessageService = DirectMessage
+    serviceID _ = mkServiceID "c702076c-4928-4415-8b6b-3e839eafcb0d"
+
+    data ServiceState DirectMessageService = DirectMessageService
     emptyServiceState = DirectMessageService
-    serviceHandler smsg = do
-        let msg = fromStored smsg
+
+    newtype ServicePacket DirectMessageService = DirectMessagePacket (Stored DirectMessage)
+
+    serviceHandler packet = do
+        let DirectMessagePacket smsg = fromStored packet
+            msg = fromStored smsg
         powner <- asks $ finalOwner . svcPeer
         tzone <- liftIO $ getCurrentTimeZone
         svcPrint $ formatMessage tzone msg
         if | powner `sameIdentity` msgFrom msg
-           -> do erb <- gets svcLocal
+           -> do erb <- svcGetLocal
                  let st = storedStorage erb
                  erb' <- liftIO $ do
                      threads <- storedFromSList $ lsMessages $ fromStored erb
@@ -38,11 +44,15 @@ instance Service DirectMessageService where
                                                      slistReplaceS thread thread' $ lsMessages $ fromStored erb
                                    Nothing -> slistAdd (emptyDirectThread powner) { msgHead = [smsg] } $ lsMessages $ fromStored erb
                      wrappedStore st (fromStored erb) { lsMessages = slist }
-                 modify $ \s -> s { svcLocal = erb' }
+                 svcSetLocal erb'
                  return Nothing
 
            | otherwise -> do svcPrint "Owner mismatch"
                              return Nothing
+
+instance Storable (ServicePacket DirectMessageService) where
+    store' (DirectMessagePacket smsg) = store' smsg
+    load' = DirectMessagePacket <$> load'
 
 formatMessage :: TimeZone -> DirectMessage -> String
 formatMessage tzone msg = concat

@@ -45,6 +45,7 @@ executable erebos
                        ScopedTypeVariables,
                        StandaloneDeriving,
                        TupleSections,
+                       TypeApplications,
                        TypeFamilies
 
   -- other-extensions:

@@ -19,6 +19,7 @@ import Data.Maybe
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import Data.Time.LocalTime
+import Data.Typeable
 
 import System.Console.Haskeline
 import System.Environment
@@ -94,8 +95,8 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
     chanPeer <- liftIO $ do
         erebosHead <- loadLocalStateHead st
         startServer erebosHead extPrintLn bhost
-            [ (T.pack "attach", SomeService (emptyServiceState :: AttachService))
-            , (T.pack "dmsg", SomeService (emptyServiceState :: DirectMessageService))
+            [ SomeService @AttachService Proxy
+            , SomeService @DirectMessageService Proxy
             ]
 
     peers <- liftIO $ newMVar []
@@ -224,7 +225,7 @@ cmdSend = void $ do
                 (,smsg) <$> slistAddS thread' (lsMessages $ fromStored erb)
         erb' <- wrappedStore st (fromStored erb) { lsMessages = slist }
         return (erb', smsg)
-    sendToPeer self peer (T.pack "dmsg") smsg
+    sendToPeer self peer $ DirectMessagePacket smsg
 
     tzone <- liftIO $ getCurrentTimeZone
     liftIO $ putStrLn $ formatMessage tzone $ fromStored smsg

@@ -18,9 +18,10 @@ import Control.Monad.State
 import qualified Data.ByteString.Char8 as BC
 import qualified Data.ByteString.Lazy as BL
 import Data.Either
+import Data.List
 import qualified Data.Map as M
 import Data.Maybe
-import qualified Data.Text as T
+import Data.Typeable
 
 import Network.Socket
 import Network.Socket.ByteString (recvFrom, sendTo)
@@ -48,8 +49,8 @@ data Peer = Peer
     , peerSocket :: Socket
     , peerStorage :: Storage
     , peerInStorage :: PartialStorage
-    , peerServiceState :: MVar (M.Map T.Text SomeService)
-    , peerServiceQueue :: [(T.Text, WaitingRef)]
+    , peerServiceState :: MVar (M.Map ServiceID SomeServiceState)
+    , peerServiceQueue :: [(ServiceID, WaitingRef)]
     , peerWaitingRefs :: [WaitingRef]
     }
 
@@ -75,7 +76,7 @@ data TransportHeaderItem
     | AnnounceUpdate PartialRef
     | TrChannelRequest PartialRef
     | TrChannelAccept PartialRef
-    | ServiceType T.Text
+    | ServiceType ServiceID
     | ServiceRef PartialRef
 
 data TransportHeader = TransportHeader [TransportHeaderItem]
@@ -90,7 +91,7 @@ transportToObject (TransportHeader items) = Rec $ map single items
               AnnounceUpdate ref -> (BC.pack "ANU", RecRef ref)
               TrChannelRequest ref -> (BC.pack "CRQ", RecRef ref)
               TrChannelAccept ref -> (BC.pack "CAC", RecRef ref)
-              ServiceType stype -> (BC.pack "STP", RecText stype)
+              ServiceType stype -> (BC.pack "STP", RecUUID $ toUUID stype)
               ServiceRef ref -> (BC.pack "SRF", RecRef ref)
 
 transportFromObject :: PartialObject -> Maybe TransportHeader
@@ -105,12 +106,12 @@ transportFromObject (Rec items) = case catMaybes $ map single items of
               | name == BC.pack "ANU", RecRef ref <- content -> Just $ AnnounceUpdate ref
               | name == BC.pack "CRQ", RecRef ref <- content -> Just $ TrChannelRequest ref
               | name == BC.pack "CAC", RecRef ref <- content -> Just $ TrChannelAccept ref
-              | name == BC.pack "STP", RecText stype <- content -> Just $ ServiceType stype
+              | name == BC.pack "STP", RecUUID uuid <- content -> Just $ ServiceType $ fromUUID uuid
               | name == BC.pack "SRF", RecRef ref <- content -> Just $ ServiceRef ref
               | otherwise -> Nothing
 transportFromObject _ = Nothing
 
-lookupServiceType :: [TransportHeaderItem] -> Maybe T.Text
+lookupServiceType :: [TransportHeaderItem] -> Maybe ServiceID
 lookupServiceType (ServiceType stype : _) = Just stype
 lookupServiceType (_ : hs) = lookupServiceType hs
 lookupServiceType [] = Nothing
@@ -152,7 +153,7 @@ receivedWaitingRef nref wr@(WaitingRef _ _ mvar) = do
     checkWaitingRef wr
 
 
-startServer :: Head -> (String -> IO ()) -> String -> [(T.Text, SomeService)] -> IO (Chan Peer)
+startServer :: Head -> (String -> IO ()) -> String -> [SomeService] -> IO (Chan Peer)
 startServer origHead logd bhost services = do
     let storage = refStorage $ headRef origHead
     chanPeer <- newChan
@@ -242,20 +243,20 @@ startServer origHead logd bhost services = do
         (peer, svc, ref)
             | PeerIdentityFull peerId <- peerIdentity peer
             -> modifyMVar_ (peerServiceState peer) $ \svcs ->
-                   case maybe (lookup svc services) Just $ M.lookup svc svcs of
-                        Nothing -> do logd $ "unhandled service '" ++ T.unpack svc ++ "'"
+                   case maybe (someServiceEmptyState <$> find ((svc ==) . someServiceID) services) Just $ M.lookup svc svcs of
+                        Nothing -> do logd $ "unhandled service '" ++ show (toUUID svc) ++ "'"
                                       return svcs
-                        Just (SomeService s) -> do
+                        Just (SomeServiceState s) -> do
                             let inp = ServiceInput
                                     { svcPeer = peerId
                                     , svcPrintOp = logd
                                     }
                             (rsp, s') <- handleServicePacket storage inp s (wrappedLoad ref)
                             identity <- readMVar midentity
-                            runExceptT (maybe (return ()) (sendToPeer identity peer svc) rsp) >>= \case
+                            runExceptT (maybe (return ()) (sendToPeer identity peer) rsp) >>= \case
                                 Left err -> logd $ "failed to send response to peer: " ++ show err
                                 Right () -> return ()
-                            return $ M.insert svc (SomeService s') svcs
+                            return $ M.insert svc (SomeServiceState s') svcs
 
             | DatagramAddress paddr <- peerAddress peer -> do
                 logd $ "service packet from peer with incomplete identity " ++ show paddr
@@ -281,7 +282,7 @@ addBody :: Ref -> PacketHandler ()
 addBody r = modify $ \ph -> ph { phBody = r : phBody ph }
 
 handlePacket :: (String -> IO ()) -> UnifiedIdentity -> Bool
-    -> Peer -> Chan (Peer, T.Text, Ref)
+    -> Peer -> Chan (Peer, ServiceID, Ref)
     -> TransportHeader -> IO (Maybe Peer)
 handlePacket logd identity secure opeer chanSvc (TransportHeader headers) = do
     let sidentity = idData identity
@@ -513,7 +514,7 @@ handleIdentityUpdate = do
          _ -> return ()
 
 
-handleServices :: Chan (Peer, T.Text, Ref) -> PacketHandler ()
+handleServices :: Chan (Peer, ServiceID, Ref) -> PacketHandler ()
 handleServices chan = gets (peerServiceQueue . phPeer) >>= \case
     [] -> return ()
     queue -> do
@@ -527,30 +528,31 @@ handleServices chan = gets (peerServiceQueue . phPeer) >>= \case
         updatePeer $ \p -> p { peerServiceQueue = queue' }
 
 
-sendToPeer :: (Storable a, MonadIO m, MonadError String m) => UnifiedIdentity -> Peer -> T.Text -> a -> m ()
-sendToPeer _ peer@Peer { peerChannel = ChannelEstablished ch } svc obj = do
+sendToPeer :: (Service s, MonadIO m, MonadError String m) => UnifiedIdentity -> Peer -> ServicePacket s -> m ()
+sendToPeer _ peer@Peer { peerChannel = ChannelEstablished ch } packet = do
     let st = peerInStorage peer
-    ref <- liftIO $ store st obj
+    ref <- liftIO $ store st packet
     bytes <- case lazyLoadBytes ref of
                   Right bytes -> return bytes
                   Left dgst -> throwError $ "incomplete ref " ++ show ref ++ ", missing " ++ BC.unpack (showRefDigest dgst)
     let plain = BL.toStrict $ BL.concat
-            [ serializeObject $ transportToObject $ TransportHeader [ServiceType svc, ServiceRef ref]
+            [ serializeObject $ transportToObject $ TransportHeader [ServiceType $ serviceID packet, ServiceRef ref]
             , bytes
             ]
     ctext <- channelEncrypt ch plain
     let DatagramAddress paddr = peerAddress peer
     void $ liftIO $ sendTo (peerSocket peer) ctext paddr
 
-sendToPeer _ _ _ _ = throwError $ "no channel to peer"
+sendToPeer _ _ _ = throwError $ "no channel to peer"
 
-sendToPeerWith :: (Service s, MonadIO m, MonadError String m) => UnifiedIdentity -> Peer -> T.Text -> (s -> ExceptT String IO (Maybe (ServicePacket s), s)) -> m ()
-sendToPeerWith identity peer svc fobj = do
+sendToPeerWith :: forall s m. (Service s, MonadIO m, MonadError String m) => UnifiedIdentity -> Peer -> (ServiceState s -> ExceptT String IO (Maybe (ServicePacket s), ServiceState s)) -> m ()
+sendToPeerWith identity peer fobj = do
+    let sid = serviceID @s Proxy
     res <- liftIO $ modifyMVar (peerServiceState peer) $ \svcs -> do
-        runExceptT (fobj $ fromMaybe emptyServiceState $ fromService =<< M.lookup svc svcs) >>= \case
-            Right (obj, s') -> return $ (M.insert svc (SomeService s') svcs, Right obj)
+        runExceptT (fobj $ fromMaybe emptyServiceState $ fromServiceState =<< M.lookup sid svcs) >>= \case
+            Right (obj, s') -> return $ (M.insert sid (SomeServiceState s') svcs, Right obj)
             Left err -> return $ (svcs, Left err)
     case res of
-         Right (Just obj) -> sendToPeer identity peer svc obj
+         Right (Just obj) -> sendToPeer identity peer obj
          Right Nothing -> return ()
          Left err -> throwError err

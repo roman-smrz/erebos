@@ -5,7 +5,6 @@ module Attach (
 
 import Control.Monad.Except
 import Control.Monad.Reader
-import Control.Monad.State
 
 import Crypto.Hash
 import Crypto.Random
@@ -27,22 +26,9 @@ import State
 import Storage
 import Storage.Key
 
-data AttachService = NoAttach
-                   | OurRequest Bytes
-                   | OurRequestConfirm (Maybe (UnifiedIdentity, [ScrubbedBytes]))
-                   | OurRequestReady
-                   | PeerRequest Bytes RefDigest
-                   | PeerRequestConfirm
-                   | AttachDone
-                   | AttachFailed
+data AttachService
 
-data AttachStage = AttachRequest RefDigest
-                 | AttachResponse Bytes
-                 | AttachRequestNonce Bytes
-                 | AttachIdentity (Stored (Signed IdentityData)) [ScrubbedBytes]
-                 | AttachDecline
-
-instance Storable AttachStage where
+instance Storable (ServicePacket AttachService) where
     store' at = storeRec $ do
         case at of
              AttachRequest x -> storeBinary "request" x
@@ -72,10 +58,27 @@ instance Storable AttachStage where
              [] -> throwError "invalid attach stange"
 
 instance Service AttachService where
-    type ServicePacket AttachService = AttachStage
+    serviceID _ = mkServiceID "4995a5f9-2d4d-48e9-ad3b-0bf1c2a1be7f"
+
+    data ServiceState AttachService
+        = NoAttach
+        | OurRequest Bytes
+        | OurRequestConfirm (Maybe (UnifiedIdentity, [ScrubbedBytes]))
+        | OurRequestReady
+        | PeerRequest Bytes RefDigest
+        | PeerRequestConfirm
+        | AttachDone
+        | AttachFailed
     emptyServiceState = NoAttach
 
-    serviceHandler spacket = gets ((,fromStored spacket) . svcValue) >>= \case
+    data ServicePacket AttachService
+        = AttachRequest RefDigest
+        | AttachResponse Bytes
+        | AttachRequestNonce Bytes
+        | AttachIdentity (Stored (Signed IdentityData)) [ScrubbedBytes]
+        | AttachDecline
+
+    serviceHandler spacket = ((,fromStored spacket) <$> svcGet) >>= \case
         (NoAttach, AttachRequest confirm) -> do
             peer <- asks $ svcPeer
             svcPrint $ "Attach from " ++ T.unpack (displayIdentity peer) ++ " initiated"
@@ -86,8 +89,8 @@ instance Service AttachService where
 
         (OurRequest nonce, AttachResponse pnonce) -> do
             peer <- asks $ svcPeer
-            self <- maybe (throwError "failed to verify own identity") return =<<
-                gets (validateIdentity . lsIdentity . fromStored . svcLocal)
+            self <- maybe (throwError "failed to verify own identity") return .
+                validateIdentity . lsIdentity . fromStored =<< svcGetLocal
             svcPrint $ "Attach to " ++ T.unpack (displayIdentity peer) ++ ": " ++ confirmationNumber (nonceDigest self peer nonce pnonce)
             svcSet $ OurRequestConfirm Nothing
             return $ Just $ AttachRequestNonce nonce
@@ -113,7 +116,7 @@ instance Service AttachService where
             verifyAttachedIdentity sdata >>= \case
                 Just identity -> do
                     svcPrint $ "Accepted updated identity"
-                    st <- gets $ storedStorage . svcLocal
+                    st <- storedStorage <$> svcGetLocal
                     finalizeAttach st identity keys
                     return Nothing
                 Nothing -> do
@@ -126,8 +129,8 @@ instance Service AttachService where
 
         (PeerRequest nonce dgst, AttachRequestNonce pnonce) -> do
             peer <- asks $ svcPeer
-            self <- maybe (throwError "failed to verify own identity") return =<<
-                gets (validateIdentity . lsIdentity . fromStored . svcLocal)
+            self <- maybe (throwError "failed to verify own identity") return .
+                validateIdentity . lsIdentity . fromStored =<< svcGetLocal
             if dgst == nonceDigest peer self pnonce BA.empty
                then do svcPrint $ "Attach from " ++ T.unpack (displayIdentity peer) ++ ": " ++ confirmationNumber (nonceDigest peer self pnonce nonce)
                        svcSet PeerRequestConfirm
@@ -151,14 +154,14 @@ attachToOwner _ self peer = do
     pid <- case peerIdentity peer of
                 PeerIdentityFull pid -> return pid
                 _ -> throwError "incomplete peer identity"
-    sendToPeerWith self peer (T.pack "attach") $ \case
+    sendToPeerWith self peer $ \case
         NoAttach -> return (Just $ AttachRequest (nonceDigest self pid nonce BA.empty), OurRequest nonce)
         _ -> throwError "alredy in progress"
 
 attachAccept :: (MonadIO m, MonadError String m) => (String -> IO ()) -> UnifiedIdentity -> Peer -> m ()
 attachAccept printMsg self peer = do
     let st = storedStorage $ idData self
-    sendToPeerWith self peer (T.pack "attach") $ \case
+    sendToPeerWith self peer $ \case
         NoAttach -> throwError $ "none in progress"
         OurRequest {} -> throwError $ "waiting for peer"
         OurRequestConfirm Nothing -> do
@@ -202,7 +205,7 @@ confirmationNumber dgst = let (a:b:c:d:_) = map fromIntegral $ BA.unpack dgst ::
 
 verifyAttachedIdentity :: Stored (Signed IdentityData) -> ServiceHandler s (Maybe UnifiedIdentity)
 verifyAttachedIdentity sdata = do
-    curid <- gets $ lsIdentity . fromStored . svcLocal
+    curid <- lsIdentity . fromStored <$> svcGetLocal
     secret <- maybe (throwError "failed to load own secret key") return =<<
         liftIO (loadKey $ iddKeyIdentity $ fromStored $ signedData $ fromStored curid)
     sdata' <- liftIO $ wrappedStore (storedStorage sdata) =<< signAdd secret (fromStored sdata)
