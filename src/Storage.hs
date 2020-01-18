@@ -32,7 +32,7 @@ module Storage (
     loadBlob, loadRec, loadZero,
     loadInt, loadNum, loadText, loadBinary, loadDate, loadUUID, loadJson, loadRef, loadRawRef,
     loadMbInt, loadMbNum, loadMbText, loadMbBinary, loadMbDate, loadMbUUID, loadMbJson, loadMbRef, loadMbRawRef,
-    loadBinaries, loadRefs,
+    loadBinaries, loadRefs, loadRawRefs,
     loadZRef,
 
     Stored,

@@ -1,11 +1,13 @@
 module State (
     LocalState(..),
-    SharedState(..),
+    SharedState, SharedType(..),
+    SharedTypeID, mkSharedTypeID,
 
     loadLocalState, loadLocalStateHead,
     updateLocalState, updateLocalState_,
+
     updateSharedState, updateSharedState_,
-    mergeSharedStates,
+    lookupSharedValue, makeSharedStateUpdate,
 
     loadLocalIdentity, headLocalIdentity,
 
@@ -17,10 +19,12 @@ module State (
 import Control.Monad
 
 import Data.Foldable
-import Data.List
 import Data.Maybe
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
+import Data.Typeable
+import Data.UUID (UUID)
+import qualified Data.UUID as U
 
 import System.IO
 
@@ -29,7 +33,7 @@ import Message
 import PubKey
 import Storage
 import Storage.List
-import Util
+import Storage.Merge
 
 data LocalState = LocalState
     { lsIdentity :: Stored (Signed IdentityData)
@@ -39,8 +43,18 @@ data LocalState = LocalState
 
 data SharedState = SharedState
     { ssPrev :: [Stored SharedState]
-    , ssIdentity :: [Stored (Signed IdentityData)]
+    , ssType :: Maybe SharedTypeID
+    , ssValue :: [Ref]
     }
+
+newtype SharedTypeID = SharedTypeID UUID
+    deriving (Eq, Ord, StorableUUID)
+
+mkSharedTypeID :: String -> SharedTypeID
+mkSharedTypeID = maybe (error "Invalid shared type ID") SharedTypeID . U.fromString
+
+class Storable a => SharedType a where
+    sharedTypeID :: proxy a -> SharedTypeID
 
 instance Storable LocalState where
     store' st = storeRec $ do
@@ -56,11 +70,16 @@ instance Storable LocalState where
 instance Storable SharedState where
     store' st = storeRec $ do
         mapM_ (storeRef "PREV") $ ssPrev st
-        mapM_ (storeRef "id") $ ssIdentity st
+        storeMbUUID "type" $ ssType st
+        mapM_ (storeRawRef "value") $ ssValue st
 
     load' = loadRec $ SharedState
         <$> loadRefs "PREV"
-        <*> loadRefs "id"
+        <*> loadMbUUID "type"
+        <*> loadRawRefs "value"
+
+instance SharedType (Signed IdentityData) where
+    sharedTypeID _ = mkSharedTypeID "0c6c1fe0-f2d7-4891-926b-c332449f7871"
 
 
 loadLocalState :: Storage -> IO (Stored LocalState)
@@ -99,7 +118,8 @@ loadLocalStateHead st = loadHeadDef st "erebos" $ do
 
     shared <- wrappedStore st $ SharedState
         { ssPrev = []
-        , ssIdentity = [fromMaybe identity owner]
+        , ssType = Just $ sharedTypeID @(Signed IdentityData) Proxy
+        , ssValue = [storedRef $ fromMaybe identity owner]
         }
     return $ LocalState
         { lsIdentity = identity
@@ -114,7 +134,7 @@ headLocalIdentity :: Head -> UnifiedIdentity
 headLocalIdentity h =
     let ls = load $ headRef h
      in maybe (error "failed to verify local identity")
-            (updateOwners (ssIdentity . fromStored =<< lsShared ls))
+            (updateOwners (lookupSharedValue $ lsShared ls))
             (validateIdentity $ lsIdentity ls)
 
 
@@ -122,43 +142,53 @@ updateLocalState_ :: Storage -> (Stored LocalState -> IO (Stored LocalState)) ->
 updateLocalState_ st f = updateLocalState st (fmap (,()) . f)
 
 updateLocalState :: Storage -> (Stored LocalState -> IO (Stored LocalState, a)) -> IO a
-updateLocalState ls f = do
-    Just erebosHead <- loadHead ls "erebos"
-    (st, x) <- f $ wrappedLoad (headRef erebosHead)
-    Right _ <- replaceHead st (Right erebosHead)
+updateLocalState st f = do
+    Just erebosHead <- loadHead st "erebos"
+    let ls = wrappedLoad (headRef erebosHead)
+    (ls', x) <- f ls
+    when (ls' /= ls) $ do
+        Right _ <- replaceHead ls' (Right erebosHead)
+        return ()
     return x
 
-updateSharedState_ :: Storage -> (Stored SharedState -> IO (Stored SharedState)) -> IO ()
+
+updateSharedState_ :: SharedType a => Storage -> ([Stored a] -> IO ([Stored a])) -> IO ()
 updateSharedState_ st f = updateSharedState st (fmap (,()) . f)
 
-updateSharedState :: Storage -> (Stored SharedState -> IO (Stored SharedState, a)) -> IO a
+updateSharedState :: forall a b. SharedType a => Storage -> ([Stored a] -> IO ([Stored a], b)) -> IO b
 updateSharedState st f = updateLocalState st $ \ls -> do
-    (shared, x) <- f =<< mergeSharedStates (lsShared $ fromStored ls)
-    (,x) <$> wrappedStore st (fromStored ls) { lsShared = [shared] }
+    let shared = lsShared $ fromStored ls
+        val = lookupSharedValue shared
+    (val', x) <- f val
+    (,x) <$> if val' == val
+                then return ls
+                else do shared' <- makeSharedStateUpdate st val' shared
+                        wrappedStore st (fromStored ls) { lsShared = [shared'] }
 
-mergeSharedStates :: [(Stored SharedState)] -> IO (Stored SharedState)
-mergeSharedStates [s] = return s
-mergeSharedStates ss@(s:_) = wrappedStore (storedStorage s) $ SharedState
-        { ssPrev = ss
-        , ssIdentity = uniq $ sort $ concatMap (ssIdentity . fromStored) $ ss -- TODO: ancestor elimination
-        }
-mergeSharedStates [] = error "mergeSharedStates: empty list"
+lookupSharedValue :: forall a. SharedType a => [Stored SharedState] -> [Stored a]
+lookupSharedValue = map wrappedLoad . concatMap (ssValue . fromStored) . filterAncestors . helper
+    where helper (x:xs) | Just sid <- ssType (fromStored x), sid == sharedTypeID @a Proxy = x : helper xs
+                        | otherwise = helper $ ssPrev (fromStored x) ++ xs
+          helper [] = []
+
+makeSharedStateUpdate :: forall a. SharedType a => Storage -> [Stored a] -> [Stored SharedState] -> IO (Stored SharedState)
+makeSharedStateUpdate st val prev = wrappedStore st SharedState
+    { ssPrev = prev
+    , ssType = Just $ sharedTypeID @a Proxy
+    , ssValue = storedRef <$> val
+    }
 
 
 mergeSharedIdentity :: Storage -> IO UnifiedIdentity
-mergeSharedIdentity st = updateSharedState st $ \sshared -> do
-    let shared = fromStored sshared
-        Just cidentity = validateIdentityF $ ssIdentity shared
+mergeSharedIdentity st = updateSharedState st $ \sdata -> do
+    let Just cidentity = validateIdentityF sdata
     identity <- mergeIdentity cidentity
-    sshared' <- wrappedStore st $ shared { ssIdentity = [idData identity] }
-    return (sshared', identity)
+    return ([idData identity], identity)
 
 updateSharedIdentity :: Storage -> IO ()
-updateSharedIdentity st = updateSharedState_ st $ \sshared -> do
-    let shared = fromStored sshared
-        Just identity = validateIdentityF $ ssIdentity shared
-    identity' <- interactiveIdentityUpdate identity
-    wrappedStore st shared { ssIdentity = [idData identity'] }
+updateSharedIdentity st = updateSharedState_ st $ \sdata -> do
+    let Just identity = validateIdentityF sdata
+    (:[]) . idData <$> interactiveIdentityUpdate identity
 
 interactiveIdentityUpdate :: Foldable m => Identity m -> IO UnifiedIdentity
 interactiveIdentityUpdate identity = do

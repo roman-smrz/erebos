@@ -224,11 +224,7 @@ finalizeAttach st identity skeys = do
         pkeys <- mapM (copyStored st) [ idKeyIdentity owner, idKeyMessage owner ]
         mapM_ storeKey $ catMaybes [ keyFromData sec pub | sec <- skeys, pub <- pkeys ]
 
-        mshared <- mergeSharedStates (lsShared $ fromStored slocal)
-        shared <- wrappedStore st $ (fromStored mshared)
-            { ssPrev = lsShared $ fromStored slocal
-            , ssIdentity = idDataF owner
-            }
+        shared <- makeSharedStateUpdate st (idDataF owner) (lsShared $ fromStored slocal)
         wrappedStore st (fromStored slocal)
             { lsIdentity = idData identity
             , lsShared = [ shared ]
