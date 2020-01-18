@@ -189,7 +189,10 @@ startServer origHead logd bhost services = do
                 mbpeer <- M.lookup paddr <$> readMVar peers
                 (peer, content, secure) <- if
                     | Just peer <- mbpeer
-                    , ChannelEstablished ch <- peerChannel peer
+                    , Just ch <- case peerChannel peer of
+                                      ChannelEstablished ch  -> Just ch
+                                      ChannelOurAccept _ sch -> Just $ fromStored sch
+                                      _                      -> Nothing
                     , Right plain <- runExcept $ channelDecrypt ch msg
                     -> return (peer, plain, True)
 
@@ -399,7 +402,7 @@ handlePacket logd identity secure opeer chanSvc (TransportHeader headers) = do
                         [ serializeObject $ transportToObject $ TransportHeader $ reverse $ phHead ph
                         , BL.concat $ map lazyLoadBytes $ phBody ph
                         ]
-                case peerChannel opeer of
+                case peerChannel $ phPeer ph of
                      ChannelEstablished ch -> do
                         x <- runExceptT (channelEncrypt ch plain)
                         case x of Right ctext -> void $ sendTo (peerSocket $ phPeer ph) ctext paddr
