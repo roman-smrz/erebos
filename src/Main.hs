@@ -34,6 +34,7 @@ import Service
 import State
 import Storage
 import Storage.List
+import Sync
 
 main :: IO ()
 main = do
@@ -96,6 +97,7 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
         erebosHead <- loadLocalStateHead st
         startServer erebosHead extPrintLn bhost
             [ SomeService @AttachService Proxy
+            , SomeService @SyncService Proxy
             , SomeService @DirectMessageService Proxy
             ]
 

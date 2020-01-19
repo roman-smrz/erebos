@@ -32,6 +32,7 @@ executable erebos
                        Storage.List
                        Storage.Key
                        Storage.Merge
+                       Sync
                        Util
 
   default-extensions:  ExistentialQuantification

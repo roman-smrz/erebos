@@ -758,8 +758,8 @@ storedRef (Stored ref _) = ref
 storedStorage :: Stored a -> Storage
 storedStorage (Stored (Ref st _) _) = st
 
-wrappedStore :: Storable a => Storage -> a -> IO (Stored a)
-wrappedStore st x = do ref <- store st x
+wrappedStore :: MonadIO m => Storable a => Storage -> a -> m (Stored a)
+wrappedStore st x = do ref <- liftIO $ store st x
                        return $ Stored ref x
 
 wrappedLoad :: Storable a => Ref -> Stored a
