@@ -172,10 +172,29 @@ startServer origHead logd bhost services = do
             return sock
 
         loop sock = do
-            let announce identity = do
+            void $ forkIO $ forever $ do
+                readMVar midentity >>= \identity -> do
                     st <- derivePartialStorage storage
                     baddr:_ <- getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just bhost) (Just discoveryPort)
                     void $ sendTo sock (BL.toStrict $ serializeObject $ transportToObject $ TransportHeader [ AnnounceSelf $ partialRef st $ storedRef $ idData identity ]) (addrAddress baddr)
+                threadDelay $ announceIntervalSeconds * 1000 * 1000
+
+            let announceUpdate identity = do
+                    st <- derivePartialStorage storage
+                    let plaintext = BL.toStrict $ serializeObject $ transportToObject $ TransportHeader $
+                            (AnnounceSelf $ partialRef st $ storedRef $ idData identity) :
+                            map (AnnounceUpdate . partialRef st . storedRef) (idUpdates identity)
+
+                    ps <- readMVar peers
+                    forM_ ps $ \case
+                      peer
+                        | PeerIdentityFull _ <- peerIdentity peer
+                        , ChannelEstablished ch <- peerChannel peer
+                        , DatagramAddress paddr <- peerAddress peer
+                        -> runExceptT (channelEncrypt ch plaintext) >>= \case
+                               Right ctext -> void $ sendTo (peerSocket peer) ctext paddr
+                               Left err -> logd $ "Failed to encrypt data: " ++ err
+                        | otherwise -> return ()
 
             let shareState self shared peer
                     | PeerIdentityFull pid <- peerIdentity peer
@@ -185,15 +204,11 @@ startServer origHead logd bhost services = do
                             Right () -> return ()
                     | otherwise = return ()
 
-            void $ forkIO $ forever $ do
-                announce =<< readMVar midentity
-                threadDelay $ announceIntervalSeconds * 1000 * 1000
-
             watchHead origHead $ \h -> do
                 let idt = headLocalIdentity h
                 changedId <- modifyMVar midentity $ \cur ->
                     return (idt, cur /= idt)
-                when changedId $ announce idt
+                when changedId $ announceUpdate idt
 
                 let shared = lsShared $ load $ headRef h
                 changedShared <- modifyMVar mshared $ \cur ->
@@ -520,6 +535,7 @@ handleChannelAccept identity accref = do
 sendIdentityUpdate :: UnifiedIdentity -> PacketHandler ()
 sendIdentityUpdate self = do
     ist <- gets $ peerInStorage . phPeer
+    addHeader $ AnnounceSelf $ partialRef ist $ storedRef $ idData $ self
     mapM_ addHeader . map (AnnounceUpdate . partialRef ist . storedRef) . idUpdates $ self
 
 
@@ -539,6 +555,12 @@ handleIdentityUpdate :: PacketHandler ()
 handleIdentityUpdate = do
     peer <- gets phPeer
     case (peerIdentity peer, peerIdentityUpdate peer) of
+         (PeerIdentityRef wref, _) -> checkWaitingRef wref >>= \case
+            Just ref | Just pid <- validateIdentity $ wrappedLoad ref -> do
+                updatePeer $ \p -> p { peerIdentity = PeerIdentityFull pid }
+                handleIdentityUpdate
+            _ -> return ()
+
          (PeerIdentityFull pid, wrefs@(_:_)) -> do
              (wrefs', upds) <- fmap partitionEithers $ forM wrefs $ \wref -> checkWaitingRef wref >>= \case
                  Just upd -> return $ Right $ wrappedLoad upd
@@ -547,6 +569,7 @@ handleIdentityUpdate = do
                  { peerIdentity = PeerIdentityFull $ updateOwners upds pid
                  , peerIdentityUpdate = wrefs'
                  }
+
          _ -> return ()
 
 

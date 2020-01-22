@@ -16,6 +16,7 @@ module Identity (
     displayIdentity,
 ) where
 
+import Control.Arrow
 import Control.Monad
 import Control.Monad.Except
 import qualified Control.Monad.Identity as I
@@ -49,7 +50,7 @@ type ComposedIdentity = Identity []
 type UnifiedIdentity = Identity I.Identity
 
 instance Eq UnifiedIdentity where
-    (==) = (==) `on` idData
+    (==) = (==) `on` (idData &&& idUpdates)
 
 data IdentityData = IdentityData
     { iddPrev :: [Stored (Signed IdentityData)]
