@@ -29,16 +29,13 @@ import qualified Data.UUID as U
 import System.IO
 
 import Identity
-import Message
 import PubKey
 import Storage
-import Storage.List
 import Storage.Merge
 
 data LocalState = LocalState
     { lsIdentity :: Stored (Signed IdentityData)
     , lsShared :: [Stored SharedState]
-    , lsMessages :: StoredList DirectMessageThread -- TODO: move to shared
     }
 
 data SharedState = SharedState
@@ -60,12 +57,10 @@ instance Storable LocalState where
     store' st = storeRec $ do
         storeRef "id" $ lsIdentity st
         mapM_ (storeRef "shared") $ lsShared st
-        storeRef "dmsg" $ lsMessages st
 
     load' = loadRec $ LocalState
         <$> loadRef "id"
         <*> loadRefs "shared"
-        <*> loadRef "dmsg"
 
 instance Storable SharedState where
     store' st = storeRec $ do
@@ -114,8 +109,6 @@ loadLocalStateHead st = loadHeadDef st "erebos" $ do
         , iddKeyMessage = Just devPublicMsg
         }
 
-    msgs <- emptySList st
-
     shared <- wrappedStore st $ SharedState
         { ssPrev = []
         , ssType = Just $ sharedTypeID @(Signed IdentityData) Proxy
@@ -124,7 +117,6 @@ loadLocalStateHead st = loadHeadDef st "erebos" $ do
     return $ LocalState
         { lsIdentity = identity
         , lsShared = [shared]
-        , lsMessages = msgs
         }
 
 loadLocalIdentity :: Storage -> IO UnifiedIdentity

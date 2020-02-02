@@ -27,13 +27,11 @@ import System.Environment
 import Attach
 import Identity
 import Message
-import Message.Service
 import Network
 import PubKey
 import Service
 import State
 import Storage
-import Storage.List
 import Sync
 
 main :: IO ()
@@ -211,24 +209,9 @@ cmdSetPeer n | n < 1     = liftIO $ putStrLn "Invalid peer index"
 cmdSend :: Command
 cmdSend = void $ do
     self <- asks ciSelf
-    let st = storedStorage $ idData self
     Just peer <- gets csPeer
-    PeerIdentityFull pid <- return $ peerIdentity peer
-    let powner = finalOwner pid :: ComposedIdentity
     text <- asks ciLine
-    smsg <- liftIO $ updateLocalState st $ \erb -> do
-        threads <- storedFromSList $ lsMessages $ fromStored erb
-        (slist, smsg) <- case find (sameIdentity powner . msgPeer . fromStored) threads of
-            Just thread -> do
-                (smsg, thread') <- createDirectMessage self (fromStored thread) (T.pack text)
-                (,smsg) <$> slistReplaceS thread thread' (lsMessages $ fromStored erb)
-            Nothing -> do
-                (smsg, thread') <- createDirectMessage self (emptyDirectThread powner) (T.pack text)
-                (,smsg) <$> slistAddS thread' (lsMessages $ fromStored erb)
-        erb' <- wrappedStore st (fromStored erb) { lsMessages = slist }
-        return (erb', smsg)
-    sendToPeer self peer $ DirectMessagePacket smsg
-
+    smsg <- sendDirectMessage self peer $ T.pack text
     tzone <- liftIO $ getCurrentTimeZone
     liftIO $ putStrLn $ formatMessage tzone $ fromStored smsg
 
@@ -242,7 +225,8 @@ cmdHistory = void $ do
 
     Just erebosHead <- liftIO $ loadHead st "erebos"
     let erebos = wrappedLoad (headRef erebosHead)
-    Just thread <- return $ find (sameIdentity powner . msgPeer) $ fromSList $ lsMessages $ fromStored erebos
+    Just thread <- return $ find (sameIdentity powner . msgPeer) $
+        messageThreadView $ lookupSharedValue $ lsShared $ fromStored erebos
     tzone <- liftIO $ getCurrentTimeZone
     liftIO $ mapM_ (putStrLn . formatMessage tzone) $ reverse $ take 50 $ threadToList thread
 

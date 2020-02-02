@@ -6,7 +6,7 @@ module Identity (
 
     emptyIdentityData,
     validateIdentity, validateIdentityF,
-    loadIdentity,
+    loadIdentity, loadUnifiedIdentity,
 
     mergeIdentity, toUnifiedIdentity, toComposedIdentity,
     updateIdentity, updateOwners,
@@ -127,6 +127,9 @@ validateIdentityF mdata = do
 
 loadIdentity :: String -> LoadRec ComposedIdentity
 loadIdentity name = maybe (throwError "identity validation failed") return . validateIdentityF =<< loadRefs name
+
+loadUnifiedIdentity :: String -> LoadRec UnifiedIdentity
+loadUnifiedIdentity name = maybe (throwError "identity validation failed") return . validateIdentity =<< loadRef name
 
 
 gatherPrevious :: Set (Stored (Signed IdentityData)) -> [Stored (Signed IdentityData)] -> Set (Stored (Signed IdentityData))

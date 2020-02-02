@@ -1,16 +1,32 @@
 module Message (
-    DirectMessage(..), DirectMessageThread(..),
-    emptyDirectThread, createDirectMessage,
+    DirectMessage(..),
+    DirectMessageService,
+    ServicePacket(DirectMessagePacket),
+
+    sendDirectMessage,
+
+    DirectMessageThread(..),
     threadToList,
+    messageThreadView,
+
+    formatMessage,
 ) where
+
+import Control.Monad.Except
+import Control.Monad.Reader
 
 import Data.List
 import Data.Ord
 import qualified Data.Set as S
 import Data.Text (Text)
+import qualified Data.Text as T
+import Data.Time.Format
 import Data.Time.LocalTime
 
 import Identity
+import Network
+import Service
+import State
 import Storage
 import Storage.Merge
 
@@ -19,12 +35,6 @@ data DirectMessage = DirectMessage
     , msgPrev :: [Stored DirectMessage]
     , msgTime :: ZonedTime
     , msgText :: Text
-    }
-
-data DirectMessageThread = DirectMessageThread
-    { msgPeer :: ComposedIdentity
-    , msgHead :: [Stored DirectMessage]
-    , msgSeen :: [Stored DirectMessage]
     }
 
 instance Storable DirectMessage where
@@ -40,43 +50,123 @@ instance Storable DirectMessage where
         <*> loadDate "time"
         <*> loadText "text"
 
-instance Storable DirectMessageThread where
-    store' msg = storeRec $ do
-        mapM_ (storeRef "peer") $ idDataF $ msgPeer msg
-        mapM_ (storeRef "head") $ msgHead msg
-        mapM_ (storeRef "seen") $ msgSeen msg
+data DirectMessageService
 
-    load' = loadRec $ DirectMessageThread
-        <$> loadIdentity "peer"
-        <*> loadRefs "head"
+instance Service DirectMessageService where
+    serviceID _ = mkServiceID "c702076c-4928-4415-8b6b-3e839eafcb0d"
+
+    data ServiceState DirectMessageService = DirectMessageService
+    emptyServiceState = DirectMessageService
+
+    newtype ServicePacket DirectMessageService = DirectMessagePacket (Stored DirectMessage)
+
+    serviceHandler packet = do
+        let DirectMessagePacket smsg = fromStored packet
+            msg = fromStored smsg
+        powner <- asks $ finalOwner . svcPeer
+        tzone <- liftIO $ getCurrentTimeZone
+        erb <- svcGetLocal
+        let st = storedStorage erb
+            prev = lookupSharedValue $ lsShared $ fromStored erb
+            sent = findMsgProperty powner msSent prev
+            received = findMsgProperty powner msReceived prev
+        if powner `sameIdentity` msgFrom msg ||
+               filterAncestors sent == filterAncestors (smsg : sent)
+           then do
+               erb' <- liftIO $ do
+                   next <- wrappedStore st $ MessageState
+                       { msPrev = prev
+                       , msPeer = powner
+                       , msSent = []
+                       , msReceived = filterAncestors $ smsg : received
+                       , msSeen = []
+                       }
+                   shared <- makeSharedStateUpdate st [next] (lsShared $ fromStored erb)
+                   wrappedStore st (fromStored erb) { lsShared = [shared] }
+               svcSetLocal erb'
+               if powner `sameIdentity` msgFrom msg
+                  then do
+                      svcPrint $ formatMessage tzone msg
+                      return $ Just $ DirectMessagePacket smsg
+                  else return Nothing
+
+           else do svcPrint "Owner mismatch"
+                   return Nothing
+
+instance Storable (ServicePacket DirectMessageService) where
+    store' (DirectMessagePacket smsg) = store' smsg
+    load' = DirectMessagePacket <$> load'
+
+
+data MessageState = MessageState
+    { msPrev :: [Stored MessageState]
+    , msPeer :: ComposedIdentity
+    , msSent :: [Stored DirectMessage]
+    , msReceived :: [Stored DirectMessage]
+    , msSeen :: [Stored DirectMessage]
+    }
+
+instance Storable MessageState where
+    store' ms = storeRec $ do
+        mapM_ (storeRef "PREV") $ msPrev ms
+        mapM_ (storeRef "peer") $ idDataF $ msPeer ms
+        mapM_ (storeRef "sent") $ msSent ms
+        mapM_ (storeRef "received") $ msReceived ms
+        mapM_ (storeRef "seen") $ msSeen ms
+
+    load' = loadRec $ MessageState
+        <$> loadRefs "PREV"
+        <*> loadIdentity "peer"
+        <*> loadRefs "sent"
+        <*> loadRefs "received"
         <*> loadRefs "seen"
 
-instance Mergeable DirectMessageThread where
-    mergeSorted ts = DirectMessageThread
-        { msgPeer = msgPeer $ fromStored $ head ts -- TODO: merge identity
-        , msgHead = filterAncestors $ msgHead . fromStored =<< ts
-        , msgSeen = filterAncestors $ msgSeen . fromStored =<< ts
-        }
+instance SharedType MessageState where
+    sharedTypeID _ = mkSharedTypeID "ee793681-5976-466a-b0f0-4e1907d3fade"
+
+findMsgProperty :: Foldable m => Identity m -> (MessageState -> [a]) -> [Stored MessageState] -> [a]
+findMsgProperty pid sel mss = concat $ flip findProperty mss $ \x -> do
+    guard $ msPeer x `sameIdentity` pid
+    guard $ not $ null $ sel x
+    return $ sel x
 
 
-emptyDirectThread :: ComposedIdentity -> DirectMessageThread
-emptyDirectThread peer = DirectMessageThread peer [] []
-
-createDirectMessage :: UnifiedIdentity -> DirectMessageThread -> Text -> IO (Stored DirectMessage, Stored DirectMessageThread)
-createDirectMessage self thread msg = do
+sendDirectMessage :: (MonadIO m, MonadError String m) => UnifiedIdentity -> Peer -> Text -> m (Stored DirectMessage)
+sendDirectMessage self peer text = do
+    pid <- case peerIdentity peer of PeerIdentityFull pid -> return pid
+                                     _ -> throwError "incomplete peer identity"
     let st = storedStorage $ idData self
-    time <- getZonedTime
-    smsg <- wrappedStore st DirectMessage
-        { msgFrom = toComposedIdentity $ finalOwner self
-        , msgPrev = msgHead thread
-        , msgTime = time
-        , msgText = msg
-        }
-    sthread <- wrappedStore st thread
-        { msgHead = [smsg]
-        , msgSeen = [smsg]
-        }
-    return (smsg, sthread)
+        powner = finalOwner pid
+
+    smsg <- liftIO $ updateSharedState st $ \prev -> do
+        let sent = findMsgProperty powner msSent prev
+            received = findMsgProperty powner msReceived prev
+
+        time <- getZonedTime
+        smsg <- wrappedStore st DirectMessage
+            { msgFrom = toComposedIdentity $ finalOwner self
+            , msgPrev = filterAncestors $ sent ++ received
+            , msgTime = time
+            , msgText = text
+            }
+        next <- wrappedStore st $ MessageState
+            { msPrev = prev
+            , msPeer = powner
+            , msSent = [smsg]
+            , msReceived = []
+            , msSeen = []
+            }
+        return ([next], smsg)
+
+    sendToPeer self peer $ DirectMessagePacket smsg
+    return smsg
+
+
+data DirectMessageThread = DirectMessageThread
+    { msgPeer :: ComposedIdentity
+    , msgHead :: [Stored DirectMessage]
+    , msgSeen :: [Stored DirectMessage]
+    }
 
 threadToList :: DirectMessageThread -> [DirectMessage]
 threadToList thread = helper S.empty $ msgHead thread
@@ -85,3 +175,31 @@ threadToList thread = helper S.empty $ msgHead thread
                   fromStored msg : helper (S.insert msg seen) (msgs' ++ msgPrev (fromStored msg))
               | otherwise = []
           cmpView msg = (zonedTimeToUTC $ msgTime $ fromStored msg, msg)
+
+messageThreadView :: [Stored MessageState] -> [DirectMessageThread]
+messageThreadView = helper []
+    where helper used ms' = case filterAncestors ms' of
+              mss@(sms : rest)
+                  | any (sameIdentity $ msPeer $ fromStored sms) used ->
+                      helper used $ msPrev (fromStored sms) ++ rest
+                  | otherwise ->
+                      let peer = msPeer $ fromStored sms
+                          sent = findMsgProperty peer msSent mss
+                          received = findMsgProperty peer msReceived mss
+                          seen = findMsgProperty peer msSeen mss
+
+                       in DirectMessageThread
+                              { msgPeer = peer
+                              , msgHead = filterAncestors $ sent ++ received
+                              , msgSeen = filterAncestors $ sent ++ seen
+                              } : helper (peer : used) (msPrev (fromStored sms) ++ rest)
+              _ -> []
+
+
+formatMessage :: TimeZone -> DirectMessage -> String
+formatMessage tzone msg = concat
+    [ formatTime defaultTimeLocale "[%H:%M] " $ utcToLocalTime tzone $ zonedTimeToUTC $ msgTime msg
+    , maybe "<unnamed>" T.unpack $ idName $ msgFrom msg
+    , ": "
+    , T.unpack $ msgText msg
+    ]

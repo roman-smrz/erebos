@@ -6,6 +6,8 @@ module Storage.Merge (
     ancestors,
     precedes,
     filterAncestors,
+
+    findProperty,
 ) where
 
 import qualified Data.ByteString.Char8 as BC
@@ -58,4 +60,12 @@ precedes :: Storable a => Stored a -> Stored a -> Bool
 precedes x y = x `S.member` ancestors [y]
 
 filterAncestors :: Storable a => [Stored a] -> [Stored a]
+filterAncestors [x] = [x]
 filterAncestors xs = uniq $ sort $ filter (`S.notMember` ancestors xs) xs
+
+
+findProperty :: forall a b. Storable a => (a -> Maybe b) -> [Stored a] -> [b]
+findProperty sel = map (fromJust . sel . fromStored) . filterAncestors . (findPropHeads =<<)
+    where findPropHeads :: Stored a -> [Stored a]
+          findPropHeads sobj | Just _ <- sel $ fromStored sobj = [sobj]
+                             | otherwise = findPropHeads =<< previous sobj

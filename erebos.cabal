@@ -22,7 +22,6 @@ executable erebos
                        Identity,
                        Channel,
                        Message,
-                       Message.Service
                        Network,
                        PubKey,
                        Service
