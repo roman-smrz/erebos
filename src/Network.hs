@@ -6,7 +6,7 @@ module Network (
     WaitingRef, wrDigest,
     Service(..),
     startServer,
-    sendToPeer, sendToPeerWith,
+    sendToPeer, sendToPeerStored, sendToPeerWith,
 ) where
 
 import Control.Concurrent
@@ -288,7 +288,7 @@ startServer origHead logd bhost services = do
                                     }
                             (rsp, s') <- handleServicePacket storage inp s (wrappedLoad ref)
                             identity <- readMVar midentity
-                            runExceptT (maybe (return ()) (sendToPeer identity peer) rsp) >>= \case
+                            runExceptT (sendToPeerList identity peer rsp) >>= \case
                                 Left err -> logd $ "failed to send response to peer: " ++ show err
                                 Right () -> return ()
                             return $ M.insert svc (SomeServiceState s') svcs
@@ -588,21 +588,30 @@ handleServices chan = gets (peerServiceQueue . phPeer) >>= \case
 
 
 sendToPeer :: (Service s, MonadIO m, MonadError String m) => UnifiedIdentity -> Peer -> ServicePacket s -> m ()
-sendToPeer _ peer@Peer { peerChannel = ChannelEstablished ch } packet = do
+sendToPeer self peer packet = sendToPeerList self peer [ServiceReply (Left packet) True]
+
+sendToPeerStored :: (Service s, MonadIO m, MonadError String m) => UnifiedIdentity -> Peer -> Stored (ServicePacket s) -> m ()
+sendToPeerStored self peer spacket = sendToPeerList self peer [ServiceReply (Right spacket) True]
+
+sendToPeerList :: (Service s, MonadIO m, MonadError String m) => UnifiedIdentity -> Peer -> [ServiceReply s] -> m ()
+sendToPeerList _ peer@Peer { peerChannel = ChannelEstablished ch } parts = do
     let st = peerInStorage peer
-    ref <- liftIO $ store st packet
-    bytes <- case lazyLoadBytes ref of
+    srefs <- liftIO $ forM parts $ \case ServiceReply (Left x) _ -> store st x
+                                         ServiceReply (Right sx) _ -> copyRef st (storedRef sx)
+
+    bytes <- forM (zip parts srefs) $
+        \case (ServiceReply _ False, _) -> return BL.empty
+              (ServiceReply _ True, ref) -> case lazyLoadBytes ref of
                   Right bytes -> return bytes
                   Left dgst -> throwError $ "incomplete ref " ++ show ref ++ ", missing " ++ BC.unpack (showRefDigest dgst)
-    let plain = BL.toStrict $ BL.concat
-            [ serializeObject $ transportToObject $ TransportHeader [ServiceType $ serviceID packet, ServiceRef ref]
-            , bytes
-            ]
+    let plain = BL.toStrict $ BL.concat $
+            (serializeObject $ transportToObject $ TransportHeader (ServiceType (serviceID $ head parts) : map ServiceRef srefs))
+            : bytes
     ctext <- channelEncrypt ch plain
     let DatagramAddress paddr = peerAddress peer
     void $ liftIO $ sendTo (peerSocket peer) ctext paddr
 
-sendToPeer _ _ _ = throwError $ "no channel to peer"
+sendToPeerList _ _ _ = throwError $ "no channel to peer"
 
 sendToPeerWith :: forall s m. (Service s, MonadIO m, MonadError String m) => UnifiedIdentity -> Peer -> (ServiceState s -> ExceptT String IO (Maybe (ServicePacket s), ServiceState s)) -> m ()
 sendToPeerWith identity peer fobj = do

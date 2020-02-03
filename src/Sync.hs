@@ -30,7 +30,6 @@ instance Service SyncService where
             updated = filterAncestors (added : current)
         when (current /= updated) $ do
             svcSetLocal =<< wrappedStore st (fromStored ls) { lsShared = updated }
-        return Nothing
 
 instance Storable (ServicePacket SyncService) where
     store' (SyncPacket smsg) = store' smsg

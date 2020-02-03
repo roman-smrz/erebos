@@ -84,8 +84,8 @@ instance Service AttachService where
             svcPrint $ "Attach from " ++ T.unpack (displayIdentity peer) ++ " initiated"
             nonce <- liftIO $ getRandomBytes 32
             svcSet $ PeerRequest nonce confirm
-            return $ Just $ AttachResponse nonce
-        (NoAttach, _) -> return Nothing
+            replyPacket $ AttachResponse nonce
+        (NoAttach, _) -> return ()
 
         (OurRequest nonce, AttachResponse pnonce) -> do
             peer <- asks $ svcPeer
@@ -93,24 +93,23 @@ instance Service AttachService where
                 validateIdentity . lsIdentity . fromStored =<< svcGetLocal
             svcPrint $ "Attach to " ++ T.unpack (displayIdentity peer) ++ ": " ++ confirmationNumber (nonceDigest self peer nonce pnonce)
             svcSet $ OurRequestConfirm Nothing
-            return $ Just $ AttachRequestNonce nonce
+            replyPacket $ AttachRequestNonce nonce
         (OurRequest _, _) -> do
             svcSet $ AttachFailed
-            return $ Just $ AttachDecline
+            replyPacket AttachDecline
 
         (OurRequestConfirm _, AttachIdentity sdata keys) -> do
             verifyAttachedIdentity sdata >>= \case
                 Just owner -> do
                     svcPrint $ "Attachment confirmed by peer"
                     svcSet $ OurRequestConfirm $ Just (owner, keys)
-                    return Nothing
                 Nothing -> do
                     svcPrint $ "Failed to verify new identity"
                     svcSet $ AttachFailed
-                    return $ Just AttachDecline
+                    replyPacket AttachDecline
         (OurRequestConfirm _, _) -> do
             svcSet $ AttachFailed
-            return $ Just $ AttachDecline
+            replyPacket AttachDecline
 
         (OurRequestReady, AttachIdentity sdata keys) -> do
             verifyAttachedIdentity sdata >>= \case
@@ -118,14 +117,13 @@ instance Service AttachService where
                     svcPrint $ "Accepted updated identity"
                     st <- storedStorage <$> svcGetLocal
                     finalizeAttach st identity keys
-                    return Nothing
                 Nothing -> do
                     svcPrint $ "Failed to verify new identity"
                     svcSet $ AttachFailed
-                    return $ Just AttachDecline
+                    replyPacket AttachDecline
         (OurRequestReady, _) -> do
             svcSet $ AttachFailed
-            return $ Just $ AttachDecline
+            replyPacket AttachDecline
 
         (PeerRequest nonce dgst, AttachRequestNonce pnonce) -> do
             peer <- asks $ svcPeer
@@ -134,19 +132,18 @@ instance Service AttachService where
             if dgst == nonceDigest peer self pnonce BA.empty
                then do svcPrint $ "Attach from " ++ T.unpack (displayIdentity peer) ++ ": " ++ confirmationNumber (nonceDigest peer self pnonce nonce)
                        svcSet PeerRequestConfirm
-                       return Nothing
                else do svcPrint $ "Failed attach from " ++ T.unpack (displayIdentity peer)
                        svcSet AttachFailed
-                       return $ Just $ AttachDecline
+                       replyPacket AttachDecline
         (PeerRequest _ _, _) -> do
             svcSet $ AttachFailed
-            return $ Just $ AttachDecline
+            replyPacket AttachDecline
         (PeerRequestConfirm, _) -> do
             svcSet $ AttachFailed
-            return $ Just $ AttachDecline
+            replyPacket AttachDecline
 
-        (AttachDone, _) -> return Nothing
-        (AttachFailed, _) -> return Nothing
+        (AttachDone, _) -> return ()
+        (AttachFailed, _) -> return ()
 
 attachToOwner :: (MonadIO m, MonadError String m) => (String -> IO ()) -> UnifiedIdentity -> Peer -> m ()
 attachToOwner _ self peer = do

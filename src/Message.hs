@@ -84,14 +84,11 @@ instance Service DirectMessageService where
                    shared <- makeSharedStateUpdate st [next] (lsShared $ fromStored erb)
                    wrappedStore st (fromStored erb) { lsShared = [shared] }
                svcSetLocal erb'
-               if powner `sameIdentity` msgFrom msg
-                  then do
-                      svcPrint $ formatMessage tzone msg
-                      return $ Just $ DirectMessagePacket smsg
-                  else return Nothing
+               when (powner `sameIdentity` msgFrom msg) $ do
+                   svcPrint $ formatMessage tzone msg
+                   replyStoredRef packet
 
-           else do svcPrint "Owner mismatch"
-                   return Nothing
+           else svcPrint "Owner mismatch"
 
 instance Storable (ServicePacket DirectMessageService) where
     store' (DirectMessagePacket smsg) = store' smsg
