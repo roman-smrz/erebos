@@ -26,9 +26,22 @@ import State
 import Storage
 import Storage.Key
 
-data AttachService
+data AttachService = AttachRequest RefDigest
+                   | AttachResponse Bytes
+                   | AttachRequestNonce Bytes
+                   | AttachIdentity (Stored (Signed IdentityData)) [ScrubbedBytes]
+                   | AttachDecline
 
-instance Storable (ServicePacket AttachService) where
+data AttachState = NoAttach
+                 | OurRequest Bytes
+                 | OurRequestConfirm (Maybe (UnifiedIdentity, [ScrubbedBytes]))
+                 | OurRequestReady
+                 | PeerRequest Bytes RefDigest
+                 | PeerRequestConfirm
+                 | AttachDone
+                 | AttachFailed
+
+instance Storable AttachService where
     store' at = storeRec $ do
         case at of
              AttachRequest x -> storeBinary "request" x
@@ -60,23 +73,8 @@ instance Storable (ServicePacket AttachService) where
 instance Service AttachService where
     serviceID _ = mkServiceID "4995a5f9-2d4d-48e9-ad3b-0bf1c2a1be7f"
 
-    data ServiceState AttachService
-        = NoAttach
-        | OurRequest Bytes
-        | OurRequestConfirm (Maybe (UnifiedIdentity, [ScrubbedBytes]))
-        | OurRequestReady
-        | PeerRequest Bytes RefDigest
-        | PeerRequestConfirm
-        | AttachDone
-        | AttachFailed
-    emptyServiceState = NoAttach
-
-    data ServicePacket AttachService
-        = AttachRequest RefDigest
-        | AttachResponse Bytes
-        | AttachRequestNonce Bytes
-        | AttachIdentity (Stored (Signed IdentityData)) [ScrubbedBytes]
-        | AttachDecline
+    type ServiceState AttachService = AttachState
+    emptyServiceState _ = NoAttach
 
     serviceHandler spacket = ((,fromStored spacket) <$> svcGet) >>= \case
         (NoAttach, AttachRequest confirm) -> do

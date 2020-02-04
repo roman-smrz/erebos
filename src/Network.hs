@@ -281,17 +281,17 @@ startServer origHead logd bhost services = do
                    case maybe (someServiceEmptyState <$> find ((svc ==) . someServiceID) services) Just $ M.lookup svc svcs of
                         Nothing -> do logd $ "unhandled service '" ++ show (toUUID svc) ++ "'"
                                       return svcs
-                        Just (SomeServiceState s) -> do
+                        Just (SomeServiceState (proxy :: Proxy s) s) -> do
                             let inp = ServiceInput
                                     { svcPeer = peerId
                                     , svcPrintOp = logd
                                     }
-                            (rsp, s') <- handleServicePacket storage inp s (wrappedLoad ref)
+                            (rsp, s') <- handleServicePacket storage inp s (wrappedLoad ref :: Stored s)
                             identity <- readMVar midentity
                             runExceptT (sendToPeerList identity peer rsp) >>= \case
                                 Left err -> logd $ "failed to send response to peer: " ++ show err
                                 Right () -> return ()
-                            return $ M.insert svc (SomeServiceState s') svcs
+                            return $ M.insert svc (SomeServiceState proxy s') svcs
 
             | DatagramAddress paddr <- peerAddress peer -> do
                 logd $ "service packet from peer with incomplete identity " ++ show paddr
@@ -587,10 +587,10 @@ handleServices chan = gets (peerServiceQueue . phPeer) >>= \case
         updatePeer $ \p -> p { peerServiceQueue = queue' }
 
 
-sendToPeer :: (Service s, MonadIO m, MonadError String m) => UnifiedIdentity -> Peer -> ServicePacket s -> m ()
+sendToPeer :: (Service s, MonadIO m, MonadError String m) => UnifiedIdentity -> Peer -> s -> m ()
 sendToPeer self peer packet = sendToPeerList self peer [ServiceReply (Left packet) True]
 
-sendToPeerStored :: (Service s, MonadIO m, MonadError String m) => UnifiedIdentity -> Peer -> Stored (ServicePacket s) -> m ()
+sendToPeerStored :: (Service s, MonadIO m, MonadError String m) => UnifiedIdentity -> Peer -> Stored s -> m ()
 sendToPeerStored self peer spacket = sendToPeerList self peer [ServiceReply (Right spacket) True]
 
 sendToPeerList :: (Service s, MonadIO m, MonadError String m) => UnifiedIdentity -> Peer -> [ServiceReply s] -> m ()
@@ -613,12 +613,13 @@ sendToPeerList _ peer@Peer { peerChannel = ChannelEstablished ch } parts = do
 
 sendToPeerList _ _ _ = throwError $ "no channel to peer"
 
-sendToPeerWith :: forall s m. (Service s, MonadIO m, MonadError String m) => UnifiedIdentity -> Peer -> (ServiceState s -> ExceptT String IO (Maybe (ServicePacket s), ServiceState s)) -> m ()
+sendToPeerWith :: forall s m. (Service s, MonadIO m, MonadError String m) => UnifiedIdentity -> Peer -> (ServiceState s -> ExceptT String IO (Maybe s, ServiceState s)) -> m ()
 sendToPeerWith identity peer fobj = do
-    let sid = serviceID @s Proxy
+    let sproxy = Proxy @s
+        sid = serviceID sproxy
     res <- liftIO $ modifyMVar (peerServiceState peer) $ \svcs -> do
-        runExceptT (fobj $ fromMaybe emptyServiceState $ fromServiceState =<< M.lookup sid svcs) >>= \case
-            Right (obj, s') -> return $ (M.insert sid (SomeServiceState s') svcs, Right obj)
+        runExceptT (fobj $ fromMaybe (emptyServiceState sproxy) $ fromServiceState sproxy =<< M.lookup sid svcs) >>= \case
+            Right (obj, s') -> return $ (M.insert sid (SomeServiceState sproxy s') svcs, Right obj)
             Left err -> return $ (svcs, Left err)
     case res of
          Right (Just obj) -> sendToPeer identity peer obj

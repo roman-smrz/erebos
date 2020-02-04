@@ -1,6 +1,5 @@
 module Sync (
-    SyncService,
-    ServicePacket(..),
+    SyncService(..),
 ) where
 
 import Control.Monad
@@ -12,15 +11,10 @@ import State
 import Storage
 import Storage.Merge
 
-data SyncService
+data SyncService = SyncPacket (Stored SharedState)
 
 instance Service SyncService where
     serviceID _ = mkServiceID "a4f538d0-4e50-4082-8e10-7e3ec2af175d"
-
-    data ServiceState SyncService = SyncService
-    emptyServiceState = SyncService
-
-    newtype ServicePacket SyncService = SyncPacket (Stored SharedState)
 
     serviceHandler packet = do
         let SyncPacket added = fromStored packet
@@ -31,6 +25,6 @@ instance Service SyncService where
         when (current /= updated) $ do
             svcSetLocal =<< wrappedStore st (fromStored ls) { lsShared = updated }
 
-instance Storable (ServicePacket SyncService) where
+instance Storable SyncService where
     store' (SyncPacket smsg) = store' smsg
     load' = SyncPacket <$> load'

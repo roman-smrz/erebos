@@ -1,8 +1,5 @@
 module Message (
     DirectMessage(..),
-    DirectMessageService,
-    ServicePacket(DirectMessagePacket),
-
     sendDirectMessage,
 
     DirectMessageThread(..),
@@ -50,19 +47,11 @@ instance Storable DirectMessage where
         <*> loadDate "time"
         <*> loadText "text"
 
-data DirectMessageService
-
-instance Service DirectMessageService where
+instance Service DirectMessage where
     serviceID _ = mkServiceID "c702076c-4928-4415-8b6b-3e839eafcb0d"
 
-    data ServiceState DirectMessageService = DirectMessageService
-    emptyServiceState = DirectMessageService
-
-    newtype ServicePacket DirectMessageService = DirectMessagePacket (Stored DirectMessage)
-
-    serviceHandler packet = do
-        let DirectMessagePacket smsg = fromStored packet
-            msg = fromStored smsg
+    serviceHandler smsg = do
+        let msg = fromStored smsg
         powner <- asks $ finalOwner . svcPeer
         tzone <- liftIO $ getCurrentTimeZone
         erb <- svcGetLocal
@@ -86,13 +75,9 @@ instance Service DirectMessageService where
                svcSetLocal erb'
                when (powner `sameIdentity` msgFrom msg) $ do
                    svcPrint $ formatMessage tzone msg
-                   replyStoredRef packet
+                   replyStoredRef smsg
 
            else svcPrint "Owner mismatch"
-
-instance Storable (ServicePacket DirectMessageService) where
-    store' (DirectMessagePacket smsg) = store' smsg
-    load' = DirectMessagePacket <$> load'
 
 
 data MessageState = MessageState
@@ -155,7 +140,7 @@ sendDirectMessage self peer text = do
             }
         return ([next], smsg)
 
-    sendToPeer self peer $ DirectMessagePacket smsg
+    sendToPeerStored self peer smsg
     return smsg
 
 

@@ -34,7 +34,8 @@ executable erebos
                        Sync
                        Util
 
-  default-extensions:  ExistentialQuantification
+  default-extensions:  DefaultSignatures
+                       ExistentialQuantification
                        FlexibleContexts,
                        FlexibleInstances,
                        FunctionalDependencies,

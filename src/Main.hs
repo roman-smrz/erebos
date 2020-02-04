@@ -96,7 +96,7 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
         startServer erebosHead extPrintLn bhost
             [ SomeService @AttachService Proxy
             , SomeService @SyncService Proxy
-            , SomeService @DirectMessageService Proxy
+            , SomeService @DirectMessage Proxy
             ]
 
     peers <- liftIO $ newMVar []

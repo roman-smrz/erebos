@@ -28,27 +28,28 @@ import Identity
 import State
 import Storage
 
-class (Typeable s, Storable (ServicePacket s)) => Service s where
+class (Typeable s, Storable s, Typeable (ServiceState s)) => Service s where
     serviceID :: proxy s -> ServiceID
+    serviceHandler :: Stored s -> ServiceHandler s ()
 
-    data ServiceState s :: *
-    emptyServiceState :: ServiceState s
-
-    data ServicePacket s :: *
-    serviceHandler :: Stored (ServicePacket s) -> ServiceHandler s ()
+    type ServiceState s :: *
+    type ServiceState s = ()
+    emptyServiceState :: proxy s -> ServiceState s
+    default emptyServiceState :: ServiceState s ~ () => proxy s -> ServiceState s
+    emptyServiceState _ = ()
 
 data SomeService = forall s. Service s => SomeService (Proxy s)
 
-data SomeServiceState = forall s. Service s => SomeServiceState (ServiceState s)
+data SomeServiceState = forall s. Service s => SomeServiceState (Proxy s) (ServiceState s)
 
 someServiceID :: SomeService -> ServiceID
 someServiceID (SomeService s) = serviceID s
 
-fromServiceState :: Service s => SomeServiceState -> Maybe (ServiceState s)
-fromServiceState (SomeServiceState s) = cast s
+fromServiceState :: Service s => proxy s -> SomeServiceState -> Maybe (ServiceState s)
+fromServiceState _ (SomeServiceState _ s) = cast s
 
 someServiceEmptyState :: SomeService -> SomeServiceState
-someServiceEmptyState (SomeService (Proxy :: Proxy s)) = SomeServiceState (emptyServiceState :: ServiceState s)
+someServiceEmptyState (SomeService p) = SomeServiceState p (emptyServiceState p)
 
 newtype ServiceID = ServiceID UUID
     deriving (Eq, Ord, StorableUUID)
@@ -61,7 +62,7 @@ data ServiceInput = ServiceInput
     , svcPrintOp :: String -> IO ()
     }
 
-data ServiceReply s = ServiceReply (Either (ServicePacket s) (Stored (ServicePacket s))) Bool
+data ServiceReply s = ServiceReply (Either s (Stored s)) Bool
 
 data ServiceHandlerState s = ServiceHandlerState
     { svcValue :: ServiceState s
@@ -71,7 +72,7 @@ data ServiceHandlerState s = ServiceHandlerState
 newtype ServiceHandler s a = ServiceHandler (ReaderT ServiceInput (WriterT [ServiceReply s] (StateT (ServiceHandlerState s) (ExceptT String IO))) a)
     deriving (Functor, Applicative, Monad, MonadReader ServiceInput, MonadWriter [ServiceReply s], MonadState (ServiceHandlerState s), MonadError String, MonadIO)
 
-handleServicePacket :: Service s => Storage -> ServiceInput -> ServiceState s -> Stored (ServicePacket s) -> IO ([ServiceReply s], ServiceState s)
+handleServicePacket :: Service s => Storage -> ServiceInput -> ServiceState s -> Stored s -> IO ([ServiceReply s], ServiceState s)
 handleServicePacket st input svc packet = do
     herb <- loadLocalStateHead st
     let erb = wrappedLoad $ headRef herb
@@ -102,11 +103,11 @@ svcSetLocal x = modify $ \st -> st { svcLocal = x }
 svcPrint :: String -> ServiceHandler s ()
 svcPrint str = liftIO . ($str) =<< asks svcPrintOp
 
-replyPacket :: Service s => ServicePacket s -> ServiceHandler s ()
+replyPacket :: Service s => s -> ServiceHandler s ()
 replyPacket x = tell [ServiceReply (Left x) True]
 
-replyStored :: Service s => Stored (ServicePacket s) -> ServiceHandler s ()
+replyStored :: Service s => Stored s -> ServiceHandler s ()
 replyStored x = tell [ServiceReply (Right x) True]
 
-replyStoredRef :: Service s => Stored (ServicePacket s) -> ServiceHandler s ()
+replyStoredRef :: Service s => Stored s -> ServiceHandler s ()
 replyStoredRef x = tell [ServiceReply (Right x) False]
