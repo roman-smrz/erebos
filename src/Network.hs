@@ -71,6 +71,7 @@ data PeerChannel = ChannelWait
 
 data TransportHeaderItem
     = Acknowledged PartialRef
+    | Rejected PartialRef
     | DataRequest PartialRef
     | DataResponse PartialRef
     | AnnounceSelf PartialRef
@@ -86,6 +87,7 @@ transportToObject :: TransportHeader -> PartialObject
 transportToObject (TransportHeader items) = Rec $ map single items
     where single = \case
               Acknowledged ref -> (BC.pack "ACK", RecRef ref)
+              Rejected ref -> (BC.pack "REJ", RecRef ref)
               DataRequest ref -> (BC.pack "REQ", RecRef ref)
               DataResponse ref -> (BC.pack "RSP", RecRef ref)
               AnnounceSelf ref -> (BC.pack "ANN", RecRef ref)
@@ -101,6 +103,7 @@ transportFromObject (Rec items) = case catMaybes $ map single items of
                                        titems -> Just $ TransportHeader titems
     where single (name, content) = if
               | name == BC.pack "ACK", RecRef ref <- content -> Just $ Acknowledged ref
+              | name == BC.pack "REJ", RecRef ref <- content -> Just $ Rejected ref
               | name == BC.pack "REQ", RecRef ref <- content -> Just $ DataRequest ref
               | name == BC.pack "RSP", RecRef ref <- content -> Just $ DataResponse ref
               | name == BC.pack "ANN", RecRef ref <- content -> Just $ AnnounceSelf ref
@@ -254,7 +257,8 @@ startServer origHead logd bhost services = do
                          | Just header <- transportFromObject obj -> do
                                forM_ objs $ storeObject $ peerInStorage peer
                                identity <- readMVar midentity
-                               handlePacket logd identity secure peer chanSvc header >>= \case
+                               let svcs = map someServiceID services
+                               handlePacket logd identity secure peer chanSvc svcs header >>= \case
                                    Just peer' -> do
                                        modifyMVar_ peers $ return . M.insert paddr peer'
                                        writeChan chanPeer peer'
@@ -317,9 +321,9 @@ addBody :: Ref -> PacketHandler ()
 addBody r = modify $ \ph -> ph { phBody = r : phBody ph }
 
 handlePacket :: (String -> IO ()) -> UnifiedIdentity -> Bool
-    -> Peer -> Chan (Peer, ServiceID, Ref)
+    -> Peer -> Chan (Peer, ServiceID, Ref) -> [ServiceID]
     -> TransportHeader -> IO (Maybe Peer)
-handlePacket logd identity secure opeer chanSvc (TransportHeader headers) = do
+handlePacket logd identity secure opeer chanSvc svcs (TransportHeader headers) = do
     let sidentity = idData identity
         DatagramAddress paddr = peerAddress opeer
         plaintextRefs = map (refDigest . storedRef) $ concatMap (collectStoredObjects . wrappedLoad) $ concat
@@ -342,12 +346,16 @@ handlePacket logd identity secure opeer chanSvc (TransportHeader headers) = do
                             liftIO (loadLocalState $ storedStorage $ idData identity)
                     _ -> return ()
 
+            Rejected _ -> return ()
+
             DataRequest ref
                 | secure || refDigest ref `elem` plaintextRefs -> do
                     Right mref <- copyRef (storedStorage sidentity) ref
                     addHeader $ DataResponse ref
                     addBody $ mref
-                | otherwise -> throwError $ "unauthorized data request for " ++ show ref
+                | otherwise -> do
+                    liftIO $ logd $ "unauthorized data request for " ++ show ref
+                    addHeader $ Rejected ref
 
             DataResponse ref -> do
                 liftIO (ioLoadBytes ref) >>= \case
@@ -387,39 +395,45 @@ handlePacket logd identity secure opeer chanSvc (TransportHeader headers) = do
                      _ -> return ()
 
             TrChannelRequest reqref -> do
-                addHeader $ Acknowledged reqref
                 pst <- gets $ peerStorage . phPeer
-                let process = handleChannelRequest identity =<< newWaitingRef pst reqref
+                let process = do
+                        addHeader $ Acknowledged reqref
+                        handleChannelRequest identity =<< newWaitingRef pst reqref
+                    reject = addHeader $ Rejected reqref
+
                 gets (peerChannel . phPeer) >>= \case
                     ChannelWait {} -> process
                     ChannelOurRequest our | refDigest reqref < refDigest (storedRef our) -> process
-                                          | otherwise -> return ()
+                                          | otherwise -> reject
                     ChannelPeerRequest {} -> process
-                    ChannelOurAccept {} -> return ()
+                    ChannelOurAccept {} -> reject
                     ChannelEstablished {} -> process
 
             TrChannelAccept accref -> do
-                addHeader $ Acknowledged accref
-                let process = handleChannelAccept identity accref
+                let process = do
+                        addHeader $ Acknowledged accref
+                        handleChannelAccept identity accref
                 gets (peerChannel . phPeer) >>= \case
                     ChannelWait {} -> process
                     ChannelOurRequest {} -> process
                     ChannelPeerRequest {} -> process
                     ChannelOurAccept our _ | refDigest accref < refDigest (storedRef our) -> process
-                                           | otherwise -> return ()
+                                           | otherwise -> addHeader $ Rejected accref
                     ChannelEstablished {} -> process
 
             ServiceType _ -> return ()
             ServiceRef pref
-                | not secure -> throwError $ "service packet without secure channeel"
-                | Just svc <- lookupServiceType headers -> do
-                    liftIO (ioLoadBytes pref) >>= \case
-                        Right _ -> do
-                            addHeader $ Acknowledged pref
-                            pst <- gets $ peerStorage . phPeer
-                            wref <- newWaitingRef pst pref
-                            updatePeer $ \p -> p { peerServiceQueue = (svc, wref) : peerServiceQueue p }
-                        Left _ -> throwError $ "missing service object " ++ show pref
+                | not secure -> throwError $ "service packet without secure channel"
+                | Just svc <- lookupServiceType headers -> if
+                    | svc `elem` svcs -> do
+                        liftIO (ioLoadBytes pref) >>= \case
+                            Right _ -> do
+                                addHeader $ Acknowledged pref
+                                pst <- gets $ peerStorage . phPeer
+                                wref <- newWaitingRef pst pref
+                                updatePeer $ \p -> p { peerServiceQueue = (svc, wref) : peerServiceQueue p }
+                            Left _ -> throwError $ "missing service object " ++ show pref
+                    | otherwise -> addHeader $ Rejected pref
                 | otherwise -> throwError $ "service ref without type"
                 
         setupChannel identity
