@@ -80,6 +80,7 @@ data TransportHeaderItem
     | TrChannelAccept PartialRef
     | ServiceType ServiceID
     | ServiceRef PartialRef
+    deriving (Eq)
 
 data TransportHeader = TransportHeader [TransportHeaderItem]
 
@@ -315,10 +316,15 @@ updatePeer :: (Peer -> Peer) -> PacketHandler ()
 updatePeer f = modify $ \ph -> ph { phPeer = f (phPeer ph), phPeerChanged = True }
 
 addHeader :: TransportHeaderItem -> PacketHandler ()
-addHeader h = modify $ \ph -> ph { phHead = h : phHead ph }
+addHeader h = modify $ \ph -> ph { phHead = h `appendDistinct` phHead ph }
 
 addBody :: Ref -> PacketHandler ()
-addBody r = modify $ \ph -> ph { phBody = r : phBody ph }
+addBody r = modify $ \ph -> ph { phBody = r `appendDistinct` phBody ph }
+
+appendDistinct :: Eq a => a -> [a] -> [a]
+appendDistinct x (y:ys) | x == y    = y : ys
+                        | otherwise = y : appendDistinct x ys
+appendDistinct x [] = [x]
 
 handlePacket :: (String -> IO ()) -> UnifiedIdentity -> Bool
     -> Peer -> Chan (Peer, ServiceID, Ref) -> [ServiceID]
@@ -447,7 +453,7 @@ handlePacket logd identity secure opeer chanSvc svcs (TransportHeader headers) =
         Right ph -> do
             when (not $ null $ phHead ph) $ do
                 let plain = BL.toStrict $ BL.concat
-                        [ serializeObject $ transportToObject $ TransportHeader $ reverse $ phHead ph
+                        [ serializeObject $ transportToObject $ TransportHeader $ phHead ph
                         , BL.concat $ map lazyLoadBytes $ phBody ph
                         ]
                 case peerChannel $ phPeer ph of
