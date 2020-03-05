@@ -121,7 +121,7 @@ ioLoadBytesFromStorage st dgst = loadCurrent st >>=
           Nothing | Just parent <- stParent st -> ioLoadBytesFromStorage parent dgst
                   | otherwise                  -> return Nothing
     where loadCurrent Storage { stBacking = StorageDir { dirPath = spath } } = handleJust (guard . isDoesNotExistError) (const $ return Nothing) $
-              Just . decompress <$> (BL.readFile $ refPath spath dgst)
+              Just . decompress . BL.fromChunks . (:[]) <$> (B.readFile $ refPath spath dgst)
           loadCurrent Storage { stBacking = StorageMemory { memObjs = tobjs } } = M.lookup dgst <$> readMVar tobjs
 
 refPath :: FilePath -> RefDigest -> FilePath
