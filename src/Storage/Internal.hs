@@ -2,28 +2,37 @@ module Storage.Internal where
 
 import Codec.Compression.Zlib
 
+import Control.Arrow
 import Control.Concurrent
+import Control.DeepSeq
 import Control.Exception
 import Control.Monad
 import Control.Monad.Identity
 
 import Crypto.Hash
 
+import Data.Bits
 import Data.ByteArray (ByteArrayAccess, ScrubbedBytes)
 import qualified Data.ByteArray as BA
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as BC
 import qualified Data.ByteString.Lazy as BL
+import Data.Function
+import Data.Hashable
+import qualified Data.HashTable.IO as HT
 import Data.List
 import Data.Map (Map)
 import qualified Data.Map as M
+
+import Foreign.Storable (peek)
 
 import System.Directory
 import System.FilePath
 import System.INotify (INotify)
 import System.IO
 import System.IO.Error
+import System.IO.Unsafe (unsafePerformIO)
 import System.Posix.Files
 import System.Posix.IO
 import System.Posix.Types
@@ -32,8 +41,11 @@ import System.Posix.Types
 data Storage' c = Storage
     { stBacking :: StorageBacking c
     , stParent :: Maybe (Storage' Identity)
+    , stRefGeneration :: MVar (HT.BasicHashTable RefDigest Generation)
     }
-    deriving (Eq)
+
+instance Eq (Storage' c) where
+    (==) = (==) `on` (stBacking &&& stParent)
 
 instance Show (Storage' c) where
     show st@(Storage { stBacking = StorageDir { dirPath = path }}) = "dir" ++ showParentStorage st ++ ":" ++ path
@@ -55,7 +67,8 @@ data StorageBacking c
     deriving (Eq)
 
 
-type RefDigest = Digest Blake2b_256
+newtype RefDigest = RefDigest (Digest Blake2b_256)
+    deriving (Eq, Ord, NFData, ByteArrayAccess)
 
 data Ref' c = Ref (Storage' c) RefDigest
     deriving (Eq)
@@ -66,6 +79,12 @@ instance Show (Ref' c) where
 instance ByteArrayAccess (Ref' c) where
     length (Ref _ dgst) = BA.length dgst
     withByteArray (Ref _ dgst) = BA.withByteArray dgst
+
+instance Hashable RefDigest where
+    hashWithSalt salt ref = salt `xor` unsafePerformIO (BA.withByteArray ref peek)
+
+instance Hashable (Ref' c) where
+    hashWithSalt salt ref = salt `xor` unsafePerformIO (BA.withByteArray ref peek)
 
 refStorage :: Ref' c -> Storage' c
 refStorage (Ref st _) = st
@@ -82,6 +101,15 @@ showRefDigest = B.concat . map showHexByte . BA.unpack
                     | otherwise = x + 87
           showHexByte x = B.pack [ showHex (x `div` 16), showHex (x `mod` 16) ]
 
+refDigestFromByteString :: ByteArrayAccess ba => ba -> Maybe RefDigest
+refDigestFromByteString = fmap RefDigest . digestFromByteString
+
+hashToRefDigest :: BL.ByteString -> RefDigest
+hashToRefDigest = RefDigest . hashFinalize . hashUpdates hashInit . BL.toChunks
+
+
+newtype Generation = Generation Int
+    deriving (Eq, Show)
 
 data Head' c = Head String (Ref' c)
     deriving (Show)

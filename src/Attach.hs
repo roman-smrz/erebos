@@ -6,14 +6,12 @@ module Attach (
 import Control.Monad.Except
 import Control.Monad.Reader
 
-import Crypto.Hash
 import Crypto.Random
 
 import Data.Bits
 import Data.ByteArray (Bytes, ScrubbedBytes, convert)
 import qualified Data.ByteArray as BA
 import qualified Data.ByteString.Char8 as BC
-import qualified Data.ByteString.Lazy as BL
 import Data.Maybe
 import qualified Data.Text as T
 import Data.Word
@@ -60,7 +58,7 @@ instance Storable AttachService where
         skeys <- loadBinaries "skey"
         (decline :: Maybe T.Text) <- loadMbText "decline"
         let res = catMaybes
-                [ AttachRequest <$> (digestFromByteString =<< req)
+                [ AttachRequest <$> (refDigestFromByteString =<< req)
                 , AttachResponse <$> rsp
                 , AttachRequestNonce <$> rnonce
                 , AttachIdentity <$> aid <*> pure skeys
@@ -183,8 +181,7 @@ attachAccept printMsg self peer = do
 
 
 nonceDigest :: UnifiedIdentity -> UnifiedIdentity -> Bytes -> Bytes -> RefDigest
-nonceDigest id1 id2 nonce1 nonce2 = hashFinalize $ hashUpdates hashInit $
-    BL.toChunks $ serializeObject $ Rec
+nonceDigest id1 id2 nonce1 nonce2 = hashToRefDigest $ serializeObject $ Rec
         [ (BC.pack "id", RecRef $ storedRef $ idData id1)
         , (BC.pack "id", RecRef $ storedRef $ idData id2)
         , (BC.pack "nonce", RecBinary $ convert nonce1)

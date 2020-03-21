@@ -6,6 +6,7 @@ module Storage (
     Ref, PartialRef, RefDigest,
     refStorage, refDigest,
     readRef, showRef, showRefDigest,
+    refDigestFromByteString, hashToRefDigest,
     copyRef, partialRef, partialRefFromDigest,
 
     Object, PartialObject, Object'(..), RecItem, RecItem'(..),
@@ -72,6 +73,7 @@ import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Lazy.Char8 as BLC
 import Data.Char
 import Data.Function
+import qualified Data.HashTable.IO as HT
 import Data.List
 import qualified Data.Map as M
 import Data.Maybe
@@ -105,12 +107,14 @@ openStorage path = do
     createDirectoryIfMissing True $ path ++ "/objects"
     createDirectoryIfMissing True $ path ++ "/heads"
     watchers <- newMVar (Nothing, [])
-    return $ Storage { stBacking = StorageDir path watchers, stParent = Nothing }
+    refgen <- newMVar =<< HT.new
+    return $ Storage { stBacking = StorageDir path watchers, stParent = Nothing, stRefGeneration = refgen }
 
 memoryStorage' :: IO (Storage' c')
 memoryStorage' = do
     backing <- StorageMemory <$> newMVar [] <*> newMVar M.empty <*> newMVar M.empty <*> newMVar []
-    return $ Storage { stBacking = backing, stParent = Nothing }
+    refgen <- newMVar =<< HT.new
+    return $ Storage { stBacking = backing, stParent = Nothing, stRefGeneration = refgen }
 
 memoryStorage :: IO Storage
 memoryStorage = memoryStorage'
@@ -129,7 +133,7 @@ type Ref = Ref' Complete
 type PartialRef = Ref' Partial
 
 zeroRef :: Storage' c -> Ref' c
-zeroRef s = Ref s h
+zeroRef s = Ref s (RefDigest h)
     where h = case digestFromByteString $ B.replicate (hashDigestSize $ digestAlgo h) 0 of
                    Nothing -> error $ "Failed to create zero hash"
                    Just h' -> h'
@@ -141,7 +145,7 @@ isZeroRef (Ref _ h) = all (==0) $ BA.unpack h
 
 
 readRefDigest :: ByteString -> Maybe RefDigest
-readRefDigest = digestFromByteString . B.concat <=< readHex
+readRefDigest = refDigestFromByteString . B.concat <=< readHex
     where readHex bs | B.null bs = Just []
           readHex bs = do (bx, bs') <- B.uncons bs
                           (by, bs'') <- B.uncons bs'
@@ -239,7 +243,7 @@ storeRawBytes = unsafeStoreRawBytes
 
 unsafeStoreRawBytes :: Storage' c -> BL.ByteString -> IO (Ref' c)
 unsafeStoreRawBytes st raw = do
-    let dgst = hashFinalize $ hashUpdates hashInit $ BL.toChunks raw
+    let dgst = hashToRefDigest raw
     case stBacking st of
          StorageDir { dirPath = sdir } -> writeFileOnce (refPath sdir dgst) $ compress raw
          StorageMemory { memObjs = tobjs } ->
@@ -269,7 +273,7 @@ ioLoadObject ref@(Ref st rhash) = do
     file' <- ioLoadBytes ref
     return $ do
         file <- file'
-        let chash = hashFinalize $ hashUpdates hashInit $ BL.toChunks file
+        let chash = hashToRefDigest file
         when (chash /= rhash) $ error $ "Hash mismatch on object " ++ BC.unpack (showRef ref) {- TODO throw -}
         return $ case runExcept $ unsafeDeserializeObject st file of
                       Left err -> error $ err ++ ", ref " ++ BC.unpack (showRef ref) {- TODO throw -}

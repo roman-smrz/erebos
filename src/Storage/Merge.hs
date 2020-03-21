@@ -2,6 +2,10 @@ module Storage.Merge (
     Mergeable(..),
     merge, storeMerge,
 
+    Generation,
+    compareGeneration, generationMax,
+    storedGeneration,
+
     generations,
     ancestors,
     precedes,
@@ -10,11 +14,16 @@ module Storage.Merge (
     findProperty,
 ) where
 
+import Control.Concurrent.MVar
+
 import qualified Data.ByteString.Char8 as BC
+import qualified Data.HashTable.IO as HT
 import Data.List
 import Data.Maybe
 import Data.Set (Set)
 import qualified Data.Set as S
+
+import System.IO.Unsafe (unsafePerformIO)
 
 import Storage
 import Storage.Internal
@@ -44,6 +53,34 @@ previous (Stored ref _) = case load ref of
                     map wrappedLoad $ catMaybes $ map (\case RecRef r -> Just r; _ -> Nothing) $
                         map snd $ filter ((== BC.pack "PREV") . fst) items
     _ -> []
+
+
+nextGeneration :: [Generation] -> Generation
+nextGeneration = foldl' helper (Generation 0)
+    where helper (Generation c) (Generation n) | c <= n    = Generation (n + 1)
+                                               | otherwise = Generation c
+
+compareGeneration :: Generation -> Generation -> Maybe Ordering
+compareGeneration (Generation x) (Generation y) = Just $ compare x y
+
+generationMax :: Storable a => [Stored a] -> Maybe (Stored a)
+generationMax (x : xs) = Just $ snd $ foldl' helper (storedGeneration x, x) xs
+    where helper (mg, mx) y = let yg = storedGeneration y
+                               in case compareGeneration mg yg of
+                                       Just LT -> (yg, y)
+                                       _       -> (mg, mx)
+generationMax [] = Nothing
+
+storedGeneration :: Storable a => Stored a -> Generation
+storedGeneration x =
+    unsafePerformIO $ withMVar (stRefGeneration $ refStorage $ storedRef x) $ \ht -> do
+        let doLookup y = HT.lookup ht (refDigest $ storedRef y) >>= \case
+                Just gen -> return gen
+                Nothing -> do
+                    gen <- nextGeneration <$> mapM doLookup (previous y)
+                    HT.insert ht (refDigest $ storedRef y) gen
+                    return gen
+        doLookup x
 
 
 generations :: Storable a => [Stored a] -> [Set (Stored a)]

@@ -32,6 +32,7 @@ import PubKey
 import Service
 import State
 import Storage
+import Storage.Merge
 import Sync
 
 main :: IO ()
@@ -68,6 +69,10 @@ main = do
                             disp identity
                         Nothing -> putStrLn $ "Identity verification failed"
                     _ -> error $ "unknown object type '" ++ objtype ++ "'"
+
+        ["show-generation", sref] -> readRef st (BC.pack sref) >>= \case
+            Nothing -> error "ref does not exist"
+            Just ref -> print $ storedGeneration (wrappedLoad ref :: Stored Object)
 
         ["update-identity"] -> updateSharedIdentity st
 
