@@ -94,12 +94,17 @@ ancestors :: Storable a => [Stored a] -> Set (Stored a)
 ancestors = last . (S.empty:) . generations
 
 precedes :: Storable a => Stored a -> Stored a -> Bool
-precedes x y = x `S.member` ancestors [y]
+precedes x y = not $ x `elem` filterAncestors [x, y]
 
 filterAncestors :: Storable a => [Stored a] -> [Stored a]
 filterAncestors [x] = [x]
-filterAncestors xs = uniq $ sort $ filter (`S.notMember` ancestors xs) xs
-
+filterAncestors xs = let xs' = uniq $ sort xs
+                      in helper xs' xs'
+    where helper remains walk = case generationMax walk of
+                                     Just x -> let px = previous x
+                                                   remains' = filter (\r -> all (/=r) px) remains
+                                                in helper remains' $ uniq $ sort (px ++ filter (/=x) walk)
+                                     Nothing -> remains
 
 findProperty :: forall a b. Storable a => (a -> Maybe b) -> [Stored a] -> [b]
 findProperty sel = map (fromJust . sel . fromStored) . filterAncestors . (findPropHeads =<<)
