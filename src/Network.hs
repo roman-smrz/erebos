@@ -163,6 +163,7 @@ startServer origHead logd bhost services = do
     let storage = refStorage $ headRef origHead
     chanPeer <- newChan
     chanSvc <- newChan
+    svcStates <- newMVar M.empty
     peers <- newMVar M.empty
     midentity <- newMVar $ headLocalIdentity origHead
     mshared <- newMVar $ lsShared $ load $ headRef origHead
@@ -282,21 +283,27 @@ startServer origHead logd bhost services = do
     void $ forkIO $ forever $ readChan chanSvc >>= \case
         (peer, svc, ref)
             | PeerIdentityFull peerId <- peerIdentity peer
-            -> modifyMVar_ (peerServiceState peer) $ \svcs ->
-                   case maybe (someServiceEmptyState <$> find ((svc ==) . someServiceID) services) Just $ M.lookup svc svcs of
-                        Nothing -> do logd $ "unhandled service '" ++ show (toUUID svc) ++ "'"
-                                      return svcs
-                        Just (SomeServiceState (proxy :: Proxy s) s) -> do
+            -> modifyMVar_ svcStates $ \global ->
+               modifyMVar (peerServiceState peer) $ \svcs ->
+                   case (maybe (someServiceEmptyState <$> find ((svc ==) . someServiceID) services) Just $ M.lookup svc svcs,
+                            maybe (someServiceEmptyGlobalState <$> find ((svc ==) . someServiceID) services) Just $ M.lookup svc global) of
+                        (Just (SomeServiceState (proxy :: Proxy s) s),
+                            Just (SomeServiceGlobalState (_ :: Proxy gs) gs))
+                            | Just (Refl :: s :~: gs) <- eqT -> do
                             let inp = ServiceInput
                                     { svcPeer = peerId
                                     , svcPrintOp = logd
                                     }
-                            (rsp, s') <- handleServicePacket storage inp s (wrappedLoad ref :: Stored s)
+                            (rsp, (s', gs')) <- handleServicePacket storage inp s gs (wrappedLoad ref :: Stored s)
                             identity <- readMVar midentity
                             runExceptT (sendToPeerList identity peer rsp) >>= \case
                                 Left err -> logd $ "failed to send response to peer: " ++ show err
                                 Right () -> return ()
-                            return $ M.insert svc (SomeServiceState proxy s') svcs
+                            return (M.insert svc (SomeServiceState proxy s') svcs,
+                                M.insert svc (SomeServiceGlobalState proxy gs') global)
+                        _ -> do
+                            logd $ "unhandled service '" ++ show (toUUID svc) ++ "'"
+                            return (svcs, global)
 
             | DatagramAddress paddr <- peerAddress peer -> do
                 logd $ "service packet from peer with incomplete identity " ++ show paddr

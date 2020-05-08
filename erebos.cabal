@@ -45,6 +45,7 @@ executable erebos
                        RankNTypes,
                        ScopedTypeVariables,
                        StandaloneDeriving,
+                       TypeOperators
                        TupleSections,
                        TypeApplications,
                        TypeFamilies
