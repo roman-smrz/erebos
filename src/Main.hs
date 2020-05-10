@@ -96,7 +96,7 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
                              False -> error "Requires terminal"
     extPrint <- getExternalPrint
     let extPrintLn str = extPrint $ str ++ "\n";
-    chanPeer <- liftIO $ do
+    server <- liftIO $ do
         erebosHead <- loadLocalStateHead st
         startServer erebosHead extPrintLn bhost
             [ SomeService @AttachService Proxy
@@ -107,7 +107,7 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
     peers <- liftIO $ newMVar []
 
     void $ liftIO $ forkIO $ void $ forever $ do
-        peer <- readChan chanPeer
+        peer <- readChan $ serverChanPeer server
         if | PeerIdentityFull pid <- peerIdentity peer -> do
                  let update [] = ([peer], Nothing)
                      update (p:ps) | PeerIdentityFull pid' <- peerIdentity p
@@ -142,6 +142,7 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
             curIdentity <- liftIO $ loadLocalIdentity st
             res <- liftIO $ runExceptT $ flip execStateT cstate $ runReaderT cmd CommandInput
                 { ciSelf = curIdentity
+                , ciServer = server
                 , ciLine = line
                 , ciPrint = extPrintLn
                 , ciPeers = liftIO $ readMVar peers
@@ -158,6 +159,7 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
 
 data CommandInput = CommandInput
     { ciSelf :: UnifiedIdentity
+    , ciServer :: Server
     , ciLine :: String
     , ciPrint :: String -> IO ()
     , ciPeers :: CommandM [Peer]
