@@ -111,8 +111,7 @@ instance Service AttachService where
             verifyAttachedIdentity sdata >>= \case
                 Just identity -> do
                     svcPrint $ "Accepted updated identity"
-                    st <- storedStorage <$> svcGetLocal
-                    finalizeAttach st identity keys
+                    svcSetLocal =<< finalizeAttach identity keys =<< svcGetLocal
                 Nothing -> do
                     svcPrint $ "Failed to verify new identity"
                     svcSet $ AttachFailed
@@ -151,9 +150,10 @@ attachToOwner _ self peer = do
         NoAttach -> return (Just $ AttachRequest (nonceDigest self pid nonce BA.empty), OurRequest nonce)
         _ -> throwError "alredy in progress"
 
-attachAccept :: (MonadIO m, MonadError String m) => (String -> IO ()) -> UnifiedIdentity -> Peer -> m ()
-attachAccept printMsg self peer = do
-    let st = storedStorage $ idData self
+attachAccept :: (MonadIO m, MonadError String m) => (String -> IO ()) -> Head LocalState -> Peer -> m ()
+attachAccept printMsg h peer = do
+    let st = refStorage $ headRef h
+        self = headLocalIdentity h
     sendToPeerWith self peer $ \case
         NoAttach -> throwError $ "none in progress"
         OurRequest {} -> throwError $ "waiting for peer"
@@ -161,14 +161,15 @@ attachAccept printMsg self peer = do
             liftIO $ printMsg $ "Confirmed peer, waiting for updated identity"
             return (Nothing, OurRequestReady)
         OurRequestConfirm (Just (identity, keys)) -> do
-            liftIO $ printMsg $ "Accepted updated identity"
-            finalizeAttach st identity keys
+            liftIO $ do
+                printMsg $ "Accepted updated identity"
+                updateLocalState_ h $ finalizeAttach identity keys
             return (Nothing, AttachDone)
         OurRequestReady -> throwError $ "alredy accepted, waiting for peer"
         PeerRequest {} -> throwError $ "waiting for peer"
         PeerRequestConfirm -> do
             liftIO $ printMsg $ "Accepted new attached device, seding updated identity"
-            owner <- liftIO $ mergeSharedIdentity st
+            owner <- liftIO $ mergeSharedIdentity h
             PeerIdentityFull pid <- return $ peerIdentity peer
             Just secret <- liftIO $ loadKey $ idKeyIdentity owner
             liftIO $ do
@@ -209,15 +210,15 @@ verifyAttachedIdentity sdata = do
         return identity
 
 
-finalizeAttach :: MonadIO m => Storage -> UnifiedIdentity -> [ScrubbedBytes] -> m ()
-finalizeAttach st identity skeys = do
-    liftIO $ updateLocalState_ st $ \slocal -> do
-        let owner = finalOwner identity
-        pkeys <- mapM (copyStored st) [ idKeyIdentity owner, idKeyMessage owner ]
-        mapM_ storeKey $ catMaybes [ keyFromData sec pub | sec <- skeys, pub <- pkeys ]
+finalizeAttach :: MonadIO m => UnifiedIdentity -> [ScrubbedBytes] -> Stored LocalState -> m (Stored LocalState)
+finalizeAttach identity skeys slocal = liftIO $ do
+    let owner = finalOwner identity
+        st = storedStorage slocal
+    pkeys <- mapM (copyStored st) [ idKeyIdentity owner, idKeyMessage owner ]
+    mapM_ storeKey $ catMaybes [ keyFromData sec pub | sec <- skeys, pub <- pkeys ]
 
-        shared <- makeSharedStateUpdate st (idDataF owner) (lsShared $ fromStored slocal)
-        wrappedStore st (fromStored slocal)
-            { lsIdentity = idData identity
-            , lsShared = [ shared ]
+    shared <- makeSharedStateUpdate st (idDataF owner) (lsShared $ fromStored slocal)
+    wrappedStore st (fromStored slocal)
+        { lsIdentity = idData identity
+        , lsShared = [ shared ]
             }

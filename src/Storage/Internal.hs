@@ -24,6 +24,7 @@ import qualified Data.HashTable.IO as HT
 import Data.List
 import Data.Map (Map)
 import qualified Data.Map as M
+import Data.UUID (UUID)
 
 import Foreign.Storable (peek)
 
@@ -57,12 +58,12 @@ showParentStorage Storage { stParent = Just st } = "@" ++ show st
 
 data StorageBacking c
          = StorageDir { dirPath :: FilePath
-                      , dirWatchers :: MVar (Maybe INotify, [(String, Head' c -> IO ())])
+                      , dirWatchers :: MVar ([(HeadTypeID, INotify)], [((HeadTypeID, HeadID), Ref' c -> IO ())])
                       }
-         | StorageMemory { memHeads :: MVar [Head' c]
+         | StorageMemory { memHeads :: MVar [((HeadTypeID, HeadID), Ref' c)]
                          , memObjs :: MVar (Map RefDigest BL.ByteString)
                          , memKeys :: MVar (Map RefDigest ScrubbedBytes)
-                         , memWatchers :: MVar [(String, Head' c -> IO ())]
+                         , memWatchers :: MVar [((HeadTypeID, HeadID), Ref' c -> IO ())]
                          }
     deriving (Eq)
 
@@ -111,8 +112,14 @@ hashToRefDigest = RefDigest . hashFinalize . hashUpdates hashInit . BL.toChunks
 newtype Generation = Generation Int
     deriving (Eq, Show)
 
-data Head' c = Head String (Ref' c)
+data Head' c a = Head HeadID (Stored' c a)
     deriving (Show)
+
+newtype HeadID = HeadID UUID
+    deriving (Eq, Ord, Show)
+
+newtype HeadTypeID = HeadTypeID UUID
+    deriving (Eq, Ord)
 
 data Stored' c a = Stored (Ref' c) a
     deriving (Show)

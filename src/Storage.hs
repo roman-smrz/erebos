@@ -16,9 +16,11 @@ module Storage (
     storeObject,
     collectObjects, collectStoredObjects,
 
-    Head,
-    headName, headRef, headObject,
-    loadHeads, loadHead, loadHeadDef, replaceHead,
+    Head, HeadType(..),
+    HeadTypeID, mkHeadTypeID,
+    headId, headRef, headObject, headStoredObject,
+    loadHeads, loadHead, reloadHead,
+    storeHead, replaceHead, updateHead, updateHead_,
     watchHead,
 
     Storable(..), ZeroStorable(..),
@@ -88,10 +90,13 @@ import Data.Time.Calendar
 import Data.Time.Clock
 import Data.Time.Format
 import Data.Time.LocalTime
+import Data.Typeable
 import Data.UUID (UUID)
 import qualified Data.UUID as U
+import qualified Data.UUID.V4 as U
 
 import System.Directory
+import System.FilePath
 import System.INotify
 import System.IO.Error
 import System.IO.Unsafe
@@ -106,7 +111,7 @@ openStorage :: FilePath -> IO Storage
 openStorage path = do
     createDirectoryIfMissing True $ path ++ "/objects"
     createDirectoryIfMissing True $ path ++ "/heads"
-    watchers <- newMVar (Nothing, [])
+    watchers <- newMVar ([], [])
     refgen <- newMVar =<< HT.new
     return $ Storage { stBacking = StorageDir path watchers, stParent = Nothing, stRefGeneration = refgen }
 
@@ -357,90 +362,137 @@ collectOtherStored seen _ = ([], seen)
 
 type Head = Head' Complete
 
-headName :: Head -> String
-headName (Head name _) = name
+headId :: Head a -> HeadID
+headId (Head uuid _) = uuid
 
-headRef :: Head -> Ref
-headRef (Head _ ref) = ref
+headRef :: Head a -> Ref
+headRef (Head _ sx) = storedRef sx
 
-headObject :: Storable a => Head -> a
-headObject = load . headRef
+headObject :: Head a -> a
+headObject (Head _ sx) = fromStored sx
+
+headStoredObject :: Head a -> Stored a
+headStoredObject (Head _ sx) = sx
+
+deriving instance StorableUUID HeadID
+deriving instance StorableUUID HeadTypeID
+
+mkHeadTypeID :: String -> HeadTypeID
+mkHeadTypeID = maybe (error "Invalid head type ID") HeadTypeID . U.fromString
+
+class Storable a => HeadType a where
+    headTypeID :: proxy a -> HeadTypeID
 
 
-loadHeads :: Storage -> IO [Head]
+headTypePath :: FilePath -> HeadTypeID -> FilePath
+headTypePath spath (HeadTypeID tid) = spath </> "heads" </> U.toString tid
+
+headPath :: FilePath -> HeadTypeID -> HeadID -> FilePath
+headPath spath tid (HeadID hid) = headTypePath spath tid </> U.toString hid
+
+loadHeads :: forall a. HeadType a => Storage -> IO [Head a]
 loadHeads s@(Storage { stBacking = StorageDir { dirPath = spath }}) = do
-    let hpath = spath ++ "/heads/"
-    files <- filterM (doesFileExist . (hpath++)) =<< getDirectoryContents hpath
-    forM files $ \hname -> do
-        (h:_) <- BC.lines <$> B.readFile (hpath ++ "/" ++ hname)
-        Just ref <- readRef s h
-        return $ Head hname ref
-loadHeads Storage { stBacking = StorageMemory { memHeads = theads } } = readMVar theads
+    let hpath = headTypePath spath $ headTypeID @a Proxy
 
-loadHead :: Storage -> String -> IO (Maybe Head)
-loadHead s@(Storage { stBacking = StorageDir { dirPath = spath }}) hname = do
+    files <- filterM (doesFileExist . (hpath </>)) =<<
+        handleJust (\e -> guard (isDoesNotExistError e)) (const $ return [])
+        (getDirectoryContents hpath)
+    fmap catMaybes $ forM files $ \hname -> do
+        case U.fromString hname of
+             Just hid -> do
+                 (h:_) <- BC.lines <$> B.readFile (hpath </> hname)
+                 Just ref <- readRef s h
+                 return $ Just $ Head (HeadID hid) $ wrappedLoad ref
+             Nothing -> return Nothing
+loadHeads Storage { stBacking = StorageMemory { memHeads = theads } } = do
+    let toHead ((tid, hid), ref) | tid == headTypeID @a Proxy = Just $ Head hid $ wrappedLoad ref
+                                 | otherwise                  = Nothing
+    catMaybes . map toHead <$> readMVar theads
+
+loadHead :: forall a. HeadType a => Storage -> HeadID -> IO (Maybe (Head a))
+loadHead s@(Storage { stBacking = StorageDir { dirPath = spath }}) hid = do
     handleJust (guard . isDoesNotExistError) (const $ return Nothing) $ do
-        let hpath = spath ++ "/heads/"
-        (h:_) <- BC.lines <$> B.readFile (hpath ++ hname)
+        (h:_) <- BC.lines <$> B.readFile (headPath spath (headTypeID @a Proxy) hid)
         Just ref <- readRef s h
-        return $ Just $ Head hname ref
-loadHead Storage { stBacking = StorageMemory { memHeads = theads } } hname =
-    find ((==hname) . headName) <$> readMVar theads
+        return $ Just $ Head hid $ wrappedLoad ref
+loadHead Storage { stBacking = StorageMemory { memHeads = theads } } hid = do
+    fmap (Head hid . wrappedLoad) . lookup (headTypeID @a Proxy, hid) <$> readMVar theads
 
-loadHeadDef :: Storable a => Storage -> String -> IO a -> IO Head
-loadHeadDef s hname gen = loadHead s hname >>= \case
-        Just h  -> return h
-        Nothing -> do obj <- gen
-                      Right h <- replaceHead obj (Left (s, hname))
-                      return h
+reloadHead :: HeadType a => Head a -> IO (Maybe (Head a))
+reloadHead (Head hid (Stored (Ref st _) _)) = loadHead st hid
 
-replaceHead :: Storable a => a -> Either (Storage, String) Head -> IO (Either (Maybe Head) Head)
-replaceHead obj prev = do
-    let (st, name) = either id (\(Head n (Ref s _)) -> (s, n)) prev
-    ref <- store st obj
+storeHead :: forall a. HeadType a => Storage -> a -> IO (Head a)
+storeHead st obj = do
+    let tid = headTypeID @a Proxy
+    hid <- HeadID <$> U.nextRandom
+    stored <- wrappedStore st obj
     case stBacking st of
          StorageDir { dirPath = spath } -> do
-             let filename = spath ++ "/heads/" ++ name
+             Right () <- writeFileChecked (headPath spath tid hid) Nothing $
+                 showRef (storedRef stored) `B.append` BC.singleton '\n'
+             return ()
+         StorageMemory { memHeads = theads } -> do
+             modifyMVar_ theads $ return . (((tid, hid), storedRef stored) :)
+    return $ Head hid stored
+
+replaceHead :: forall a. HeadType a => Head a -> Stored a -> IO (Either (Maybe (Head a)) (Head a))
+replaceHead prev@(Head hid pobj) stored = do
+    let st = storedStorage pobj
+        tid = headTypeID @a Proxy
+    case stBacking st of
+         StorageDir { dirPath = spath } -> do
+             let filename = headPath spath tid hid
                  showRefL r = showRef r `B.append` BC.singleton '\n'
 
-             writeFileChecked filename (either (const Nothing) (Just . showRefL . headRef) prev) (showRefL ref) >>= \case
+             writeFileChecked filename (Just $ showRefL $ headRef prev) (showRefL $ storedRef stored) >>= \case
                  Left Nothing -> return $ Left Nothing
                  Left (Just bs) -> do Just oref <- readRef st $ BC.takeWhile (/='\n') bs
-                                      return $ Left $ Just $ Head name oref
-                 Right () -> return $ Right $ Head name ref
+                                      return $ Left $ Just $ Head hid $ wrappedLoad oref
+                 Right () -> return $ Right $ Head hid stored
 
          StorageMemory { memHeads = theads, memWatchers = twatch } -> do
              res <- modifyMVar theads $ \hs -> do
-                 ws <- map snd . filter ((==name) . fst) <$> readMVar twatch
-                 case (partition ((== name) . headName) hs, prev) of
-                      (([], _), Left _)  -> let h = Head name ref
-                                             in return (h:hs, Right (h, ws))
-                      (([], _), Right _) -> return (hs, Left Nothing)
-                      ((h:_, _), Left _) -> return (hs, Left (Just h))
-                      ((h:_, hs'), Right h') | headRef h == headRef h' -> let nh = Head name ref
-                                                                           in return (nh:hs', Right (nh, ws))
-                                             | otherwise -> return (hs, Left (Just h))
+                 ws <- map snd . filter ((==(tid, hid)) . fst) <$> readMVar twatch
+                 return $ case partition ((==(tid, hid)) . fst) hs of
+                     ([] , _  ) -> (hs, Left Nothing)
+                     ((_, r):_, hs') | r == storedRef pobj -> (((tid, hid), storedRef stored) : hs',
+                                                                  Right (Head hid stored, ws))
+                                     | otherwise -> (hs, Left $ Just $ Head hid $ wrappedLoad r)
              case res of
-                  Right (h, ws) -> mapM_ ($h) ws >> return (Right h)
+                  Right (h, ws) -> mapM_ ($ headRef h) ws >> return (Right h)
                   Left x -> return $ Left x
 
-watchHead :: Head -> (Head -> IO ()) -> IO ()
-watchHead (Head name (Ref st _)) cb = do
-    case stBacking st of
-         StorageDir { dirPath = spath, dirWatchers = mvar } -> modifyMVar_ mvar $ \(mbi, watchers) -> do
-             inotify <- (\f -> maybe f return mbi) $ do
-                 inotify <- initINotify
-                 void $ addWatch inotify [Move] (BC.pack $ spath ++ "/heads") $ \case
-                     MovedIn { filePath = fpath } -> do
-                         let cname = BC.unpack fpath
-                         loadHead st cname >>= \case
-                             Just h -> mapM_ ($h) . map snd . filter ((== cname) . fst) . snd =<< readMVar mvar
-                             Nothing -> return ()
-                     _ -> return ()
-                 return inotify
-             return (Just inotify, (name, cb) : watchers)
+updateHead :: HeadType a => Head a -> (Stored a -> IO (Stored a, b)) -> IO (Maybe (Head a), b)
+updateHead h f = do
+    (o, x) <- f $ headStoredObject h
+    replaceHead h o >>= \case
+        Right h' -> return (Just h', x)
+        Left Nothing -> return (Nothing, x)
+        Left (Just h') -> updateHead h' f
 
-         StorageMemory { memWatchers = mvar } -> modifyMVar_ mvar $ return . ((name, cb) :)
+updateHead_ :: HeadType a => Head a -> (Stored a -> IO (Stored a)) -> IO (Maybe (Head a))
+updateHead_ h = fmap fst . updateHead h . (fmap (,()) .)
+
+watchHead :: forall a. HeadType a => Head a -> (Head a -> IO ()) -> IO ()
+watchHead (Head hid (Stored (Ref st _) _)) cb = do
+    let cb' = cb . Head hid . wrappedLoad
+        tid = headTypeID @a Proxy
+    case stBacking st of
+         StorageDir { dirPath = spath, dirWatchers = mvar } -> modifyMVar_ mvar $ \(ilist, watchers) -> do
+             ilist' <- case lookup tid ilist of
+                 Just _ -> return ilist
+                 Nothing -> do
+                     inotify <- initINotify
+                     void $ addWatch inotify [Move] (BC.pack $ headTypePath spath tid) $ \case
+                         MovedIn { filePath = fpath } | Just ihid <- HeadID <$> U.fromASCIIBytes fpath -> do
+                             loadHead @a st ihid >>= \case
+                                 Just h -> mapM_ ($ headRef h) . map snd . filter ((== (tid, ihid)) . fst) . snd =<< readMVar mvar
+                                 Nothing -> return ()
+                         _ -> return ()
+                     return $ (tid, inotify) : ilist
+             return (ilist', ((tid, hid), cb') : watchers)
+
+         StorageMemory { memWatchers = mvar } -> modifyMVar_ mvar $ return . (((tid, hid), cb') :)
 
 
 class Storable a where

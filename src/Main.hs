@@ -74,7 +74,7 @@ main = do
             Nothing -> error "ref does not exist"
             Just ref -> print $ storedGeneration (wrappedLoad ref :: Stored Object)
 
-        ["update-identity"] -> updateSharedIdentity st
+        ["update-identity"] -> updateSharedIdentity =<< loadLocalStateHead st
 
         ("update-identity" : srefs) -> do
             sequence <$> mapM (readRef st . BC.pack) srefs >>= \case
@@ -89,15 +89,14 @@ main = do
 
 interactiveLoop :: Storage -> String -> IO ()
 interactiveLoop st bhost = runInputT defaultSettings $ do
-    origIdentity <- liftIO $ loadLocalIdentity st
-    outputStrLn $ T.unpack $ displayIdentity origIdentity
+    erebosHead <- liftIO $ loadLocalStateHead st
+    outputStrLn $ T.unpack $ displayIdentity $ headLocalIdentity erebosHead
 
     haveTerminalUI >>= \case True -> return ()
                              False -> error "Requires terminal"
     extPrint <- getExternalPrint
     let extPrintLn str = extPrint $ str ++ "\n";
     server <- liftIO $ do
-        erebosHead <- loadLocalStateHead st
         startServer erebosHead extPrintLn bhost
             [ SomeService @AttachService Proxy
             , SomeService @SyncService Proxy
@@ -139,9 +138,12 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
                                        then (cmdSetPeer $ read scmd, args)
                                        else (fromMaybe (cmdUnknown scmd) $ lookup scmd commands, args)
                     _        -> (cmdSend, input)
-            curIdentity <- liftIO $ loadLocalIdentity st
+            h <- liftIO (reloadHead erebosHead) >>= \case
+                Just h  -> return h
+                Nothing -> do lift $ lift $ extPrint "current head deleted"
+                              mzero
             res <- liftIO $ runExceptT $ flip execStateT cstate $ runReaderT cmd CommandInput
-                { ciSelf = curIdentity
+                { ciHead = h
                 , ciServer = server
                 , ciLine = line
                 , ciPrint = extPrintLn
@@ -158,7 +160,7 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
 
 
 data CommandInput = CommandInput
-    { ciSelf :: UnifiedIdentity
+    { ciHead :: Head LocalState
     , ciServer :: Server
     , ciLine :: String
     , ciPrint :: String -> IO ()
@@ -215,41 +217,38 @@ cmdSetPeer n | n < 1     = liftIO $ putStrLn "Invalid peer index"
 
 cmdSend :: Command
 cmdSend = void $ do
-    self <- asks ciSelf
+    ehead <- asks ciHead
     Just peer <- gets csPeer
     text <- asks ciLine
-    smsg <- sendDirectMessage self peer $ T.pack text
+    smsg <- sendDirectMessage ehead peer $ T.pack text
     tzone <- liftIO $ getCurrentTimeZone
     liftIO $ putStrLn $ formatMessage tzone $ fromStored smsg
 
 cmdHistory :: Command
 cmdHistory = void $ do
-    self <- asks ciSelf
-    let st = storedStorage $ idData self
+    ehead <- asks ciHead
     Just peer <- gets csPeer
     PeerIdentityFull pid <- return $ peerIdentity peer
     let powner = finalOwner pid
 
-    Just erebosHead <- liftIO $ loadHead st "erebos"
-    let erebos = wrappedLoad (headRef erebosHead)
     Just thread <- return $ find (sameIdentity powner . msgPeer) $
-        messageThreadView $ lookupSharedValue $ lsShared $ fromStored erebos
+        messageThreadView $ lookupSharedValue $ lsShared $ headObject ehead
     tzone <- liftIO $ getCurrentTimeZone
     liftIO $ mapM_ (putStrLn . formatMessage tzone) $ reverse $ take 50 $ threadToList thread
 
 cmdUpdateIdentity :: Command
 cmdUpdateIdentity = void $ do
-    st <- asks $ storedStorage . idData . ciSelf
-    liftIO $ updateSharedIdentity st
+    ehead <- asks ciHead
+    liftIO $ updateSharedIdentity ehead
 
 cmdAttach :: Command
 cmdAttach = join $ attachToOwner
     <$> asks ciPrint
-    <*> asks ciSelf
+    <*> asks (headLocalIdentity . ciHead)
     <*> (maybe (throwError "no peer selected") return =<< gets csPeer)
 
 cmdAttachAccept :: Command
 cmdAttachAccept = join $ attachAccept
     <$> asks ciPrint
-    <*> asks ciSelf
+    <*> asks ciHead
     <*> (maybe (throwError "no peer selected") return =<< gets csPeer)

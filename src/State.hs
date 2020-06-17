@@ -3,20 +3,18 @@ module State (
     SharedState, SharedType(..),
     SharedTypeID, mkSharedTypeID,
 
-    loadLocalState, loadLocalStateHead,
+    loadLocalStateHead,
     updateLocalState, updateLocalState_,
 
     updateSharedState, updateSharedState_,
     lookupSharedValue, makeSharedStateUpdate,
 
-    loadLocalIdentity, headLocalIdentity,
+    headLocalIdentity,
 
     mergeSharedIdentity,
     updateSharedIdentity,
     interactiveIdentityUpdate,
 ) where
-
-import Control.Monad
 
 import Data.Foldable
 import Data.Maybe
@@ -62,6 +60,9 @@ instance Storable LocalState where
         <$> loadRef "id"
         <*> loadRefs "shared"
 
+instance HeadType LocalState where
+    headTypeID _ = mkHeadTypeID "1d7491a9-7bcb-4eaa-8f13-c8c4c4087e4e"
+
 instance Storable SharedState where
     store' st = storeRec $ do
         mapM_ (storeRef "PREV") $ ssPrev st
@@ -77,80 +78,69 @@ instance SharedType (Signed IdentityData) where
     sharedTypeID _ = mkSharedTypeID "0c6c1fe0-f2d7-4891-926b-c332449f7871"
 
 
-loadLocalState :: Storage -> IO (Stored LocalState)
-loadLocalState = return . wrappedLoad . headRef <=< loadLocalStateHead
+loadLocalStateHead :: Storage -> IO (Head LocalState)
+loadLocalStateHead st = loadHeads st >>= \case
+    (h:_) -> return h
+    [] -> do
+        putStr "Name: "
+        hFlush stdout
+        name <- T.getLine
 
-loadLocalStateHead :: Storage -> IO Head
-loadLocalStateHead st = loadHeadDef st "erebos" $ do
-    putStr "Name: "
-    hFlush stdout
-    name <- T.getLine
+        putStr "Device: "
+        hFlush stdout
+        devName <- T.getLine
 
-    putStr "Device: "
-    hFlush stdout
-    devName <- T.getLine
+        (owner, secret) <- if
+            | T.null name -> return (Nothing, Nothing)
+            | otherwise -> do
+                (secret, public) <- generateKeys st
+                (_secretMsg, publicMsg) <- generateKeys st
 
-    (owner, secret) <- if
-        | T.null name -> return (Nothing, Nothing)
-        | otherwise -> do
-            (secret, public) <- generateKeys st
-            (_secretMsg, publicMsg) <- generateKeys st
+                return . (, Just secret) . Just =<< wrappedStore st =<< sign secret =<<
+                    wrappedStore st (emptyIdentityData public)
+                    { iddName = Just name, iddKeyMessage = Just publicMsg }
 
-            return . (, Just secret) . Just =<< wrappedStore st =<< sign secret =<<
-                wrappedStore st (emptyIdentityData public)
-                { iddName = Just name, iddKeyMessage = Just publicMsg }
+        (devSecret, devPublic) <- generateKeys st
+        (_devSecretMsg, devPublicMsg) <- generateKeys st
 
-    (devSecret, devPublic) <- generateKeys st
-    (_devSecretMsg, devPublicMsg) <- generateKeys st
+        identity <- wrappedStore st =<< maybe return signAdd secret =<< sign devSecret =<< wrappedStore st (emptyIdentityData devPublic)
+            { iddName = if T.null devName then Nothing else Just devName
+            , iddOwner = owner
+            , iddKeyMessage = Just devPublicMsg
+            }
 
-    identity <- wrappedStore st =<< maybe return signAdd secret =<< sign devSecret =<< wrappedStore st (emptyIdentityData devPublic)
-        { iddName = if T.null devName then Nothing else Just devName
-        , iddOwner = owner
-        , iddKeyMessage = Just devPublicMsg
-        }
+        shared <- wrappedStore st $ SharedState
+            { ssPrev = []
+            , ssType = Just $ sharedTypeID @(Signed IdentityData) Proxy
+            , ssValue = [storedRef $ fromMaybe identity owner]
+            }
+        storeHead st $ LocalState
+            { lsIdentity = identity
+            , lsShared = [shared]
+            }
 
-    shared <- wrappedStore st $ SharedState
-        { ssPrev = []
-        , ssType = Just $ sharedTypeID @(Signed IdentityData) Proxy
-        , ssValue = [storedRef $ fromMaybe identity owner]
-        }
-    return $ LocalState
-        { lsIdentity = identity
-        , lsShared = [shared]
-        }
-
-loadLocalIdentity :: Storage -> IO UnifiedIdentity
-loadLocalIdentity = return . headLocalIdentity <=< loadLocalStateHead
-
-headLocalIdentity :: Head -> UnifiedIdentity
+headLocalIdentity :: Head LocalState -> UnifiedIdentity
 headLocalIdentity h =
-    let ls = load $ headRef h
+    let ls = headObject h
      in maybe (error "failed to verify local identity")
             (updateOwners (lookupSharedValue $ lsShared ls))
             (validateIdentity $ lsIdentity ls)
 
 
-updateLocalState_ :: Storage -> (Stored LocalState -> IO (Stored LocalState)) -> IO ()
-updateLocalState_ st f = updateLocalState st (fmap (,()) . f)
+updateLocalState_ :: Head LocalState -> (Stored LocalState -> IO (Stored LocalState)) -> IO ()
+updateLocalState_ h f = updateLocalState h (fmap (,()) . f)
 
-updateLocalState :: Storage -> (Stored LocalState -> IO (Stored LocalState, a)) -> IO a
-updateLocalState st f = do
-    Just erebosHead <- loadHead st "erebos"
-    let ls = wrappedLoad (headRef erebosHead)
-    (ls', x) <- f ls
-    when (ls' /= ls) $ do
-        Right _ <- replaceHead ls' (Right erebosHead)
-        return ()
-    return x
+updateLocalState :: Head LocalState -> (Stored LocalState -> IO (Stored LocalState, a)) -> IO a
+updateLocalState h f = snd <$> updateHead h f
 
+updateSharedState_ :: SharedType a => Head LocalState -> ([Stored a] -> IO ([Stored a])) -> IO ()
+updateSharedState_ h f = updateSharedState h (fmap (,()) . f)
 
-updateSharedState_ :: SharedType a => Storage -> ([Stored a] -> IO ([Stored a])) -> IO ()
-updateSharedState_ st f = updateSharedState st (fmap (,()) . f)
-
-updateSharedState :: forall a b. SharedType a => Storage -> ([Stored a] -> IO ([Stored a], b)) -> IO b
-updateSharedState st f = updateLocalState st $ \ls -> do
+updateSharedState :: forall a b. SharedType a => Head LocalState -> ([Stored a] -> IO ([Stored a], b)) -> IO b
+updateSharedState h f = updateLocalState h $ \ls -> do
     let shared = lsShared $ fromStored ls
         val = lookupSharedValue shared
+        st = refStorage $ headRef h
     (val', x) <- f val
     (,x) <$> if val' == val
                 then return ls
@@ -171,14 +161,14 @@ makeSharedStateUpdate st val prev = wrappedStore st SharedState
     }
 
 
-mergeSharedIdentity :: Storage -> IO UnifiedIdentity
-mergeSharedIdentity st = updateSharedState st $ \sdata -> do
+mergeSharedIdentity :: Head LocalState -> IO UnifiedIdentity
+mergeSharedIdentity = flip updateSharedState $ \sdata -> do
     let Just cidentity = validateIdentityF sdata
     identity <- mergeIdentity cidentity
     return ([idData identity], identity)
 
-updateSharedIdentity :: Storage -> IO ()
-updateSharedIdentity st = updateSharedState_ st $ \sdata -> do
+updateSharedIdentity :: Head LocalState -> IO ()
+updateSharedIdentity = flip updateSharedState_ $ \sdata -> do
     let Just identity = validateIdentityF sdata
     (:[]) . idData <$> interactiveIdentityUpdate identity
 

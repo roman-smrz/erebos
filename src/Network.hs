@@ -181,7 +181,7 @@ receivedWaitingRef nref wr@(WaitingRef _ _ mvar) = do
     checkWaitingRef wr
 
 
-startServer :: Head -> (String -> IO ()) -> String -> [SomeService] -> IO Server
+startServer :: Head LocalState -> (String -> IO ()) -> String -> [SomeService] -> IO Server
 startServer origHead logd bhost services = do
     let storage = refStorage $ headRef origHead
     chanPeer <- newChan
@@ -271,7 +271,7 @@ startServer origHead logd bhost services = do
                                    forM_ objs $ storeObject $ peerInStorage peer
                                    identity <- readMVar midentity
                                    let svcs = map someServiceID services
-                                   handlePacket logd identity secure peer chanSvc svcs header >>= \case
+                                   handlePacket logd origHead identity secure peer chanSvc svcs header >>= \case
                                        Just peer' -> do
                                            writeChan chanPeer peer'
                                            return $ M.insert paddr peer' pvalue
@@ -307,13 +307,18 @@ startServer origHead logd bhost services = do
                                     { svcPeer = peerId
                                     , svcPrintOp = logd
                                     }
-                            (rsp, (s', gs')) <- handleServicePacket storage inp s gs (wrappedLoad ref :: Stored s)
-                            identity <- readMVar midentity
-                            runExceptT (sendToPeerList identity peer rsp) >>= \case
-                                Left err -> logd $ "failed to send response to peer: " ++ show err
-                                Right () -> return ()
-                            return (M.insert svc (SomeServiceState proxy s') svcs,
-                                M.insert svc (SomeServiceGlobalState proxy gs') global)
+                            reloadHead origHead >>= \case
+                                Nothing -> do
+                                    logd $ "current head deleted"
+                                    return (svcs, global)
+                                Just h -> do
+                                    (rsp, (s', gs')) <- handleServicePacket h inp s gs (wrappedLoad ref :: Stored s)
+                                    identity <- readMVar midentity
+                                    runExceptT (sendToPeerList identity peer rsp) >>= \case
+                                        Left err -> logd $ "failed to send response to peer: " ++ show err
+                                        Right () -> return ()
+                                    return (M.insert svc (SomeServiceState proxy s') svcs,
+                                        M.insert svc (SomeServiceGlobalState proxy gs') global)
                         _ -> do
                             logd $ "unhandled service '" ++ show (toUUID svc) ++ "'"
                             return (svcs, global)
@@ -352,10 +357,10 @@ appendDistinct x (y:ys) | x == y    = y : ys
                         | otherwise = y : appendDistinct x ys
 appendDistinct x [] = [x]
 
-handlePacket :: (String -> IO ()) -> UnifiedIdentity -> Bool
+handlePacket :: (String -> IO ()) -> Head LocalState -> UnifiedIdentity -> Bool
     -> Peer -> Chan (Peer, ServiceID, Ref) -> [ServiceID]
     -> TransportHeader -> IO (Maybe Peer)
-handlePacket logd identity secure opeer chanSvc svcs (TransportHeader headers) = do
+handlePacket logd origHead identity secure opeer chanSvc svcs (TransportHeader headers) = do
     let sidentity = idData identity
         DatagramAddress paddr = peerAddress opeer
         plaintextRefs = map (refDigest . storedRef) $ concatMap (collectStoredObjects . wrappedLoad) $ concat
@@ -373,7 +378,7 @@ handlePacket logd identity secure opeer chanSvc svcs (TransportHeader headers) =
                 gets (peerChannel . phPeer) >>= \case
                     ChannelOurAccept acc ch | refDigest (storedRef acc) == refDigest ref -> do
                         updatePeer $ \p -> p { peerChannel = ChannelEstablished (fromStored ch) }
-                        finalizedChannel identity
+                        finalizedChannel origHead identity
                     _ -> return ()
 
             Rejected _ -> return ()
@@ -442,7 +447,7 @@ handlePacket logd identity secure opeer chanSvc svcs (TransportHeader headers) =
             TrChannelAccept accref -> do
                 let process = do
                         addHeader $ Acknowledged accref
-                        handleChannelAccept identity accref
+                        handleChannelAccept origHead identity accref
                 gets (peerChannel . phPeer) >>= \case
                     ChannelWait {} -> process
                     ChannelOurRequest {} -> process
@@ -550,8 +555,8 @@ handleChannelRequest identity reqref = do
         Nothing -> do
             updatePeer $ \p -> p { peerChannel = ChannelPeerRequest reqref }
 
-handleChannelAccept :: UnifiedIdentity -> PartialRef -> PacketHandler ()
-handleChannelAccept identity accref = do
+handleChannelAccept :: Head LocalState -> UnifiedIdentity -> PartialRef -> PacketHandler ()
+handleChannelAccept oh identity accref = do
     pst <- gets $ peerStorage . phPeer
     copyRef pst accref >>= \case
         Right acc -> do
@@ -570,12 +575,12 @@ handleChannelAccept identity accref = do
                 { peerIdentity = PeerIdentityFull pid
                 , peerChannel = ChannelEstablished $ fromStored ch
                 }
-            finalizedChannel identity
+            finalizedChannel oh identity
         Left dgst -> throwError $ "missing accept data " ++ BC.unpack (showRefDigest dgst)
 
 
-finalizedChannel :: UnifiedIdentity -> PacketHandler ()
-finalizedChannel self = do
+finalizedChannel :: Head LocalState -> UnifiedIdentity -> PacketHandler ()
+finalizedChannel oh self = do
     -- Identity update
     ist <- gets $ peerInStorage . phPeer
     addHeader $ AnnounceSelf $ partialRef ist $ storedRef $ idData $ self
@@ -585,8 +590,8 @@ finalizedChannel self = do
     gets phPeer >>= \case
         peer | PeerIdentityFull pid <- peerIdentity peer
              , finalOwner pid `sameIdentity` finalOwner self -> do
-                 shared <- lsShared . fromStored <$>
-                     liftIO (loadLocalState $ storedStorage $ idData self)
+                 Just h <- liftIO $ reloadHead oh
+                 let shared = lsShared $ headObject h
                  addHeader $ ServiceType $ serviceID @SyncService Proxy
                  mapM_ (addHeader . ServiceRef . partialRef ist . storedRef) shared
                  mapM_ (addBody . storedRef) shared

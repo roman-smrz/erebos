@@ -91,11 +91,9 @@ data ServiceHandlerState s = ServiceHandlerState
 newtype ServiceHandler s a = ServiceHandler (ReaderT ServiceInput (WriterT [ServiceReply s] (StateT (ServiceHandlerState s) (ExceptT String IO))) a)
     deriving (Functor, Applicative, Monad, MonadReader ServiceInput, MonadWriter [ServiceReply s], MonadState (ServiceHandlerState s), MonadError String, MonadIO)
 
-handleServicePacket :: Service s => Storage -> ServiceInput -> ServiceState s -> ServiceGlobalState s -> Stored s -> IO ([ServiceReply s], (ServiceState s, ServiceGlobalState s))
-handleServicePacket st input svc global packet = do
-    herb <- loadLocalStateHead st
-    let erb = wrappedLoad $ headRef herb
-        sstate = ServiceHandlerState { svcValue = svc, svcGlobal = global, svcLocal = erb }
+handleServicePacket :: Service s => Head LocalState -> ServiceInput -> ServiceState s -> ServiceGlobalState s -> Stored s -> IO ([ServiceReply s], (ServiceState s, ServiceGlobalState s))
+handleServicePacket h input svc global packet = do
+    let sstate = ServiceHandlerState { svcValue = svc, svcGlobal = global, svcLocal = headStoredObject h }
         ServiceHandler handler = serviceHandler packet
     (runExceptT $ flip runStateT sstate $ execWriterT $ flip runReaderT input $ handler) >>= \case
         Left err -> do
@@ -103,9 +101,9 @@ handleServicePacket st input svc global packet = do
             return ([], (svc, global))
         Right (rsp, sstate')
             | svcLocal sstate' == svcLocal sstate -> return (rsp, (svcValue sstate', svcGlobal sstate'))
-            | otherwise -> replaceHead (svcLocal sstate') (Right herb) >>= \case
-                Left  _ -> handleServicePacket st input svc global packet
-                Right _ -> return (rsp, (svcValue sstate', svcGlobal sstate'))
+            | otherwise -> replaceHead h (svcLocal sstate') >>= \case
+                Left (Just h') -> handleServicePacket h' input svc global packet
+                _              -> return (rsp, (svcValue sstate', svcGlobal sstate'))
 
 svcGet :: ServiceHandler s (ServiceState s)
 svcGet = gets svcValue
