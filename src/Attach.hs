@@ -6,165 +6,92 @@ module Attach (
 import Control.Monad.Except
 import Control.Monad.Reader
 
-import Crypto.Random
-
-import Data.Bits
-import Data.ByteArray (Bytes, ScrubbedBytes, convert)
-import qualified Data.ByteArray as BA
-import qualified Data.ByteString.Char8 as BC
+import Data.ByteArray (ScrubbedBytes)
 import Data.Maybe
+import Data.Proxy
 import qualified Data.Text as T
-import Data.Word
 
 import Identity
 import Network
+import Pairing
 import PubKey
 import Service
 import State
 import Storage
 import Storage.Key
 
-data AttachService = AttachRequest RefDigest
-                   | AttachResponse Bytes
-                   | AttachRequestNonce Bytes
-                   | AttachIdentity (Stored (Signed IdentityData)) [ScrubbedBytes]
-                   | AttachDecline
+type AttachService = PairingService AttachIdentity
 
-data AttachState = NoAttach
-                 | OurRequest Bytes
-                 | OurRequestConfirm (Maybe (UnifiedIdentity, [ScrubbedBytes]))
-                 | OurRequestReady
-                 | PeerRequest Bytes RefDigest
-                 | PeerRequestConfirm
-                 | AttachDone
-                 | AttachFailed
+data AttachIdentity = AttachIdentity (Stored (Signed IdentityData)) [ScrubbedBytes] (Maybe UnifiedIdentity)
 
-instance Storable AttachService where
-    store' at = storeRec $ do
-        case at of
-             AttachRequest x -> storeBinary "request" x
-             AttachResponse x -> storeBinary "response" x
-             AttachRequestNonce x -> storeBinary "reqnonce" x
-             AttachIdentity x keys -> do
-                 storeRef "identity" x
-                 mapM_ (storeBinary "skey") keys
-             AttachDecline -> storeText "decline" ""
+instance Storable AttachIdentity where
+    store' (AttachIdentity x keys _) = storeRec $ do
+         storeRef "identity" x
+         mapM_ (storeBinary "skey") keys
 
-    load' = loadRec $ do
-        (req :: Maybe Bytes) <- loadMbBinary "request"
-        rsp <- loadMbBinary "response"
-        rnonce <- loadMbBinary "reqnonce"
-        aid <- loadMbRef "identity"
-        skeys <- loadBinaries "skey"
-        (decline :: Maybe T.Text) <- loadMbText "decline"
-        let res = catMaybes
-                [ AttachRequest <$> (refDigestFromByteString =<< req)
-                , AttachResponse <$> rsp
-                , AttachRequestNonce <$> rnonce
-                , AttachIdentity <$> aid <*> pure skeys
-                , const AttachDecline <$> decline
-                ]
-        case res of
-             x:_ -> return x
-             [] -> throwError "invalid attach stange"
+    load' = loadRec $ AttachIdentity
+        <$> loadRef "identity"
+        <*> loadBinaries "skey"
+        <*> pure Nothing
 
-instance Service AttachService where
-    serviceID _ = mkServiceID "4995a5f9-2d4d-48e9-ad3b-0bf1c2a1be7f"
+instance PairingResult AttachIdentity where
+    pairingServiceID _ = mkServiceID "4995a5f9-2d4d-48e9-ad3b-0bf1c2a1be7f"
 
-    type ServiceState AttachService = AttachState
-    emptyServiceState _ = NoAttach
+    pairingHookRequest = do
+        peer <- asks $ svcPeer
+        svcPrint $ "Attach from " ++ T.unpack (displayIdentity peer) ++ " initiated"
 
-    serviceHandler spacket = ((,fromStored spacket) <$> svcGet) >>= \case
-        (NoAttach, AttachRequest confirm) -> do
-            peer <- asks $ svcPeer
-            svcPrint $ "Attach from " ++ T.unpack (displayIdentity peer) ++ " initiated"
-            nonce <- liftIO $ getRandomBytes 32
-            svcSet $ PeerRequest nonce confirm
-            replyPacket $ AttachResponse nonce
-        (NoAttach, _) -> return ()
+    pairingHookResponse confirm = do
+        peer <- asks $ svcPeer
+        svcPrint $ "Attach to " ++ T.unpack (displayIdentity peer) ++ ": " ++ confirm
 
-        (OurRequest nonce, AttachResponse pnonce) -> do
-            peer <- asks $ svcPeer
-            self <- maybe (throwError "failed to verify own identity") return .
-                validateIdentity . lsIdentity . fromStored =<< svcGetLocal
-            svcPrint $ "Attach to " ++ T.unpack (displayIdentity peer) ++ ": " ++ confirmationNumber (nonceDigest self peer nonce pnonce)
-            svcSet $ OurRequestConfirm Nothing
-            replyPacket $ AttachRequestNonce nonce
-        (OurRequest _, _) -> do
-            svcSet $ AttachFailed
-            replyPacket AttachDecline
+    pairingHookRequestNonce confirm = do
+        peer <- asks $ svcPeer
+        svcPrint $ "Attach from " ++ T.unpack (displayIdentity peer) ++ ": " ++ confirm
 
-        (OurRequestConfirm _, AttachIdentity sdata keys) -> do
-            verifyAttachedIdentity sdata >>= \case
-                Just owner -> do
-                    svcPrint $ "Attachment confirmed by peer"
-                    svcSet $ OurRequestConfirm $ Just (owner, keys)
-                Nothing -> do
-                    svcPrint $ "Failed to verify new identity"
-                    svcSet $ AttachFailed
-                    replyPacket AttachDecline
-        (OurRequestConfirm _, _) -> do
-            svcSet $ AttachFailed
-            replyPacket AttachDecline
+    pairingHookRequestNonceFailed = do
+        peer <- asks $ svcPeer
+        svcPrint $ "Failed attach from " ++ T.unpack (displayIdentity peer)
 
-        (OurRequestReady, AttachIdentity sdata keys) -> do
-            verifyAttachedIdentity sdata >>= \case
-                Just identity -> do
-                    svcPrint $ "Accepted updated identity"
-                    svcSetLocal =<< finalizeAttach identity keys =<< svcGetLocal
-                Nothing -> do
-                    svcPrint $ "Failed to verify new identity"
-                    svcSet $ AttachFailed
-                    replyPacket AttachDecline
-        (OurRequestReady, _) -> do
-            svcSet $ AttachFailed
-            replyPacket AttachDecline
+    pairingHookConfirm (AttachIdentity sdata keys _) = do
+        verifyAttachedIdentity sdata >>= \case
+            Just identity -> do
+                svcPrint $ "Attachment confirmed by peer"
+                return $ Just $ AttachIdentity sdata keys (Just identity)
+            Nothing -> do
+                svcPrint $ "Failed to verify new identity"
+                throwError "Failed to verify new identity"
 
-        (PeerRequest nonce dgst, AttachRequestNonce pnonce) -> do
-            peer <- asks $ svcPeer
-            self <- maybe (throwError "failed to verify own identity") return .
-                validateIdentity . lsIdentity . fromStored =<< svcGetLocal
-            if dgst == nonceDigest peer self pnonce BA.empty
-               then do svcPrint $ "Attach from " ++ T.unpack (displayIdentity peer) ++ ": " ++ confirmationNumber (nonceDigest peer self pnonce nonce)
-                       svcSet PeerRequestConfirm
-               else do svcPrint $ "Failed attach from " ++ T.unpack (displayIdentity peer)
-                       svcSet AttachFailed
-                       replyPacket AttachDecline
-        (PeerRequest _ _, _) -> do
-            svcSet $ AttachFailed
-            replyPacket AttachDecline
-        (PeerRequestConfirm, _) -> do
-            svcSet $ AttachFailed
-            replyPacket AttachDecline
-
-        (AttachDone, _) -> return ()
-        (AttachFailed, _) -> return ()
+    pairingHookAccept (AttachIdentity sdata keys _) = do
+        verifyAttachedIdentity sdata >>= \case
+            Just identity -> do
+                svcPrint $ "Accepted updated identity"
+                svcSetLocal =<< finalizeAttach identity keys =<< svcGetLocal
+            Nothing -> do
+                svcPrint $ "Failed to verify new identity"
+                throwError "Failed to verify new identity"
 
 attachToOwner :: (MonadIO m, MonadError String m) => (String -> IO ()) -> UnifiedIdentity -> Peer -> m ()
-attachToOwner _ self peer = do
-    nonce <- liftIO $ getRandomBytes 32
-    pid <- case peerIdentity peer of
-                PeerIdentityFull pid -> return pid
-                _ -> throwError "incomplete peer identity"
-    sendToPeerWith self peer $ \case
-        NoAttach -> return (Just $ AttachRequest (nonceDigest self pid nonce BA.empty), OurRequest nonce)
-        _ -> throwError "alredy in progress"
+attachToOwner _ = pairingRequest @AttachIdentity Proxy
 
 attachAccept :: (MonadIO m, MonadError String m) => (String -> IO ()) -> Head LocalState -> Peer -> m ()
 attachAccept printMsg h peer = do
     let st = refStorage $ headRef h
         self = headLocalIdentity h
     sendToPeerWith self peer $ \case
-        NoAttach -> throwError $ "none in progress"
+        NoPairing -> throwError $ "none in progress"
         OurRequest {} -> throwError $ "waiting for peer"
         OurRequestConfirm Nothing -> do
             liftIO $ printMsg $ "Confirmed peer, waiting for updated identity"
             return (Nothing, OurRequestReady)
-        OurRequestConfirm (Just (identity, keys)) -> do
+        OurRequestConfirm (Just (AttachIdentity _ _ Nothing)) -> do
+            liftIO $ printMsg $ "Confirmed peer, but verification of received identity failed"
+            return (Nothing, NoPairing)
+        OurRequestConfirm (Just (AttachIdentity _ keys (Just identity))) -> do
             liftIO $ do
                 printMsg $ "Accepted updated identity"
                 updateLocalState_ h $ finalizeAttach identity keys
-            return (Nothing, AttachDone)
+            return (Nothing, PairingDone)
         OurRequestReady -> throwError $ "alredy accepted, waiting for peer"
         PeerRequest {} -> throwError $ "waiting for peer"
         PeerRequestConfirm -> do
@@ -176,25 +103,9 @@ attachAccept printMsg h peer = do
                 identity <- wrappedStore st =<< sign secret =<< wrappedStore st (emptyIdentityData $ idKeyIdentity pid)
                     { iddPrev = [idData pid], iddOwner = Just (idData owner) }
                 skeys <- map keyGetData . catMaybes <$> mapM loadKey [ idKeyIdentity owner, idKeyMessage owner ]
-                return (Just $ AttachIdentity identity skeys, NoAttach)
-        AttachDone -> throwError $ "alredy done"
-        AttachFailed -> throwError $ "alredy failed"
-
-
-nonceDigest :: UnifiedIdentity -> UnifiedIdentity -> Bytes -> Bytes -> RefDigest
-nonceDigest id1 id2 nonce1 nonce2 = hashToRefDigest $ serializeObject $ Rec
-        [ (BC.pack "id", RecRef $ storedRef $ idData id1)
-        , (BC.pack "id", RecRef $ storedRef $ idData id2)
-        , (BC.pack "nonce", RecBinary $ convert nonce1)
-        , (BC.pack "nonce", RecBinary $ convert nonce2)
-        ]
-
-confirmationNumber :: RefDigest -> String
-confirmationNumber dgst = let (a:b:c:d:_) = map fromIntegral $ BA.unpack dgst :: [Word32]
-                              str = show $ (a .|. (b `shift` 8) .|. (c `shift` 16) .|. (d `shift` 24)) `mod` (10 ^ len)
-                           in replicate (len - length str) '0' ++ str
-    where len = 6
-
+                return (Just $ PairingAccept $ AttachIdentity identity skeys Nothing, PairingDone)
+        PairingDone -> throwError $ "alredy done"
+        PairingFailed -> throwError $ "alredy failed"
 
 verifyAttachedIdentity :: Stored (Signed IdentityData) -> ServiceHandler s (Maybe UnifiedIdentity)
 verifyAttachedIdentity sdata = do
@@ -209,7 +120,6 @@ verifyAttachedIdentity sdata = do
         guard $ iddPrev (fromStored $ signedData $ fromStored $ idData identity) == [curid]
         return identity
 
-
 finalizeAttach :: MonadIO m => UnifiedIdentity -> [ScrubbedBytes] -> Stored LocalState -> m (Stored LocalState)
 finalizeAttach identity skeys slocal = liftIO $ do
     let owner = finalOwner identity
@@ -221,4 +131,4 @@ finalizeAttach identity skeys slocal = liftIO $ do
     wrappedStore st (fromStored slocal)
         { lsIdentity = idData identity
         , lsShared = [ shared ]
-            }
+        }

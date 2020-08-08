@@ -23,6 +23,7 @@ executable erebos
                        Channel,
                        Message,
                        Network,
+                       Pairing
                        PubKey,
                        Service
                        State,
