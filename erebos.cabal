@@ -21,6 +21,7 @@ executable erebos
   other-modules:       Attach
                        Identity,
                        Channel,
+                       Contact
                        Message,
                        Network,
                        Pairing

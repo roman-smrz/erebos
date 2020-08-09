@@ -25,6 +25,7 @@ import System.Console.Haskeline
 import System.Environment
 
 import Attach
+import Contact
 import Identity
 import Message
 import Network
@@ -100,6 +101,7 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
         startServer erebosHead extPrintLn bhost
             [ SomeService @AttachService Proxy
             , SomeService @SyncService Proxy
+            , SomeService @ContactService Proxy
             , SomeService @DirectMessage Proxy
             ]
 
@@ -190,6 +192,9 @@ commands =
     , ("update-identity", cmdUpdateIdentity)
     , ("attach", cmdAttach)
     , ("attach-accept", cmdAttachAccept)
+    , ("contacts", cmdContacts)
+    , ("contact-add", cmdContactAdd)
+    , ("contact-accept", cmdContactAccept)
     ]
 
 cmdUnknown :: String -> Command
@@ -249,6 +254,25 @@ cmdAttach = join $ attachToOwner
 
 cmdAttachAccept :: Command
 cmdAttachAccept = join $ attachAccept
+    <$> asks ciPrint
+    <*> asks ciHead
+    <*> (maybe (throwError "no peer selected") return =<< gets csPeer)
+
+cmdContacts :: Command
+cmdContacts = do
+    ehead <- asks ciHead
+    let contacts = contactView $ lookupSharedValue $ lsShared $ headObject ehead
+    forM_ (zip [1..] contacts) $ \(i :: Int, c) -> do
+        liftIO $ putStrLn $ show i ++ ": " ++ T.unpack (displayIdentity $ contactIdentity c)
+
+cmdContactAdd :: Command
+cmdContactAdd = join $ contactRequest
+    <$> asks ciPrint
+    <*> asks (headLocalIdentity . ciHead)
+    <*> (maybe (throwError "no peer selected") return =<< gets csPeer)
+
+cmdContactAccept :: Command
+cmdContactAccept = join $ contactAccept
     <$> asks ciPrint
     <*> asks ciHead
     <*> (maybe (throwError "no peer selected") return =<< gets csPeer)
