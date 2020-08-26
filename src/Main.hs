@@ -122,6 +122,7 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
     let getInputLines prompt = do
             Just input <- lift $ getInputLine prompt
             case reverse input of
+                 _ | all isSpace input -> getInputLines prompt
                  '\\':rest -> (reverse ('\n':rest) ++) <$> getInputLines ">> "
                  _         -> return input
 
