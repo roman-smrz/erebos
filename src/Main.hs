@@ -4,7 +4,6 @@ import Control.Arrow (first)
 import Control.Concurrent
 import Control.Monad
 import Control.Monad.Except
-import Control.Monad.Fail
 import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Trans.Maybe
