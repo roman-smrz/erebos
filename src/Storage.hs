@@ -35,7 +35,7 @@ module Storage (
     loadBlob, loadRec, loadZero,
     loadInt, loadNum, loadText, loadBinary, loadDate, loadUUID, loadJson, loadRef, loadRawRef,
     loadMbInt, loadMbNum, loadMbText, loadMbBinary, loadMbDate, loadMbUUID, loadMbJson, loadMbRef, loadMbRawRef,
-    loadBinaries, loadRefs, loadRawRefs,
+    loadTexts, loadBinaries, loadRefs, loadRawRefs,
     loadZRef,
 
     Stored,
@@ -719,6 +719,12 @@ loadMbText name = asks (lookup (BC.pack name) . snd) >>= \case
     Nothing -> return Nothing
     Just (RecText x) -> Just <$> fromText x
     Just _ -> throwError $ "Expecting type text of record item '"++name++"'"
+
+loadTexts :: StorableText a => String -> LoadRec [a]
+loadTexts name = do
+    items <- map snd . filter ((BC.pack name ==) . fst) <$> asks snd
+    forM items $ \case RecText x -> fromText x
+                       _ -> throwError $ "Expecting type text of record item '"++name++"'"
 
 loadBinary :: BA.ByteArray a => String -> LoadRec a
 loadBinary name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbBinary name

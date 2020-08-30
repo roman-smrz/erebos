@@ -16,9 +16,10 @@ extra-source-files:  CHANGELOG.md
 cabal-version:       >=1.10
 
 executable erebos
-  ghc-options:         -Wall
+  ghc-options:         -Wall -threaded
   main-is:             Main.hs
   other-modules:       Attach
+                       ICE
                        Identity,
                        Channel,
                        Contact
@@ -79,3 +80,8 @@ executable erebos
                        zlib >=0.6 && <0.7
   hs-source-dirs:      src
   default-language:    Haskell2010
+  c-sources:           src/ICE/pjproject.c
+  includes:            src/ICE/pjproject.h
+  include-dirs:        src/ICE
+  build-tools:         c2hs
+  pkgconfig-depends:   libpjproject >= 2.9

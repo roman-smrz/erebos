@@ -25,6 +25,7 @@ import System.Environment
 
 import Attach
 import Contact
+import ICE
 import Identity
 import Message
 import Network
@@ -95,7 +96,8 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
     haveTerminalUI >>= \case True -> return ()
                              False -> error "Requires terminal"
     extPrint <- getExternalPrint
-    let extPrintLn str = extPrint $ str ++ "\n";
+    let extPrintLn str = extPrint $ case reverse str of ('\n':_) -> str
+                                                        _ -> str ++ "\n";
     server <- liftIO $ do
         startServer erebosHead extPrintLn bhost
             [ SomeService @AttachService Proxy
@@ -158,7 +160,10 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
 
     let loop (Just cstate) = runMaybeT (process cstate) >>= loop
         loop Nothing = return ()
-    loop $ Just $ CommandState { csPeer = Nothing }
+    loop $ Just $ CommandState
+        { csPeer = Nothing
+        , csIceSessions = []
+        }
 
 
 data CommandInput = CommandInput
@@ -171,6 +176,7 @@ data CommandInput = CommandInput
 
 data CommandState = CommandState
     { csPeer :: Maybe Peer
+    , csIceSessions :: [IceSession]
     }
 
 newtype CommandM a = CommandM (ReaderT CommandInput (StateT CommandState (ExceptT String IO)) a)
@@ -195,6 +201,11 @@ commands =
     , ("contacts", cmdContacts)
     , ("contact-add", cmdContactAdd)
     , ("contact-accept", cmdContactAccept)
+    , ("ice-create", cmdIceCreate)
+    , ("ice-destroy", cmdIceDestroy)
+    , ("ice-show", cmdIceShow)
+    , ("ice-connect", cmdIceConnect)
+    , ("ice-send", cmdIceSend)
     ]
 
 cmdUnknown :: String -> Command
@@ -212,8 +223,7 @@ showPeer peer =
                     PeerIdentityUnknown  -> "<noid>"
                     PeerIdentityRef wref -> "<" ++ BC.unpack (showRefDigest $ wrDigest wref) ++ ">"
                     PeerIdentityFull pid -> T.unpack $ displayIdentity pid
-        DatagramAddress addr = peerAddress peer
-     in name ++ " [" ++ show addr ++ "]"
+     in name ++ " [" ++ show (peerAddress peer) ++ "]"
 
 cmdSetPeer :: Int -> Command
 cmdSetPeer n | n < 1     = liftIO $ putStrLn "Invalid peer index"
@@ -276,3 +286,46 @@ cmdContactAccept = join $ contactAccept
     <$> asks ciPrint
     <*> asks ciHead
     <*> (maybe (throwError "no peer selected") return =<< gets csPeer)
+
+cmdIceCreate :: Command
+cmdIceCreate = do
+    role <- asks ciLine >>= return . \case
+        'm':_ -> PjIceSessRoleControlling
+        's':_ -> PjIceSessRoleControlled
+        _ -> PjIceSessRoleUnknown
+    eprint <- asks ciPrint
+    sess <- liftIO $ iceCreate role $ eprint <=< iceShow
+    modify $ \s -> s { csIceSessions = sess : csIceSessions s }
+
+cmdIceDestroy :: Command
+cmdIceDestroy = do
+    s:ss <- gets csIceSessions
+    modify $ \st -> st { csIceSessions = ss }
+    liftIO $ iceDestroy s
+
+cmdIceShow :: Command
+cmdIceShow = do
+    sess <- gets csIceSessions
+    eprint <- asks ciPrint
+    liftIO $ forM_ (zip [1::Int ..] sess) $ \(i, s) -> do
+        eprint $ "[" ++ show i ++ "]"
+        eprint =<< iceShow s
+
+cmdIceConnect :: Command
+cmdIceConnect = do
+    s:_ <- gets csIceSessions
+    server <- asks ciServer
+    let loadInfo = BC.getLine >>= \case line | BC.null line -> return []
+                                             | otherwise    -> (line:) <$> loadInfo
+    Right remote <- liftIO $ do
+        st <- memoryStorage
+        pst <- derivePartialStorage st
+        rbytes <- (BL.fromStrict . BC.unlines) <$> loadInfo
+        copyRef st =<< storeRawBytes pst (BL.fromChunks [ BC.pack "rec ", BC.pack (show (BL.length rbytes)), BC.singleton '\n' ] `BL.append` rbytes)
+    liftIO $ iceConnect s (load remote) $ void $ serverPeerIce server s
+
+cmdIceSend :: Command
+cmdIceSend = void $ do
+    s:_ <- gets csIceSessions
+    server <- asks ciServer
+    liftIO $ serverPeerIce server s
