@@ -7,6 +7,7 @@ module Contact (
     contactAccept,
 ) where
 
+import Control.Arrow
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
@@ -51,14 +52,15 @@ instance SharedType ContactData where
     sharedTypeID _ = mkSharedTypeID "34fbb61e-6022-405f-b1b3-a5a1abecd25e"
 
 contactView :: [Stored ContactData] -> [Contact]
-contactView = helper [] . filterAncestors
-    where helper used (x:xs) | Just cid <- validateIdentityF (cdIdentity (fromStored x))
-                             , not $ any (sameIdentity cid) used
-                             = Contact { contactIdentity = cid
-                                       , contactName = lookupProperty cid cdName (x:xs)
-                                       } : helper (cid:used) xs
-                             | otherwise = helper used xs
-          helper _ [] = []
+contactView = helper []
+    where helper used = filterAncestors >>> \case
+              x:xs | Just cid <- validateIdentityF (cdIdentity (fromStored x))
+                   , not $ any (sameIdentity cid) used
+                   -> Contact { contactIdentity = cid
+                              , contactName = lookupProperty cid cdName (x:xs)
+                              } : helper (cid:used) (cdPrev (fromStored x) ++ xs)
+                   | otherwise -> helper used (cdPrev (fromStored x) ++ xs)
+              [] -> []
 
 lookupProperty :: forall a. ComposedIdentity -> (ContactData -> Maybe a) -> [Stored ContactData] -> Maybe a
 lookupProperty idt sel = join . fmap (sel . fromStored) . listToMaybe . filterAncestors . helper
