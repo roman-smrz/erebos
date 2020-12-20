@@ -71,6 +71,9 @@ data StorageBacking c
 newtype RefDigest = RefDigest (Digest Blake2b_256)
     deriving (Eq, Ord, NFData, ByteArrayAccess)
 
+instance Show RefDigest where
+    show = BC.unpack . showRefDigest
+
 data Ref' c = Ref (Storage' c) RefDigest
     deriving (Eq)
 

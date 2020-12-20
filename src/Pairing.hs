@@ -155,9 +155,9 @@ confirmationNumber dgst = let (a:b:c:d:_) = map fromIntegral $ BA.unpack dgst ::
 pairingRequest :: forall a m proxy. (PairingResult a, MonadIO m, MonadError String m) => proxy a -> UnifiedIdentity -> Peer -> m ()
 pairingRequest _ self peer = do
     nonce <- liftIO $ getRandomBytes 32
-    pid <- case peerIdentity peer of
-                PeerIdentityFull pid -> return pid
-                _ -> throwError "incomplete peer identity"
+    pid <- peerIdentity peer >>= \case
+        PeerIdentityFull pid -> return pid
+        _ -> throwError "incomplete peer identity"
     sendToPeerWith @(PairingService a) self peer $ \case
         NoPairing -> return (Just $ PairingRequest (nonceDigest self pid nonce BA.empty), OurRequest nonce)
         _ -> throwError "alredy in progress"

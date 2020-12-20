@@ -121,7 +121,7 @@ contactAccept printMsg h peer = do
             liftIO $ printMsg $ "Contact accepted, waiting for peer confirmation"
             return (Nothing, OurRequestReady)
         OurRequestConfirm (Just ContactAccepted) -> do
-            PeerIdentityFull pid <- return $ peerIdentity peer
+            PeerIdentityFull pid <- peerIdentity peer
             liftIO $ do
                 printMsg $ "Contact accepted"
                 updateLocalState_ h $ finalizeContact pid
@@ -129,7 +129,7 @@ contactAccept printMsg h peer = do
         OurRequestReady -> throwError $ "alredy accepted, waiting for peer"
         PeerRequest {} -> throwError $ "waiting for peer"
         PeerRequestConfirm -> do
-            PeerIdentityFull pid <- return $ peerIdentity peer
+            PeerIdentityFull pid <- peerIdentity peer
             liftIO $ do
                 printMsg $ "Contact accepted"
                 updateLocalState_ h $ finalizeContact pid

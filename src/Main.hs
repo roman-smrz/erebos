@@ -109,16 +109,16 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
     peers <- liftIO $ newMVar []
 
     void $ liftIO $ forkIO $ void $ forever $ do
-        peer <- readChan $ serverChanPeer server
-        if | PeerIdentityFull pid <- peerIdentity peer -> do
-                 let update [] = ([peer], Nothing)
-                     update (p:ps) | PeerIdentityFull pid' <- peerIdentity p
-                                   , pid' `sameIdentity` pid = (peer : ps, Just p)
-                                   | otherwise               = first (p:) $ update ps
-                 op <- modifyMVar peers (return . update)
-                 let shown = showPeer peer
-                 when (Just shown /= (showPeer <$> op)) $ extPrint shown
-           | otherwise -> return ()
+        peer <- getNextPeerChange server
+        peerIdentity peer >>= \case
+            pid@(PeerIdentityFull _) -> do
+                let shown = showPeer pid $ peerAddress peer
+                let update [] = ([(peer, shown)], Nothing)
+                    update ((p,s):ps) | p == peer = ((peer, shown) : ps, Just s)
+                                      | otherwise = first ((p,s):) $ update ps
+                op <- modifyMVar peers (return . update)
+                when (Just shown /= op) $ extPrint shown
+            _ -> return ()
 
     let getInputLines prompt = do
             Just input <- lift $ getInputLine prompt
@@ -129,12 +129,12 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
 
     let process :: CommandState -> MaybeT (InputT IO) CommandState
         process cstate = do
-            let pname = case csPeer cstate of
-                             Nothing -> ""
-                             Just peer -> case peerIdentity peer of
-                                 PeerIdentityFull pid -> maybe "<unnamed>" T.unpack $ idName $ finalOwner pid
-                                 PeerIdentityRef wref -> "<" ++ BC.unpack (showRefDigest $ wrDigest wref) ++ ">"
-                                 PeerIdentityUnknown  -> "<unknown>"
+            pname <- case csPeer cstate of
+                        Nothing -> return ""
+                        Just peer -> peerIdentity peer >>= return . \case
+                            PeerIdentityFull pid -> maybe "<unnamed>" T.unpack $ idName $ finalOwner pid
+                            PeerIdentityRef wref _ -> "<" ++ BC.unpack (showRefDigest $ wrDigest wref) ++ ">"
+                            PeerIdentityUnknown _  -> "<unknown>"
             input <- getInputLines $ pname ++ "> "
             let (CommandM cmd, line) = case input of
                     '/':rest -> let (scmd, args) = dropWhile isSpace <$> span (\c -> isAlphaNum c || c == '-') rest
@@ -171,7 +171,7 @@ data CommandInput = CommandInput
     , ciServer :: Server
     , ciLine :: String
     , ciPrint :: String -> IO ()
-    , ciPeers :: CommandM [Peer]
+    , ciPeers :: CommandM [(Peer, String)]
     }
 
 data CommandState = CommandState
@@ -214,21 +214,21 @@ cmdUnknown cmd = liftIO $ putStrLn $ "Unknown command: " ++ cmd
 cmdPeers :: Command
 cmdPeers = do
     peers <- join $ asks ciPeers
-    forM_ (zip [1..] peers) $ \(i :: Int, p) -> do
-        liftIO $ putStrLn $ show i ++ ": " ++ showPeer p
+    forM_ (zip [1..] peers) $ \(i :: Int, (_, name)) -> do
+        liftIO $ putStrLn $ show i ++ ": " ++ name
 
-showPeer :: Peer -> String
-showPeer peer =
-    let name = case peerIdentity peer of
-                    PeerIdentityUnknown  -> "<noid>"
-                    PeerIdentityRef wref -> "<" ++ BC.unpack (showRefDigest $ wrDigest wref) ++ ">"
-                    PeerIdentityFull pid -> T.unpack $ displayIdentity pid
-     in name ++ " [" ++ show (peerAddress peer) ++ "]"
+showPeer :: PeerIdentity -> PeerAddress -> String
+showPeer pidentity paddr =
+    let name = case pidentity of
+                    PeerIdentityUnknown _  -> "<noid>"
+                    PeerIdentityRef wref _ -> "<" ++ BC.unpack (showRefDigest $ wrDigest wref) ++ ">"
+                    PeerIdentityFull pid   -> T.unpack $ displayIdentity pid
+     in name ++ " [" ++ show paddr ++ "]"
 
 cmdSetPeer :: Int -> Command
 cmdSetPeer n | n < 1     = liftIO $ putStrLn "Invalid peer index"
              | otherwise = do peers <- join $ asks ciPeers
-                              modify $ \s -> s { csPeer = listToMaybe $ drop (n - 1) peers }
+                              modify $ \s -> s { csPeer = fmap fst $ listToMaybe $ drop (n - 1) peers }
 
 cmdSend :: Command
 cmdSend = void $ do
@@ -243,7 +243,7 @@ cmdHistory :: Command
 cmdHistory = void $ do
     ehead <- asks ciHead
     Just peer <- gets csPeer
-    PeerIdentityFull pid <- return $ peerIdentity peer
+    PeerIdentityFull pid <- peerIdentity peer
     let powner = finalOwner pid
 
     Just thread <- return $ find (sameIdentity powner . msgPeer) $

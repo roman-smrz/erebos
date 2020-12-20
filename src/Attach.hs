@@ -97,7 +97,7 @@ attachAccept printMsg h peer = do
         PeerRequestConfirm -> do
             liftIO $ printMsg $ "Accepted new attached device, seding updated identity"
             owner <- liftIO $ mergeSharedIdentity h
-            PeerIdentityFull pid <- return $ peerIdentity peer
+            PeerIdentityFull pid <- peerIdentity peer
             Just secret <- liftIO $ loadKey $ idKeyIdentity owner
             liftIO $ do
                 identity <- wrappedStore st =<< sign secret =<< wrappedStore st (emptyIdentityData $ idKeyIdentity pid)

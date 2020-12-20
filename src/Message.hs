@@ -115,8 +115,8 @@ findMsgProperty pid sel mss = concat $ flip findProperty mss $ \x -> do
 
 sendDirectMessage :: (MonadIO m, MonadError String m) => Head LocalState -> Peer -> Text -> m (Stored DirectMessage)
 sendDirectMessage h peer text = do
-    pid <- case peerIdentity peer of PeerIdentityFull pid -> return pid
-                                     _ -> throwError "incomplete peer identity"
+    pid <- peerIdentity peer >>= \case PeerIdentityFull pid -> return pid
+                                       _ -> throwError "incomplete peer identity"
     let st = refStorage $ headRef h
         self = headLocalIdentity h
         powner = finalOwner pid
