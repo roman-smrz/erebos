@@ -85,10 +85,11 @@ main = do
                         BC.putStrLn . showRefDigest . refDigest . storedRef . idData =<< interactiveIdentityUpdate idt
                     | otherwise -> error "invalid identity"
 
-        [bhost] -> interactiveLoop st bhost
-        _       -> error "Expecting broadcast address"
+        [bhost] -> interactiveLoop st (Just bhost)
+        []      -> interactiveLoop st Nothing
+        _       -> error "Unrecognized options"
 
-interactiveLoop :: Storage -> String -> IO ()
+interactiveLoop :: Storage -> Maybe String -> IO ()
 interactiveLoop st bhost = runInputT defaultSettings $ do
     erebosHead <- liftIO $ loadLocalStateHead st
     outputStrLn $ T.unpack $ displayIdentity $ headLocalIdentity erebosHead
@@ -99,7 +100,10 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
     let extPrintLn str = extPrint $ case reverse str of ('\n':_) -> str
                                                         _ -> str ++ "\n";
     server <- liftIO $ do
-        startServer erebosHead extPrintLn bhost
+        let sopt = defaultServerOptions
+                { serverLocalDiscovery = bhost
+                }
+        startServer sopt erebosHead extPrintLn
             [ SomeService @AttachService Proxy
             , SomeService @SyncService Proxy
             , SomeService @ContactService Proxy

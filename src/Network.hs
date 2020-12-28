@@ -2,6 +2,7 @@ module Network (
     Server,
     startServer,
     getNextPeerChange,
+    ServerOptions(..), defaultServerOptions,
 
     Peer,
     PeerAddress(..), peerAddress,
@@ -68,6 +69,15 @@ data Server = Server
 
 getNextPeerChange :: Server -> IO Peer
 getNextPeerChange = atomically . readTChan . serverChanPeer
+
+data ServerOptions = ServerOptions
+    { serverLocalDiscovery :: Maybe String
+    }
+
+defaultServerOptions :: ServerOptions
+defaultServerOptions = ServerOptions
+    { serverLocalDiscovery = Nothing
+    }
 
 
 data Peer = Peer
@@ -195,8 +205,8 @@ newWaitingRef pref act = do
     return wref
 
 
-startServer :: Head LocalState -> (String -> IO ()) -> String -> [SomeService] -> IO Server
-startServer origHead logd' bhost services = do
+startServer :: ServerOptions -> Head LocalState -> (String -> IO ()) -> [SomeService] -> IO Server
+startServer opt origHead logd' services = do
     let storage = refStorage $ headRef origHead
     chanPacket <- newChan
     outQueue <- newTQueueIO
@@ -244,12 +254,15 @@ startServer origHead logd' bhost services = do
             return sock
 
         loop sock = do
-            void $ forkIO $ forever $ do
-                readMVar midentity >>= \identity -> do
-                    st <- derivePartialStorage storage
-                    baddr:_ <- getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just bhost) (Just discoveryPort)
-                    void $ S.sendTo sock (BL.toStrict $ serializeObject $ transportToObject $ TransportHeader [ AnnounceSelf $ partialRef st $ storedRef $ idData identity ]) (addrAddress baddr)
-                threadDelay $ announceIntervalSeconds * 1000 * 1000
+            case serverLocalDiscovery opt of
+                Just bhost -> do
+                    void $ forkIO $ forever $ do
+                        readMVar midentity >>= \identity -> do
+                            st <- derivePartialStorage storage
+                            baddr:_ <- getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just bhost) (Just discoveryPort)
+                            void $ S.sendTo sock (BL.toStrict $ serializeObject $ transportToObject $ TransportHeader [ AnnounceSelf $ partialRef st $ storedRef $ idData identity ]) (addrAddress baddr)
+                        threadDelay $ announceIntervalSeconds * 1000 * 1000
+                Nothing -> return ()
 
             let announceUpdate identity = do
                     st <- derivePartialStorage storage
@@ -332,7 +345,9 @@ startServer origHead logd' bhost services = do
               { addrFlags = [AI_PASSIVE]
               , addrSocketType = Datagram
               }
-        addr:_ <- getAddrInfo (Just hints) Nothing (Just discoveryPort)
+        addr:_ <- getAddrInfo (Just hints) Nothing
+            -- use ephemeral port when local discovery is disabled
+            (Just $ if isJust (serverLocalDiscovery opt) then discoveryPort else "0")
         bracket (open addr) close loop
 
     void $ forkIO $ forever $ do
