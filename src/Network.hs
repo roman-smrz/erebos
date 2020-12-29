@@ -375,8 +375,9 @@ startServer opt origHead logd' services = do
                                  putTMVar svcStates global
                              Just h -> do
                                  (rsp, (s', gs')) <- handleServicePacket h inp s gs (wrappedLoad ref :: Stored s)
-                                 identity <- readMVar midentity
-                                 sendToPeerList identity peer rsp
+                                 when (not (null rsp)) $ do
+                                     identity <- readMVar midentity
+                                     sendToPeerList identity peer rsp
                                  atomically $ do
                                      putTMVar (peerServiceState peer) $ M.insert svc (SomeServiceState proxy s') svcs
                                      putTMVar svcStates $ M.insert svc (SomeServiceGlobalState proxy gs') global
