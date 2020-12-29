@@ -38,19 +38,19 @@ instance PairingResult AttachIdentity where
     pairingServiceID _ = mkServiceID "4995a5f9-2d4d-48e9-ad3b-0bf1c2a1be7f"
 
     pairingHookRequest = do
-        peer <- asks $ svcPeer
+        peer <- asks $ svcPeerIdentity
         svcPrint $ "Attach from " ++ T.unpack (displayIdentity peer) ++ " initiated"
 
     pairingHookResponse confirm = do
-        peer <- asks $ svcPeer
+        peer <- asks $ svcPeerIdentity
         svcPrint $ "Attach to " ++ T.unpack (displayIdentity peer) ++ ": " ++ confirm
 
     pairingHookRequestNonce confirm = do
-        peer <- asks $ svcPeer
+        peer <- asks $ svcPeerIdentity
         svcPrint $ "Attach from " ++ T.unpack (displayIdentity peer) ++ ": " ++ confirm
 
     pairingHookRequestNonceFailed = do
-        peer <- asks $ svcPeer
+        peer <- asks $ svcPeerIdentity
         svcPrint $ "Failed attach from " ++ T.unpack (displayIdentity peer)
 
     pairingHookConfirm (AttachIdentity sdata keys _) = do

@@ -52,7 +52,7 @@ instance Service DirectMessage where
 
     serviceHandler smsg = do
         let msg = fromStored smsg
-        powner <- asks $ finalOwner . svcPeer
+        powner <- asks $ finalOwner . svcPeerIdentity
         tzone <- liftIO $ getCurrentTimeZone
         erb <- svcGetLocal
         let st = storedStorage erb

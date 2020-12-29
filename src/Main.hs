@@ -20,11 +20,14 @@ import qualified Data.Text.IO as T
 import Data.Time.LocalTime
 import Data.Typeable
 
+import Network.Socket
+
 import System.Console.Haskeline
 import System.Environment
 
 import Attach
 import Contact
+import Discovery
 import ICE
 import Identity
 import Message
@@ -108,6 +111,7 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
             , SomeService @SyncService Proxy
             , SomeService @ContactService Proxy
             , SomeService @DirectMessage Proxy
+            , SomeService @DiscoveryService Proxy
             ]
 
     peers <- liftIO $ newMVar []
@@ -167,6 +171,7 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
     loop $ Just $ CommandState
         { csPeer = Nothing
         , csIceSessions = []
+        , csIcePeer = Nothing
         }
 
 
@@ -181,6 +186,7 @@ data CommandInput = CommandInput
 data CommandState = CommandState
     { csPeer :: Maybe Peer
     , csIceSessions :: [IceSession]
+    , csIcePeer :: Maybe Peer
     }
 
 newtype CommandM a = CommandM (ReaderT CommandInput (StateT CommandState (ExceptT String IO)) a)
@@ -205,6 +211,8 @@ commands =
     , ("contacts", cmdContacts)
     , ("contact-add", cmdContactAdd)
     , ("contact-accept", cmdContactAccept)
+    , ("discovery-init", cmdDiscoveryInit)
+    , ("discovery", cmdDiscovery)
     , ("ice-create", cmdIceCreate)
     , ("ice-destroy", cmdIceDestroy)
     , ("ice-show", cmdIceShow)
@@ -274,10 +282,13 @@ cmdAttachAccept = join $ attachAccept
 
 cmdContacts :: Command
 cmdContacts = do
+    args <- words <$> asks ciLine
     ehead <- asks ciHead
     let contacts = contactView $ lookupSharedValue $ lsShared $ headObject ehead
+        verbose = "-v" `elem` args
     forM_ (zip [1..] contacts) $ \(i :: Int, c) -> do
-        liftIO $ putStrLn $ show i ++ ": " ++ T.unpack (displayIdentity $ contactIdentity c)
+        liftIO $ putStrLn $ show i ++ ": " ++ T.unpack (displayIdentity $ contactIdentity c) ++
+            (if verbose then " " ++ (unwords $ map (BC.unpack . showRef . storedRef) $ idDataF $ contactIdentity c) else "")
 
 cmdContactAdd :: Command
 cmdContactAdd = join $ contactRequest
@@ -290,6 +301,35 @@ cmdContactAccept = join $ contactAccept
     <$> asks ciPrint
     <*> asks ciHead
     <*> (maybe (throwError "no peer selected") return =<< gets csPeer)
+
+cmdDiscoveryInit :: Command
+cmdDiscoveryInit = void $ do
+    self <- asks (headLocalIdentity . ciHead)
+    server <- asks ciServer
+
+    (hostname, port) <- (words <$> asks ciLine) >>= return . \case
+        hostname:p:_ -> (hostname, p)
+        [hostname] -> (hostname, discoveryPort)
+        [] -> ("discovery.erebosprotocol.net", discoveryPort)
+    addr:_ <- liftIO $ getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just hostname) (Just port)
+    peer <- liftIO $ serverPeer server (addrAddress addr)
+    sendToPeer self peer $ DiscoverySelf (T.pack "ICE") 0
+    modify $ \s -> s { csIcePeer = Just peer }
+
+cmdDiscovery :: Command
+cmdDiscovery = void $ do
+    Just peer <- gets csIcePeer
+    self <- asks (headLocalIdentity . ciHead)
+    st <- asks (storedStorage . headStoredObject . ciHead)
+    sref <- asks ciLine
+    eprint <- asks ciPrint
+    liftIO $ readRef st (BC.pack sref) >>= \case
+        Nothing -> error "ref does not exist"
+        Just ref -> do
+            res <- runExceptT $ sendToPeer self peer $ DiscoverySearch ref
+            case res of
+                 Right _ -> return ()
+                 Left err -> eprint err
 
 cmdIceCreate :: Command
 cmdIceCreate = do

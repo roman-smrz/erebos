@@ -54,6 +54,7 @@ import Codec.Compression.Zlib
 import qualified Codec.MIME.Type as MIME
 import qualified Codec.MIME.Parse as MIME
 
+import Control.Applicative
 import Control.Arrow
 import Control.Concurrent
 import Control.DeepSeq
@@ -520,7 +521,7 @@ evalStore _ StoreZero = return ZeroObject
 type StoreRec c = ReaderT (Storage' c) (Writer [IO [(ByteString, RecItem' c)]]) ()
 
 newtype Load a = Load (ReaderT (Ref, Object) (Either String) a)
-    deriving (Functor, Applicative, Monad, MonadReader (Ref, Object), MonadError String)
+    deriving (Functor, Applicative, Alternative, Monad, MonadPlus, MonadReader (Ref, Object), MonadError String)
 
 type LoadRec a = ReaderT (Ref, [(ByteString, RecItem)]) (Either String) a
 

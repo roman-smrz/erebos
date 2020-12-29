@@ -12,6 +12,7 @@ module Identity (
     updateIdentity, updateOwners,
     sameIdentity,
 
+    unfoldOwners,
     finalOwner,
     displayIdentity,
 ) where

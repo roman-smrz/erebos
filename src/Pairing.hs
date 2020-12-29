@@ -90,7 +90,7 @@ instance PairingResult a => Service (PairingService a) where
         (NoPairing, _) -> return ()
 
         (OurRequest nonce, PairingResponse pnonce) -> do
-            peer <- asks $ svcPeer
+            peer <- asks $ svcPeerIdentity
             self <- maybe (throwError "failed to validate own identity") return .
                 validateIdentity . lsIdentity . fromStored =<< svcGetLocal
             pairingHookResponse $ confirmationNumber $ nonceDigest self peer nonce pnonce
@@ -118,7 +118,7 @@ instance PairingResult a => Service (PairingService a) where
             replyPacket PairingDecline
 
         (PeerRequest nonce dgst, PairingRequestNonce pnonce) -> do
-            peer <- asks $ svcPeer
+            peer <- asks $ svcPeerIdentity
             self <- maybe (throwError "failed to verify own identity") return .
                 validateIdentity . lsIdentity . fromStored =<< svcGetLocal
             if dgst == nonceDigest peer self pnonce BA.empty

@@ -13,7 +13,10 @@ module Service (
     svcGet, svcSet, svcModify,
     svcGetGlobal, svcSetGlobal, svcModifyGlobal,
     svcGetLocal, svcSetLocal,
+
+    svcSelf,
     svcPrint,
+
     replyPacket, replyStored, replyStoredRef,
 ) where
 
@@ -27,6 +30,7 @@ import Data.UUID (UUID)
 import qualified Data.UUID as U
 
 import Identity
+import {-# SOURCE #-} Network
 import State
 import Storage
 
@@ -76,7 +80,9 @@ mkServiceID :: String -> ServiceID
 mkServiceID = maybe (error "Invalid service ID") ServiceID . U.fromString
 
 data ServiceInput = ServiceInput
-    { svcPeer :: UnifiedIdentity
+    { svcPeer :: Peer
+    , svcPeerIdentity :: UnifiedIdentity
+    , svcServer :: Server
     , svcPrintOp :: String -> IO ()
     }
 
@@ -128,6 +134,10 @@ svcGetLocal = gets svcLocal
 
 svcSetLocal :: Stored LocalState -> ServiceHandler s ()
 svcSetLocal x = modify $ \st -> st { svcLocal = x }
+
+svcSelf :: ServiceHandler s UnifiedIdentity
+svcSelf = maybe (throwError "failed to validate own identity") return .
+        validateIdentity . lsIdentity . fromStored =<< svcGetLocal
 
 svcPrint :: String -> ServiceHandler s ()
 svcPrint str = liftIO . ($str) =<< asks svcPrintOp

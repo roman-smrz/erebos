@@ -23,6 +23,7 @@ executable erebos
                        Identity,
                        Channel,
                        Contact
+                       Discovery
                        Message,
                        Network,
                        Pairing

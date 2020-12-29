@@ -363,7 +363,9 @@ startServer opt origHead logd' services = do
                          Just (SomeServiceGlobalState (_ :: Proxy gs) gs))
                          | Just (Refl :: s :~: gs) <- eqT -> do
                          let inp = ServiceInput
-                                 { svcPeer = peerId
+                                 { svcPeer = peer
+                                 , svcPeerIdentity = peerId
+                                 , svcServer = server
                                  , svcPrintOp = atomically . logd
                                  }
                          reloadHead origHead >>= \case

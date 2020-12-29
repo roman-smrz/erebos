@@ -87,19 +87,19 @@ instance PairingResult ContactAccepted where
     pairingServiceID _ = mkServiceID "d9c37368-0da1-4280-93e9-d9bd9a198084"
 
     pairingHookRequest = do
-        peer <- asks $ svcPeer
+        peer <- asks $ svcPeerIdentity
         svcPrint $ "Contact pairing from " ++ T.unpack (displayIdentity peer) ++ " initiated"
 
     pairingHookResponse confirm = do
-        peer <- asks $ svcPeer
+        peer <- asks $ svcPeerIdentity
         svcPrint $ "Confirm contact " ++ T.unpack (displayIdentity $ finalOwner peer) ++ ": " ++ confirm
 
     pairingHookRequestNonce confirm = do
-        peer <- asks $ svcPeer
+        peer <- asks $ svcPeerIdentity
         svcPrint $ "Contact request from " ++ T.unpack (displayIdentity $ finalOwner peer) ++ ": " ++ confirm
 
     pairingHookRequestNonceFailed = do
-        peer <- asks $ svcPeer
+        peer <- asks $ svcPeerIdentity
         svcPrint $ "Failed contact request from " ++ T.unpack (displayIdentity peer)
 
     pairingHookConfirm ContactAccepted = do
