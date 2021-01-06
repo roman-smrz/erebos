@@ -148,7 +148,7 @@ nonceDigest id1 id2 nonce1 nonce2 = hashToRefDigest $ serializeObject $ Rec
 
 confirmationNumber :: RefDigest -> String
 confirmationNumber dgst = let (a:b:c:d:_) = map fromIntegral $ BA.unpack dgst :: [Word32]
-                              str = show $ (a .|. (b `shift` 8) .|. (c `shift` 16) .|. (d `shift` 24)) `mod` (10 ^ len)
+                              str = show $ ((a `shift` 24) .|. (b `shift` 16) .|. (c `shift` 8) .|. d) `mod` (10 ^ len)
                            in replicate (len - length str) '0' ++ str
     where len = 6
 
