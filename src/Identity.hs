@@ -113,7 +113,7 @@ validateIdentity = validateIdentityF . I.Identity
 
 validateIdentityF :: Foldable m => m (Stored (Signed IdentityData)) -> Maybe (Identity m)
 validateIdentityF mdata = do
-    let idata = toList mdata -- TODO: eliminate ancestors
+    let idata = filterAncestors $ toList mdata
     guard $ not $ null idata
     mapM_ verifySignatures $ gatherPrevious S.empty idata
     Identity
@@ -209,7 +209,7 @@ updateIdentity = updateIdentitySets . map (\u -> (u, ancestors [u]))
 
 updateOwners :: [Stored (Signed IdentityData)] -> Identity m -> Identity m
 updateOwners updates orig@Identity { idOwner_ = Just owner, idUpdates_ = cupdates } =
-    orig { idOwner_ = Just $ updateIdentity updates owner, idUpdates_ = updates ++ cupdates {- TODO: eliminate ancestors -} }
+    orig { idOwner_ = Just $ updateIdentity updates owner, idUpdates_ = filterAncestors (updates ++ cupdates) }
 updateOwners _ orig@Identity { idOwner_ = Nothing } = orig
 
 sameIdentity :: (Foldable m, Foldable m') => Identity m -> Identity m' -> Bool
