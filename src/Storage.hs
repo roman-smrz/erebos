@@ -149,9 +149,6 @@ isZeroRef :: Ref' c -> Bool
 isZeroRef (Ref _ h) = all (==0) $ BA.unpack h
 
 
-readRefDigest :: ByteString -> Maybe RefDigest
-readRefDigest = refDigestFromByteString <=< readHex @ ByteString
-
 refFromDigest :: Storage' c -> RefDigest -> IO (Maybe (Ref' c))
 refFromDigest st dgst = fmap (const $ Ref st dgst) <$> ioLoadBytesFromStorage st dgst
 
@@ -257,7 +254,7 @@ serializeRecItem name (RecBinary x) = [name, BC.pack ":b ", showHex x, BC.single
 serializeRecItem name (RecDate x) = [name, BC.pack ":d", BC.singleton ' ', BC.pack (formatTime defaultTimeLocale "%s %z" x), BC.singleton '\n']
 serializeRecItem name (RecUUID x) = [name, BC.pack ":u", BC.singleton ' ', U.toASCIIBytes x, BC.singleton '\n']
 serializeRecItem name (RecJson x) = [name, BC.pack ":j", BC.singleton ' '] ++ BL.toChunks (J.encode x) ++ [BC.singleton '\n']
-serializeRecItem name (RecRef x) = [name, BC.pack ":r.b2 ", showRef x, BC.singleton '\n']
+serializeRecItem name (RecRef x) = [name, BC.pack ":r ", showRef x, BC.singleton '\n']
 
 lazyLoadObject :: forall c. StorageCompleteness c => Ref' c -> LoadResult c (Object' c)
 lazyLoadObject = returnLoadResult . unsafePerformIO . ioLoadObject
@@ -320,7 +317,7 @@ unsafeDeserializeObject st bytes =
                           "d" -> RecDate <$> parseTimeM False defaultTimeLocale "%s %z" (BC.unpack content)
                           "u" -> RecUUID <$> U.fromASCIIBytes content
                           "j" -> RecJson <$> J.decode (BL.fromStrict content)
-                          "r.b2" -> RecRef . Ref st <$> readRefDigest content
+                          "r" -> RecRef . Ref st <$> readRefDigest content
                           _   -> Nothing
               return (name, val)
 

@@ -101,7 +101,13 @@ showRef :: Ref' c -> ByteString
 showRef = showRefDigest . refDigest
 
 showRefDigest :: RefDigest -> ByteString
-showRefDigest = showHex
+showRefDigest x = BC.pack "blake2#" `BC.append` showHex x
+
+readRefDigest :: ByteString -> Maybe RefDigest
+readRefDigest x = case BC.split '#' x of
+                       [alg, dgst] | BA.convert alg == BC.pack "blake2" ->
+                           refDigestFromByteString =<< readHex @ByteString dgst
+                       _ -> Nothing
 
 refDigestFromByteString :: ByteArrayAccess ba => ba -> Maybe RefDigest
 refDigestFromByteString = fmap RefDigest . digestFromByteString
@@ -181,8 +187,9 @@ ioLoadBytesFromStorage st dgst = loadCurrent st >>=
           loadCurrent Storage { stBacking = StorageMemory { memObjs = tobjs } } = M.lookup dgst <$> readMVar tobjs
 
 refPath :: FilePath -> RefDigest -> FilePath
-refPath spath dgst = intercalate "/" [spath, "objects", pref, rest]
-    where (pref, rest) = splitAt 2 $ BC.unpack $ showRefDigest dgst
+refPath spath rdgst = intercalate "/" [spath, "objects", BC.unpack alg, pref, rest]
+    where [alg, dgst] = BC.split '#' $ showRefDigest rdgst
+          (pref, rest) = splitAt 2 $ BC.unpack dgst
 
 
 openFdParents :: FilePath -> OpenMode -> Maybe FileMode -> OpenFileFlags -> IO Fd
