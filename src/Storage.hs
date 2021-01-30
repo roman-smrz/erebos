@@ -67,9 +67,8 @@ import Control.Monad.Writer
 import Crypto.Hash
 
 import qualified Data.Aeson as J
-import Data.ByteString (ByteString, singleton)
+import Data.ByteString (ByteString)
 import qualified Data.ByteArray as BA
-import Data.ByteArray.Encoding
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as BC
 import qualified Data.ByteString.Lazy as BL
@@ -151,17 +150,7 @@ isZeroRef (Ref _ h) = all (==0) $ BA.unpack h
 
 
 readRefDigest :: ByteString -> Maybe RefDigest
-readRefDigest = refDigestFromByteString . B.concat <=< readHex
-    where readHex bs | B.null bs = Just []
-          readHex bs = do (bx, bs') <- B.uncons bs
-                          (by, bs'') <- B.uncons bs'
-                          x <- hexDigit bx
-                          y <- hexDigit by
-                          (singleton (x * 16 + y) :) <$> readHex bs''
-          hexDigit x | x >= o '0' && x <= o '9' = Just $ x - o '0'
-                     | x >= o 'a' && x <= o 'z' = Just $ x - o 'a' + 10
-                     | otherwise                = Nothing
-          o = fromIntegral . ord
+readRefDigest = refDigestFromByteString <=< readHex @ ByteString
 
 refFromDigest :: Storage' c -> RefDigest -> IO (Maybe (Ref' c))
 refFromDigest st dgst = fmap (const $ Ref st dgst) <$> ioLoadBytesFromStorage st dgst
@@ -264,7 +253,7 @@ serializeRecItem name (RecText x) = [name, BC.pack ":t", BC.singleton ' ', escap
     where escaped = BC.concatMap escape $ encodeUtf8 x
           escape '\n' = BC.pack "\n\t"
           escape c    = BC.singleton c
-serializeRecItem name (RecBinary x) = [name, BC.pack ":b ", convertToBase Base64 x, BC.singleton '\n']
+serializeRecItem name (RecBinary x) = [name, BC.pack ":b ", showHex x, BC.singleton '\n']
 serializeRecItem name (RecDate x) = [name, BC.pack ":d", BC.singleton ' ', BC.pack (formatTime defaultTimeLocale "%s %z" x), BC.singleton '\n']
 serializeRecItem name (RecUUID x) = [name, BC.pack ":u", BC.singleton ' ', U.toASCIIBytes x, BC.singleton '\n']
 serializeRecItem name (RecJson x) = [name, BC.pack ":j", BC.singleton ' '] ++ BL.toChunks (J.encode x) ++ [BC.singleton '\n']
@@ -327,7 +316,7 @@ unsafeDeserializeObject st bytes =
                                     return $ RecInt num
                           "n" -> RecNum <$> parseRatio content
                           "t" -> return $ RecText $ decodeUtf8With lenientDecode content
-                          "b" -> either (const Nothing) (Just . RecBinary) $ convertFromBase Base64 content
+                          "b" -> RecBinary <$> readHex content
                           "d" -> RecDate <$> parseTimeM False defaultTimeLocale "%s %z" (BC.unpack content)
                           "u" -> RecUUID <$> U.fromASCIIBytes content
                           "j" -> RecJson <$> J.decode (BL.fromStrict content)

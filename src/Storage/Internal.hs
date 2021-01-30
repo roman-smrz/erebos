@@ -12,12 +12,13 @@ import Control.Monad.Identity
 import Crypto.Hash
 
 import Data.Bits
-import Data.ByteArray (ByteArrayAccess, ScrubbedBytes)
+import Data.ByteArray (ByteArray, ByteArrayAccess, ScrubbedBytes)
 import qualified Data.ByteArray as BA
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as BC
 import qualified Data.ByteString.Lazy as BL
+import Data.Char
 import Data.Function
 import Data.Hashable
 import qualified Data.HashTable.IO as HT
@@ -100,16 +101,33 @@ showRef :: Ref' c -> ByteString
 showRef = showRefDigest . refDigest
 
 showRefDigest :: RefDigest -> ByteString
-showRefDigest = B.concat . map showHexByte . BA.unpack
-    where showHex x | x < 10    = x + 48
-                    | otherwise = x + 87
-          showHexByte x = B.pack [ showHex (x `div` 16), showHex (x `mod` 16) ]
+showRefDigest = showHex
 
 refDigestFromByteString :: ByteArrayAccess ba => ba -> Maybe RefDigest
 refDigestFromByteString = fmap RefDigest . digestFromByteString
 
 hashToRefDigest :: BL.ByteString -> RefDigest
 hashToRefDigest = RefDigest . hashFinalize . hashUpdates hashInit . BL.toChunks
+
+showHex :: ByteArrayAccess ba => ba -> ByteString
+showHex = B.concat . map showHexByte . BA.unpack
+    where showHexChar x | x < 10    = x + o '0'
+                        | otherwise = x + o 'a' - 10
+          showHexByte x = B.pack [ showHexChar (x `div` 16), showHexChar (x `mod` 16) ]
+          o = fromIntegral . ord
+
+readHex :: ByteArray ba => ByteString -> Maybe ba
+readHex = return . BA.concat <=< readHex'
+    where readHex' bs | B.null bs = Just []
+          readHex' bs = do (bx, bs') <- B.uncons bs
+                           (by, bs'') <- B.uncons bs'
+                           x <- hexDigit bx
+                           y <- hexDigit by
+                           (B.singleton (x * 16 + y) :) <$> readHex' bs''
+          hexDigit x | x >= o '0' && x <= o '9' = Just $ x - o '0'
+                     | x >= o 'a' && x <= o 'z' = Just $ x - o 'a' + 10
+                     | otherwise                = Nothing
+          o = fromIntegral . ord
 
 
 newtype Generation = Generation Int
