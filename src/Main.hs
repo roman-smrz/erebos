@@ -258,10 +258,13 @@ cmdHistory = void $ do
     PeerIdentityFull pid <- peerIdentity peer
     let powner = finalOwner pid
 
-    Just thread <- return $ find (sameIdentity powner . msgPeer) $
-        messageThreadView $ lookupSharedValue $ lsShared $ headObject ehead
-    tzone <- liftIO $ getCurrentTimeZone
-    liftIO $ mapM_ (putStrLn . formatMessage tzone) $ reverse $ take 50 $ threadToList thread
+    case find (sameIdentity powner . msgPeer) $
+            messageThreadView $ lookupSharedValue $ lsShared $ headObject ehead of
+        Just thread -> do
+            tzone <- liftIO $ getCurrentTimeZone
+            liftIO $ mapM_ (putStrLn . formatMessage tzone) $ reverse $ take 50 $ threadToList thread
+        Nothing -> do
+            liftIO $ putStrLn $ "<empty history>"
 
 cmdUpdateIdentity :: Command
 cmdUpdateIdentity = void $ do
