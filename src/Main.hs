@@ -41,7 +41,7 @@ import Sync
 
 main :: IO ()
 main = do
-    st <- liftIO $ openStorage "test"
+    st <- liftIO $ openStorage . fromMaybe "./.erebos" =<< lookupEnv "EREBOS_DIR"
     getArgs >>= \case
         ["cat-file", sref] -> do
             readRef st (BC.pack sref) >>= \case
