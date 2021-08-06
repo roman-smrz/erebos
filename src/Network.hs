@@ -250,7 +250,7 @@ startServer opt origHead logd' services = do
             putMVar ssocket sock
             setSocketOption sock ReuseAddr 1
             setSocketOption sock Broadcast 1
-            setCloseOnExecIfNeeded =<< fdSocket sock
+            withFdSocket sock setCloseOnExecIfNeeded
             bind sock (addrAddress addr)
             return sock
 
