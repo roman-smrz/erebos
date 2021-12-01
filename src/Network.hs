@@ -31,6 +31,10 @@ import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Maybe
 import Data.Typeable
+import Data.Word
+
+import Foreign.Ptr
+import Foreign.Storable
 
 import GHC.Conc.Sync (unsafeIOToSTM)
 
@@ -48,8 +52,8 @@ import Storage.Merge
 import Sync
 
 
-discoveryPort :: ServiceName
-discoveryPort = "29665"
+discoveryPort :: PortNumber
+discoveryPort = 29665
 
 announceIntervalSeconds :: Int
 announceIntervalSeconds = 60
@@ -72,12 +76,14 @@ getNextPeerChange :: Server -> IO Peer
 getNextPeerChange = atomically . readTChan . serverChanPeer
 
 data ServerOptions = ServerOptions
-    { serverLocalDiscovery :: Maybe String
+    { serverPort :: PortNumber
+    , serverLocalDiscovery :: Bool
     }
 
 defaultServerOptions :: ServerOptions
 defaultServerOptions = ServerOptions
-    { serverLocalDiscovery = Nothing
+    { serverPort = discoveryPort
+    , serverLocalDiscovery = True
     }
 
 
@@ -245,6 +251,8 @@ startServer opt origHead logd' services = do
         either (atomically . logd) return =<< runExceptT =<<
             atomically (readTQueue $ serverIOActions server)
 
+    broadcastAddreses <- getBroadcastAddresses discoveryPort
+
     let open addr = do
             sock <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
             putMVar ssocket sock
@@ -255,15 +263,12 @@ startServer opt origHead logd' services = do
             return sock
 
         loop sock = do
-            case serverLocalDiscovery opt of
-                Just bhost -> do
-                    void $ forkIO $ forever $ do
-                        readMVar midentity >>= \identity -> do
-                            st <- derivePartialStorage storage
-                            baddr:_ <- getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just bhost) (Just discoveryPort)
-                            void $ S.sendTo sock (BL.toStrict $ serializeObject $ transportToObject $ TransportHeader [ AnnounceSelf $ partialRef st $ storedRef $ idData identity ]) (addrAddress baddr)
-                        threadDelay $ announceIntervalSeconds * 1000 * 1000
-                Nothing -> return ()
+            when (serverLocalDiscovery opt) $ void $ forkIO $ forever $ do
+                readMVar midentity >>= \identity -> do
+                    st <- derivePartialStorage storage
+                    let packet = BL.toStrict $ serializeObject $ transportToObject $ TransportHeader [ AnnounceSelf $ partialRef st $ storedRef $ idData identity ]
+                    mapM_ (void . S.sendTo sock packet) broadcastAddreses
+                threadDelay $ announceIntervalSeconds * 1000 * 1000
 
             let announceUpdate identity = do
                     st <- derivePartialStorage storage
@@ -344,9 +349,7 @@ startServer opt origHead logd' services = do
               { addrFlags = [AI_PASSIVE]
               , addrSocketType = Datagram
               }
-        addr:_ <- getAddrInfo (Just hints) Nothing
-            -- use ephemeral port when local discovery is disabled
-            (Just $ if isJust (serverLocalDiscovery opt) then discoveryPort else "0")
+        addr:_ <- getAddrInfo (Just hints) Nothing (Just $ show $ serverPort opt)
         bracket (open addr) close loop
 
     void $ forkIO $ forever $ do
@@ -797,3 +800,18 @@ sendToPeerWith identity peer fobj = do
          Right (Just obj) -> sendToPeer identity peer obj
          Right Nothing -> return ()
          Left err -> throwError err
+
+
+foreign import ccall unsafe "Network/ifaddrs.h broadcast_addresses" cBroadcastAddresses :: IO (Ptr Word32)
+foreign import ccall unsafe "stdlib.h free" cFree :: Ptr Word32 -> IO ()
+
+getBroadcastAddresses :: PortNumber -> IO [SockAddr]
+getBroadcastAddresses port = do
+    ptr <- cBroadcastAddresses
+    let parse i = do
+            w <- peekElemOff ptr i
+            if w == 0 then return []
+                      else (SockAddrInet port w:) <$> parse (i + 1)
+    addrs <- parse 0
+    cFree ptr
+    return addrs

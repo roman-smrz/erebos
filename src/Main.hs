@@ -22,6 +22,7 @@ import Data.Typeable
 
 import Network.Socket
 
+import System.Console.GetOpt
 import System.Console.Haskeline
 import System.Environment
 
@@ -38,6 +39,26 @@ import State
 import Storage
 import Storage.Merge
 import Sync
+
+data Options = Options
+    { optServer :: ServerOptions
+    }
+
+defaultOptions :: Options
+defaultOptions = Options
+    { optServer = defaultServerOptions
+    }
+
+options :: [OptDescr (Options -> Options)]
+options =
+    [ Option ['p'] ["port"]
+        (ReqArg (\p -> so $ \opts -> opts { serverPort = read p }) "PORT")
+        "local port to bind"
+    , Option ['s'] ["silent"]
+        (NoArg (so $ \opts -> opts { serverLocalDiscovery = False }))
+        "do not send announce packets for local discovery"
+    ]
+    where so f opts = opts { optServer = f $ optServer opts }
 
 main :: IO ()
 main = do
@@ -88,12 +109,16 @@ main = do
                         BC.putStrLn . showRefDigest . refDigest . storedRef . idData =<< interactiveIdentityUpdate idt
                     | otherwise -> error "invalid identity"
 
-        [bhost] -> interactiveLoop st (Just bhost)
-        []      -> interactiveLoop st Nothing
-        _       -> error "Unrecognized options"
+        args -> do
+            opts <- case getOpt Permute options args of
+                (o, [], []) -> return (foldl (flip id) defaultOptions o)
+                (_, _, errs) -> ioError (userError (concat errs ++ usageInfo header options))
+                    where header = "Usage: erebos [OPTION...]"
+            interactiveLoop st opts
 
-interactiveLoop :: Storage -> Maybe String -> IO ()
-interactiveLoop st bhost = runInputT defaultSettings $ do
+
+interactiveLoop :: Storage -> Options -> IO ()
+interactiveLoop st opts = runInputT defaultSettings $ do
     erebosHead <- liftIO $ loadLocalStateHead st
     outputStrLn $ T.unpack $ displayIdentity $ headLocalIdentity erebosHead
 
@@ -103,10 +128,7 @@ interactiveLoop st bhost = runInputT defaultSettings $ do
     let extPrintLn str = extPrint $ case reverse str of ('\n':_) -> str
                                                         _ -> str ++ "\n";
     server <- liftIO $ do
-        let sopt = defaultServerOptions
-                { serverLocalDiscovery = bhost
-                }
-        startServer sopt erebosHead extPrintLn
+        startServer (optServer opts) erebosHead extPrintLn
             [ SomeService @AttachService Proxy
             , SomeService @SyncService Proxy
             , SomeService @ContactService Proxy
@@ -312,8 +334,8 @@ cmdDiscoveryInit = void $ do
 
     (hostname, port) <- (words <$> asks ciLine) >>= return . \case
         hostname:p:_ -> (hostname, p)
-        [hostname] -> (hostname, discoveryPort)
-        [] -> ("discovery.erebosprotocol.net", discoveryPort)
+        [hostname] -> (hostname, show discoveryPort)
+        [] -> ("discovery.erebosprotocol.net", show discoveryPort)
     addr:_ <- liftIO $ getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just hostname) (Just port)
     peer <- liftIO $ serverPeer server (addrAddress addr)
     sendToPeer self peer $ DiscoverySelf (T.pack "ICE") 0
