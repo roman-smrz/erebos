@@ -90,32 +90,19 @@ loadLocalStateHead st = loadHeads st >>= \case
         hFlush stdout
         devName <- T.getLine
 
-        (owner, secret) <- if
-            | T.null name -> return (Nothing, Nothing)
-            | otherwise -> do
-                (secret, public) <- generateKeys st
-                (_secretMsg, publicMsg) <- generateKeys st
+        owner <- if
+            | T.null name -> return Nothing
+            | otherwise -> Just <$> createIdentity st (Just name) Nothing
 
-                return . (, Just secret) . Just =<< wrappedStore st =<< sign secret =<<
-                    wrappedStore st (emptyIdentityData public)
-                    { iddName = Just name, iddKeyMessage = Just publicMsg }
-
-        (devSecret, devPublic) <- generateKeys st
-        (_devSecretMsg, devPublicMsg) <- generateKeys st
-
-        identity <- wrappedStore st =<< maybe return signAdd secret =<< sign devSecret =<< wrappedStore st (emptyIdentityData devPublic)
-            { iddName = if T.null devName then Nothing else Just devName
-            , iddOwner = owner
-            , iddKeyMessage = Just devPublicMsg
-            }
+        identity <- createIdentity st (if T.null devName then Nothing else Just devName) owner
 
         shared <- wrappedStore st $ SharedState
             { ssPrev = []
             , ssType = Just $ sharedTypeID @(Signed IdentityData) Proxy
-            , ssValue = [storedRef $ fromMaybe identity owner]
+            , ssValue = [storedRef $ idData $ fromMaybe identity owner]
             }
         storeHead st $ LocalState
-            { lsIdentity = identity
+            { lsIdentity = idData identity
             , lsShared = [shared]
             }
 

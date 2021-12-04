@@ -5,6 +5,7 @@ module Identity (
     idData, idDataF, idName, idOwner, idUpdates, idKeyIdentity, idKeyMessage,
 
     emptyIdentityData,
+    createIdentity,
     validateIdentity, validateIdentityF,
     loadIdentity, loadUnifiedIdentity,
 
@@ -107,6 +108,22 @@ emptyIdentityData key = IdentityData
     , iddKeyIdentity = key
     , iddKeyMessage = Nothing
     }
+
+createIdentity :: Storage -> Maybe Text -> Maybe UnifiedIdentity -> IO UnifiedIdentity
+createIdentity st name owner = do
+    (secret, public) <- generateKeys st
+    (_secretMsg, publicMsg) <- generateKeys st
+
+    let signOwner idd
+            | Just o <- owner = do
+                Just ownerSecret <- loadKey (iddKeyIdentity $ fromStored $ signedData $ fromStored $ idData o)
+                signAdd ownerSecret idd
+            | otherwise = return idd
+
+    Just identity <- return . validateIdentity =<< wrappedStore st =<< signOwner =<< sign secret =<<
+        wrappedStore st (emptyIdentityData public)
+        { iddName = name, iddOwner = idData <$> owner, iddKeyMessage = Just publicMsg }
+    return identity
 
 validateIdentity :: Stored (Signed IdentityData) -> Maybe UnifiedIdentity
 validateIdentity = validateIdentityF . I.Identity
