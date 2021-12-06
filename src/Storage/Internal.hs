@@ -59,14 +59,28 @@ showParentStorage Storage { stParent = Just st } = "@" ++ show st
 
 data StorageBacking c
          = StorageDir { dirPath :: FilePath
-                      , dirWatchers :: MVar ([(HeadTypeID, INotify)], [((HeadTypeID, HeadID), Ref' c -> IO ())])
+                      , dirWatchers :: MVar ([(HeadTypeID, INotify)], WatchList c)
                       }
          | StorageMemory { memHeads :: MVar [((HeadTypeID, HeadID), Ref' c)]
                          , memObjs :: MVar (Map RefDigest BL.ByteString)
                          , memKeys :: MVar (Map RefDigest ScrubbedBytes)
-                         , memWatchers :: MVar [((HeadTypeID, HeadID), Ref' c -> IO ())]
+                         , memWatchers :: MVar (WatchList c)
                          }
     deriving (Eq)
+
+newtype WatchID = WatchID Int
+    deriving (Eq, Ord, Num)
+
+data WatchList c = WatchList
+    { wlNext :: WatchID
+    , wlList :: [WatchListItem c]
+    }
+
+data WatchListItem c = WatchListItem
+    { wlID :: WatchID
+    , wlHead :: (HeadTypeID, HeadID)
+    , wlFun :: Ref' c -> IO ()
+    }
 
 
 newtype RefDigest = RefDigest (Digest Blake2b_256)

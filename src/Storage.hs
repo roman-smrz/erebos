@@ -21,7 +21,9 @@ module Storage (
     headId, headRef, headObject, headStoredObject,
     loadHeads, loadHead, reloadHead,
     storeHead, replaceHead, updateHead, updateHead_,
-    watchHead,
+
+    WatchedHead,
+    watchHead, watchHeadWith, unwatchHead,
 
     Storable(..), ZeroStorable(..),
     StorableText(..), StorableDate(..), StorableUUID(..),
@@ -111,13 +113,13 @@ openStorage :: FilePath -> IO Storage
 openStorage path = do
     createDirectoryIfMissing True $ path ++ "/objects"
     createDirectoryIfMissing True $ path ++ "/heads"
-    watchers <- newMVar ([], [])
+    watchers <- newMVar ([], WatchList 1 [])
     refgen <- newMVar =<< HT.new
     return $ Storage { stBacking = StorageDir path watchers, stParent = Nothing, stRefGeneration = refgen }
 
 memoryStorage' :: IO (Storage' c')
 memoryStorage' = do
-    backing <- StorageMemory <$> newMVar [] <*> newMVar M.empty <*> newMVar M.empty <*> newMVar []
+    backing <- StorageMemory <$> newMVar [] <*> newMVar M.empty <*> newMVar M.empty <*> newMVar (WatchList 1 [])
     refgen <- newMVar =<< HT.new
     return $ Storage { stBacking = backing, stParent = Nothing, stRefGeneration = refgen }
 
@@ -439,7 +441,7 @@ replaceHead prev@(Head hid pobj) stored = do
 
          StorageMemory { memHeads = theads, memWatchers = twatch } -> do
              res <- modifyMVar theads $ \hs -> do
-                 ws <- map snd . filter ((==(tid, hid)) . fst) <$> readMVar twatch
+                 ws <- map wlFun . filter ((==(tid, hid)) . wlHead) . wlList <$> readMVar twatch
                  return $ case partition ((==(tid, hid)) . fst) hs of
                      ([] , _  ) -> (hs, Left Nothing)
                      ((_, r):_, hs') | r == storedRef pobj -> (((tid, hid), storedRef stored) : hs',
@@ -460,12 +462,25 @@ updateHead h f = do
 updateHead_ :: HeadType a => Head a -> (Stored a -> IO (Stored a)) -> IO (Maybe (Head a))
 updateHead_ h = fmap fst . updateHead h . (fmap (,()) .)
 
-watchHead :: forall a. HeadType a => Head a -> (Head a -> IO ()) -> IO ()
-watchHead (Head hid (Stored (Ref st _) _)) cb = do
-    let cb' = cb . Head hid . wrappedLoad
-        tid = headTypeID @a Proxy
+
+data WatchedHead = WatchedHead Storage WatchID
+
+watchHead :: forall a. HeadType a => Head a -> (Head a -> IO ()) -> IO WatchedHead
+watchHead h = watchHeadWith h id
+
+watchHeadWith :: forall a b. HeadType a => Head a -> (Head a -> b) -> (b -> IO ()) -> IO WatchedHead
+watchHeadWith (Head hid (Stored (Ref st _) _)) sel cb = do
+    let tid = headTypeID @a Proxy
+        addWatcher wl = (wl', WatchedHead st (wlNext wl))
+            where wl' = wl { wlNext = wlNext wl + 1
+                           , wlList = WatchListItem
+                               { wlID = wlNext wl
+                               , wlHead = (tid, hid)
+                               , wlFun = cb . sel . Head hid . wrappedLoad
+                               } : wlList wl
+                           }
     case stBacking st of
-         StorageDir { dirPath = spath, dirWatchers = mvar } -> modifyMVar_ mvar $ \(ilist, watchers) -> do
+         StorageDir { dirPath = spath, dirWatchers = mvar } -> modifyMVar mvar $ \(ilist, wl) -> do
              ilist' <- case lookup tid ilist of
                  Just _ -> return ilist
                  Nothing -> do
@@ -473,13 +488,20 @@ watchHead (Head hid (Stored (Ref st _) _)) cb = do
                      void $ addWatch inotify [Move] (BC.pack $ headTypePath spath tid) $ \case
                          MovedIn { filePath = fpath } | Just ihid <- HeadID <$> U.fromASCIIBytes fpath -> do
                              loadHead @a st ihid >>= \case
-                                 Just h -> mapM_ ($ headRef h) . map snd . filter ((== (tid, ihid)) . fst) . snd =<< readMVar mvar
+                                 Just h -> mapM_ ($ headRef h) . map wlFun . filter ((== (tid, ihid)) . wlHead) . wlList . snd =<< readMVar mvar
                                  Nothing -> return ()
                          _ -> return ()
                      return $ (tid, inotify) : ilist
-             return (ilist', ((tid, hid), cb') : watchers)
+             return $ first (ilist',) $ addWatcher wl
 
-         StorageMemory { memWatchers = mvar } -> modifyMVar_ mvar $ return . (((tid, hid), cb') :)
+         StorageMemory { memWatchers = mvar } -> modifyMVar mvar $ return . addWatcher
+
+unwatchHead :: WatchedHead -> IO ()
+unwatchHead (WatchedHead st wid) = do
+    let delWatcher wl = wl { wlList = filter ((/=wid) . wlID) $ wlList wl }
+    case stBacking st of
+        StorageDir { dirWatchers = mvar } -> modifyMVar_ mvar $ return . second delWatcher
+        StorageMemory { memWatchers = mvar } -> modifyMVar_ mvar $ return . delWatcher
 
 
 class Storable a where

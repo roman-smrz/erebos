@@ -293,7 +293,7 @@ startServer opt origHead logd' services = do
                             sendToPeerS peer packet
                         _  -> return ()
 
-            watchHead origHead $ \h -> do
+            void $ watchHead origHead $ \h -> do
                 let idt = headLocalIdentity h
                 changedId <- modifyMVar midentity $ \cur ->
                     return (idt, cur /= idt)
