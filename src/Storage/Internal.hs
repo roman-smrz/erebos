@@ -154,7 +154,7 @@ newtype Generation = Generation Int
     deriving (Eq, Show)
 
 data Head' c a = Head HeadID (Stored' c a)
-    deriving (Show)
+    deriving (Eq, Show)
 
 newtype HeadID = HeadID UUID
     deriving (Eq, Ord, Show)

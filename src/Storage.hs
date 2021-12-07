@@ -463,23 +463,29 @@ updateHead_ :: HeadType a => Head a -> (Stored a -> IO (Stored a)) -> IO (Maybe 
 updateHead_ h = fmap fst . updateHead h . (fmap (,()) .)
 
 
-data WatchedHead = WatchedHead Storage WatchID
+data WatchedHead = forall a. WatchedHead Storage WatchID (MVar a)
 
 watchHead :: forall a. HeadType a => Head a -> (Head a -> IO ()) -> IO WatchedHead
 watchHead h = watchHeadWith h id
 
-watchHeadWith :: forall a b. HeadType a => Head a -> (Head a -> b) -> (b -> IO ()) -> IO WatchedHead
-watchHeadWith (Head hid (Stored (Ref st _) _)) sel cb = do
+watchHeadWith :: forall a b. (HeadType a, Eq b) => Head a -> (Head a -> b) -> (b -> IO ()) -> IO WatchedHead
+watchHeadWith oh@(Head hid (Stored (Ref st _) _)) sel cb = do
+    memo <- newEmptyMVar
     let tid = headTypeID @a Proxy
-        addWatcher wl = (wl', WatchedHead st (wlNext wl))
+        addWatcher wl = (wl', WatchedHead st (wlNext wl) memo)
             where wl' = wl { wlNext = wlNext wl + 1
                            , wlList = WatchListItem
                                { wlID = wlNext wl
                                , wlHead = (tid, hid)
-                               , wlFun = cb . sel . Head hid . wrappedLoad
+                               , wlFun = \r -> do
+                                   let x = sel $ Head hid $ wrappedLoad r
+                                   modifyMVar_ memo $ \prev -> do
+                                       when (x /= prev) $ cb x
+                                       return x
                                } : wlList wl
                            }
-    case stBacking st of
+
+    watched <- case stBacking st of
          StorageDir { dirPath = spath, dirWatchers = mvar } -> modifyMVar mvar $ \(ilist, wl) -> do
              ilist' <- case lookup tid ilist of
                  Just _ -> return ilist
@@ -496,8 +502,14 @@ watchHeadWith (Head hid (Stored (Ref st _) _)) sel cb = do
 
          StorageMemory { memWatchers = mvar } -> modifyMVar mvar $ return . addWatcher
 
+    cur <- sel . maybe oh id <$> reloadHead oh
+    cb cur
+    putMVar memo cur
+
+    return watched
+
 unwatchHead :: WatchedHead -> IO ()
-unwatchHead (WatchedHead st wid) = do
+unwatchHead (WatchedHead st wid _) = do
     let delWatcher wl = wl { wlList = filter ((/=wid) . wlID) $ wlList wl }
     case stBacking st of
         StorageDir { dirWatchers = mvar } -> modifyMVar_ mvar $ return . second delWatcher
