@@ -121,11 +121,10 @@ instance Service DiscoveryService where
         DiscoveryAcknowledged addr -> do
             when (addr == T.pack "ICE") $ do
                 -- keep-alive packet from behind NAT
-                self <- svcSelf
                 peer <- asks svcPeer
                 liftIO $ void $ forkIO $ do
                     threadDelay (keepaliveSeconds * 1000 * 1000)
-                    res <- runExceptT $ sendToPeer self peer $ DiscoverySelf addr 0
+                    res <- runExceptT $ sendToPeer peer $ DiscoverySelf addr 0
                     case res of
                         Right _ -> return ()
                         Left err -> putStrLn $ "Discovery: failed to send keep-alive: " ++ err
@@ -146,7 +145,7 @@ instance Service DiscoveryService where
                     peer <- asks svcPeer
                     ice <- liftIO $ iceCreate PjIceSessRoleControlling $ \ice -> do
                         rinfo <- iceRemoteInfo ice
-                        res <- runExceptT $ sendToPeer self peer $
+                        res <- runExceptT $ sendToPeer peer $
                             DiscoveryConnectionRequest (emptyConnection (storedRef $ idData self) ref) { dconnIceSession = Just rinfo }
                         case res of
                             Right _ -> return ()
@@ -175,7 +174,7 @@ instance Service DiscoveryService where
                     peer <- asks svcPeer
                     liftIO $ void $ iceCreate PjIceSessRoleControlled $ \ice -> do
                         rinfo <- iceRemoteInfo ice
-                        res <- runExceptT $ sendToPeer self peer $ DiscoveryConnectionResponse rconn { dconnIceSession = Just rinfo }
+                        res <- runExceptT $ sendToPeer peer $ DiscoveryConnectionResponse rconn { dconnIceSession = Just rinfo }
                         case res of
                             Right _ -> do
                                 case dconnIceSession conn of
@@ -191,7 +190,7 @@ instance Service DiscoveryService where
                         Just dp | Just addr <- dpAddress dp -> do
                                     replyPacket $ DiscoveryConnectionResponse rconn { dconnAddress = Just addr }
                                 | Just dpeer <- dpPeer dp -> do
-                                    sendToPeer self dpeer $ DiscoveryConnectionRequest conn
+                                    sendToPeer dpeer $ DiscoveryConnectionRequest conn
                                 | otherwise -> svcPrint $ "Discovery: failed to relay connection request"
 
         DiscoveryConnectionResponse conn -> do
@@ -219,5 +218,5 @@ instance Service DiscoveryService where
                     -- response to relayed request
                     case M.lookup (refDigest $ dconnSource conn) dpeers of
                         Just dp | Just dpeer <- dpPeer dp -> do
-                            sendToPeer self dpeer $ DiscoveryConnectionResponse conn
+                            sendToPeer dpeer $ DiscoveryConnectionResponse conn
                         _ -> svcPrint $ "Discovery: failed to relay connection response"

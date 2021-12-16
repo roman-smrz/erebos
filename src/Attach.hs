@@ -71,14 +71,13 @@ instance PairingResult AttachIdentity where
                 svcPrint $ "Failed to verify new identity"
                 throwError "Failed to verify new identity"
 
-attachToOwner :: (MonadIO m, MonadError String m) => (String -> IO ()) -> UnifiedIdentity -> Peer -> m ()
+attachToOwner :: (MonadIO m, MonadError String m) => (String -> IO ()) -> Peer -> m ()
 attachToOwner _ = pairingRequest @AttachIdentity Proxy
 
 attachAccept :: (MonadIO m, MonadError String m) => (String -> IO ()) -> Head LocalState -> Peer -> m ()
 attachAccept printMsg h peer = do
     let st = refStorage $ headRef h
-        self = headLocalIdentity h
-    sendToPeerWith self peer $ \case
+    sendToPeerWith peer $ \case
         NoPairing -> throwError $ "none in progress"
         OurRequest {} -> throwError $ "waiting for peer"
         OurRequestConfirm Nothing -> do

@@ -296,7 +296,6 @@ cmdUpdateIdentity = void $ do
 cmdAttach :: Command
 cmdAttach = join $ attachToOwner
     <$> asks ciPrint
-    <*> asks (headLocalIdentity . ciHead)
     <*> (maybe (throwError "no peer selected") return =<< gets csPeer)
 
 cmdAttachAccept :: Command
@@ -318,7 +317,6 @@ cmdContacts = do
 cmdContactAdd :: Command
 cmdContactAdd = join $ contactRequest
     <$> asks ciPrint
-    <*> asks (headLocalIdentity . ciHead)
     <*> (maybe (throwError "no peer selected") return =<< gets csPeer)
 
 cmdContactAccept :: Command
@@ -329,7 +327,6 @@ cmdContactAccept = join $ contactAccept
 
 cmdDiscoveryInit :: Command
 cmdDiscoveryInit = void $ do
-    self <- asks (headLocalIdentity . ciHead)
     server <- asks ciServer
 
     (hostname, port) <- (words <$> asks ciLine) >>= return . \case
@@ -338,20 +335,19 @@ cmdDiscoveryInit = void $ do
         [] -> ("discovery.erebosprotocol.net", show discoveryPort)
     addr:_ <- liftIO $ getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just hostname) (Just port)
     peer <- liftIO $ serverPeer server (addrAddress addr)
-    sendToPeer self peer $ DiscoverySelf (T.pack "ICE") 0
+    sendToPeer peer $ DiscoverySelf (T.pack "ICE") 0
     modify $ \s -> s { csIcePeer = Just peer }
 
 cmdDiscovery :: Command
 cmdDiscovery = void $ do
     Just peer <- gets csIcePeer
-    self <- asks (headLocalIdentity . ciHead)
     st <- asks (storedStorage . headStoredObject . ciHead)
     sref <- asks ciLine
     eprint <- asks ciPrint
     liftIO $ readRef st (BC.pack sref) >>= \case
         Nothing -> error "ref does not exist"
         Just ref -> do
-            res <- runExceptT $ sendToPeer self peer $ DiscoverySearch ref
+            res <- runExceptT $ sendToPeer peer $ DiscoverySearch ref
             case res of
                  Right _ -> return ()
                  Left err -> eprint err

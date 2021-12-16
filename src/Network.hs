@@ -2,9 +2,9 @@ module Network (
     Server,
     startServer,
     getNextPeerChange,
-    ServerOptions(..), defaultServerOptions,
+    ServerOptions(..), serverIdentity, defaultServerOptions,
 
-    Peer,
+    Peer, peerServer,
     PeerAddress(..), peerAddress,
     PeerIdentity(..), peerIdentity,
     PeerChannel(..),
@@ -61,7 +61,7 @@ announceIntervalSeconds = 60
 
 data Server = Server
     { serverStorage :: Storage
-    , serverIdentity :: MVar UnifiedIdentity
+    , serverIdentity_ :: MVar UnifiedIdentity
     , serverSocket :: MVar Socket
     , serverChanPacket :: Chan (PeerAddress, BC.ByteString)
     , serverOutQueue :: TQueue (Peer, Bool, TransportPacket)
@@ -71,6 +71,9 @@ data Server = Server
     , serverChanPeer :: TChan Peer
     , serverErrorLog :: TQueue String
     }
+
+serverIdentity :: Server -> IO UnifiedIdentity
+serverIdentity = readMVar . serverIdentity_
 
 getNextPeerChange :: Server -> IO Peer
 getNextPeerChange = atomically . readTChan . serverChanPeer
@@ -89,7 +92,7 @@ defaultServerOptions = ServerOptions
 
 data Peer = Peer
     { peerAddress :: PeerAddress
-    , peerServer :: Server
+    , peerServer_ :: Server
     , peerIdentityVar :: TVar PeerIdentity
     , peerChannel :: TVar PeerChannel
     , peerStorage :: Storage
@@ -98,6 +101,9 @@ data Peer = Peer
     , peerServiceOutQueue :: TVar [TransportPacket]
     , peerWaitingRefs :: TMVar [WaitingRef]
     }
+
+peerServer :: Peer -> Server
+peerServer = peerServer_
 
 instance Eq Peer where
     (==) = (==) `on` peerIdentityVar
@@ -230,7 +236,7 @@ startServer opt origHead logd' services = do
 
     let server = Server
             { serverStorage = storage
-            , serverIdentity = midentity
+            , serverIdentity_ = midentity
             , serverSocket = ssocket
             , serverChanPacket = chanPacket
             , serverOutQueue = outQueue
@@ -378,8 +384,7 @@ startServer opt origHead logd' services = do
                              Just h -> do
                                  (rsp, (s', gs')) <- handleServicePacket h inp s gs (wrappedLoad ref :: Stored s)
                                  when (not (null rsp)) $ do
-                                     identity <- readMVar midentity
-                                     sendToPeerList identity peer rsp
+                                     sendToPeerList peer rsp
                                  atomically $ do
                                      putTMVar (peerServiceState peer) $ M.insert svc (SomeServiceState proxy s') svcs
                                      putTMVar svcStates $ M.insert svc (SomeServiceGlobalState proxy gs') global
@@ -752,7 +757,7 @@ serverPeer' server paddr = do
                  peer <- mkPeer server paddr
                  return (M.insert paddr peer pvalue, (peer, True))
     when hello $ do
-        identity <- readMVar (serverIdentity server)
+        identity <- serverIdentity server
         atomically $ writeTQueue (serverOutQueue server) $ (peer, False,) $
             TransportPacket
                 (TransportHeader [ AnnounceSelf $ partialRef (peerInStorage peer) $ storedRef $ idData identity ])
@@ -760,14 +765,14 @@ serverPeer' server paddr = do
     return peer
 
 
-sendToPeer :: (Service s, MonadIO m) => UnifiedIdentity -> Peer -> s -> m ()
-sendToPeer self peer packet = sendToPeerList self peer [ServiceReply (Left packet) True]
+sendToPeer :: (Service s, MonadIO m) => Peer -> s -> m ()
+sendToPeer peer packet = sendToPeerList peer [ServiceReply (Left packet) True]
 
-sendToPeerStored :: (Service s, MonadIO m) => UnifiedIdentity -> Peer -> Stored s -> m ()
-sendToPeerStored self peer spacket = sendToPeerList self peer [ServiceReply (Right spacket) True]
+sendToPeerStored :: (Service s, MonadIO m) => Peer -> Stored s -> m ()
+sendToPeerStored peer spacket = sendToPeerList peer [ServiceReply (Right spacket) True]
 
-sendToPeerList :: (Service s, MonadIO m) => UnifiedIdentity -> Peer -> [ServiceReply s] -> m ()
-sendToPeerList _ peer parts = do
+sendToPeerList :: (Service s, MonadIO m) => Peer -> [ServiceReply s] -> m ()
+sendToPeerList peer parts = do
     let st = peerStorage peer
         pst = peerInStorage peer
     srefs <- liftIO $ forM parts $ \case ServiceReply (Left x) _ -> store st x
@@ -784,8 +789,8 @@ sendToPeerS peer packet = writeTQueue (serverOutQueue $ peerServer peer) (peer, 
 sendToPeerPlain :: Peer -> TransportPacket -> STM ()
 sendToPeerPlain peer packet = writeTQueue (serverOutQueue $ peerServer peer) (peer, False, packet)
 
-sendToPeerWith :: forall s m. (Service s, MonadIO m, MonadError String m) => UnifiedIdentity -> Peer -> (ServiceState s -> ExceptT String IO (Maybe s, ServiceState s)) -> m ()
-sendToPeerWith identity peer fobj = do
+sendToPeerWith :: forall s m. (Service s, MonadIO m, MonadError String m) => Peer -> (ServiceState s -> ExceptT String IO (Maybe s, ServiceState s)) -> m ()
+sendToPeerWith peer fobj = do
     let sproxy = Proxy @s
         sid = serviceID sproxy
     res <- liftIO $ do
@@ -797,7 +802,7 @@ sendToPeerWith identity peer fobj = do
         return res
 
     case res of
-         Right (Just obj) -> sendToPeer identity peer obj
+         Right (Just obj) -> sendToPeer peer obj
          Right Nothing -> return ()
          Left err -> throwError err
 

@@ -141,7 +141,7 @@ sendDirectMessage h peer text = do
             }
         return ([next], smsg)
 
-    sendToPeerStored self peer smsg
+    sendToPeerStored peer smsg
     return smsg
 
 

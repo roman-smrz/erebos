@@ -108,13 +108,12 @@ instance PairingResult ContactAccepted where
 
     pairingHookAccept ContactAccepted = return ()
 
-contactRequest :: (MonadIO m, MonadError String m) => (String -> IO ()) -> UnifiedIdentity -> Peer -> m ()
+contactRequest :: (MonadIO m, MonadError String m) => (String -> IO ()) -> Peer -> m ()
 contactRequest _ = pairingRequest @ContactAccepted Proxy
 
 contactAccept :: (MonadIO m, MonadError String m) => (String -> IO ()) -> Head LocalState -> Peer -> m ()
 contactAccept printMsg h peer = do
-    let self = headLocalIdentity h
-    sendToPeerWith self peer $ \case
+    sendToPeerWith peer $ \case
         NoPairing -> throwError $ "none in progress"
         OurRequest {} -> throwError $ "waiting for peer"
         OurRequestConfirm Nothing -> do

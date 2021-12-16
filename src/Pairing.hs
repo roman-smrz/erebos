@@ -152,12 +152,13 @@ confirmationNumber dgst = let (a:b:c:d:_) = map fromIntegral $ BA.unpack dgst ::
                            in replicate (len - length str) '0' ++ str
     where len = 6
 
-pairingRequest :: forall a m proxy. (PairingResult a, MonadIO m, MonadError String m) => proxy a -> UnifiedIdentity -> Peer -> m ()
-pairingRequest _ self peer = do
+pairingRequest :: forall a m proxy. (PairingResult a, MonadIO m, MonadError String m) => proxy a -> Peer -> m ()
+pairingRequest _ peer = do
+    self <- liftIO $ serverIdentity $ peerServer peer
     nonce <- liftIO $ getRandomBytes 32
     pid <- peerIdentity peer >>= \case
         PeerIdentityFull pid -> return pid
         _ -> throwError "incomplete peer identity"
-    sendToPeerWith @(PairingService a) self peer $ \case
+    sendToPeerWith @(PairingService a) peer $ \case
         NoPairing -> return (Just $ PairingRequest (nonceDigest self pid nonce BA.empty), OurRequest nonce)
         _ -> throwError "alredy in progress"
