@@ -1,6 +1,7 @@
 module Pairing (
     PairingService(..),
     PairingState(..),
+    PairingAttributes(..),
     PairingResult(..),
 
     pairingRequest,
@@ -41,14 +42,18 @@ data PairingState a = NoPairing
                     | PairingDone
                     | PairingFailed
 
+data PairingAttributes a = PairingAttributes
+    { pairingHookRequest :: ServiceHandler (PairingService a) ()
+    , pairingHookResponse :: String -> ServiceHandler (PairingService a) ()
+    , pairingHookRequestNonce :: String -> ServiceHandler (PairingService a) ()
+    , pairingHookRequestNonceFailed :: ServiceHandler (PairingService a) ()
+    , pairingHookConfirm :: a -> ServiceHandler (PairingService a) (Maybe a)
+    , pairingHookAccept :: a -> ServiceHandler (PairingService a) ()
+    }
+
 class (Typeable a, Storable a) => PairingResult a where
     pairingServiceID :: proxy a -> ServiceID
-    pairingHookRequest :: ServiceHandler (PairingService a) ()
-    pairingHookResponse :: String -> ServiceHandler (PairingService a) ()
-    pairingHookRequestNonce :: String -> ServiceHandler (PairingService a) ()
-    pairingHookRequestNonceFailed :: ServiceHandler (PairingService a) ()
-    pairingHookConfirm :: a -> ServiceHandler (PairingService a) (Maybe a)
-    pairingHookAccept :: a -> ServiceHandler (PairingService a) ()
+    defaultPairingAttributes :: proxy (PairingService a) -> PairingAttributes a
 
 
 instance Storable a => Storable (PairingService a) where
@@ -78,12 +83,15 @@ instance Storable a => Storable (PairingService a) where
 instance PairingResult a => Service (PairingService a) where
     serviceID _ = pairingServiceID @a Proxy
 
+    type ServiceAttributes (PairingService a) = PairingAttributes a
+    defaultServiceAttributes = defaultPairingAttributes
+
     type ServiceState (PairingService a) = PairingState a
     emptyServiceState _ = NoPairing
 
     serviceHandler spacket = ((,fromStored spacket) <$> svcGet) >>= \case
         (NoPairing, PairingRequest confirm) -> do
-            pairingHookRequest
+            join $ asks $ pairingHookRequest . svcAttributes
             nonce <- liftIO $ getRandomBytes 32
             svcSet $ PeerRequest nonce confirm
             replyPacket $ PairingResponse nonce
@@ -93,7 +101,8 @@ instance PairingResult a => Service (PairingService a) where
             peer <- asks $ svcPeerIdentity
             self <- maybe (throwError "failed to validate own identity") return .
                 validateIdentity . lsIdentity . fromStored =<< svcGetLocal
-            pairingHookResponse $ confirmationNumber $ nonceDigest self peer nonce pnonce
+            hook <- asks $ pairingHookResponse . svcAttributes
+            hook $ confirmationNumber $ nonceDigest self peer nonce pnonce
             svcSet $ OurRequestConfirm Nothing
             replyPacket $ PairingRequestNonce nonce
         (OurRequest _, _) -> do
@@ -101,7 +110,8 @@ instance PairingResult a => Service (PairingService a) where
             replyPacket PairingDecline
 
         (OurRequestConfirm _, PairingAccept x) -> do
-            (svcSet . OurRequestConfirm =<< pairingHookConfirm x) `catchError` \_ -> do
+            hook <- asks $ pairingHookConfirm . svcAttributes
+            (svcSet . OurRequestConfirm =<< hook x) `catchError` \_ -> do
                 svcSet $ PairingFailed
                 replyPacket PairingDecline
 
@@ -110,7 +120,8 @@ instance PairingResult a => Service (PairingService a) where
             replyPacket PairingDecline
 
         (OurRequestReady, PairingAccept x) -> do
-            pairingHookAccept x `catchError` \_ -> do
+            hook <- asks $ pairingHookAccept . svcAttributes
+            hook x `catchError` \_ -> do
                 svcSet $ PairingFailed
                 replyPacket PairingDecline
         (OurRequestReady, _) -> do
@@ -122,9 +133,10 @@ instance PairingResult a => Service (PairingService a) where
             self <- maybe (throwError "failed to verify own identity") return .
                 validateIdentity . lsIdentity . fromStored =<< svcGetLocal
             if dgst == nonceDigest peer self pnonce BA.empty
-               then do pairingHookRequestNonce $ confirmationNumber $ nonceDigest peer self pnonce nonce
+               then do hook <- asks $ pairingHookRequestNonce . svcAttributes
+                       hook $ confirmationNumber $ nonceDigest peer self pnonce nonce
                        svcSet PeerRequestConfirm
-               else do pairingHookRequestNonceFailed
+               else do join $ asks $ pairingHookRequestNonceFailed . svcAttributes
                        svcSet PairingFailed
                        replyPacket PairingDecline
         (PeerRequest _ _, _) -> do

@@ -86,27 +86,29 @@ instance Storable ContactAccepted where
 instance PairingResult ContactAccepted where
     pairingServiceID _ = mkServiceID "d9c37368-0da1-4280-93e9-d9bd9a198084"
 
-    pairingHookRequest = do
-        peer <- asks $ svcPeerIdentity
-        svcPrint $ "Contact pairing from " ++ T.unpack (displayIdentity peer) ++ " initiated"
+    defaultPairingAttributes _ = PairingAttributes
+        { pairingHookRequest = do
+            peer <- asks $ svcPeerIdentity
+            svcPrint $ "Contact pairing from " ++ T.unpack (displayIdentity peer) ++ " initiated"
 
-    pairingHookResponse confirm = do
-        peer <- asks $ svcPeerIdentity
-        svcPrint $ "Confirm contact " ++ T.unpack (displayIdentity $ finalOwner peer) ++ ": " ++ confirm
+        , pairingHookResponse = \confirm -> do
+            peer <- asks $ svcPeerIdentity
+            svcPrint $ "Confirm contact " ++ T.unpack (displayIdentity $ finalOwner peer) ++ ": " ++ confirm
 
-    pairingHookRequestNonce confirm = do
-        peer <- asks $ svcPeerIdentity
-        svcPrint $ "Contact request from " ++ T.unpack (displayIdentity $ finalOwner peer) ++ ": " ++ confirm
+        , pairingHookRequestNonce = \confirm -> do
+            peer <- asks $ svcPeerIdentity
+            svcPrint $ "Contact request from " ++ T.unpack (displayIdentity $ finalOwner peer) ++ ": " ++ confirm
 
-    pairingHookRequestNonceFailed = do
-        peer <- asks $ svcPeerIdentity
-        svcPrint $ "Failed contact request from " ++ T.unpack (displayIdentity peer)
+        , pairingHookRequestNonceFailed = do
+            peer <- asks $ svcPeerIdentity
+            svcPrint $ "Failed contact request from " ++ T.unpack (displayIdentity peer)
 
-    pairingHookConfirm ContactAccepted = do
-        svcPrint $ "Contact confirmed by peer"
-        return $ Just ContactAccepted
+        , pairingHookConfirm = \ContactAccepted -> do
+            svcPrint $ "Contact confirmed by peer"
+            return $ Just ContactAccepted
 
-    pairingHookAccept ContactAccepted = return ()
+        , pairingHookAccept = \ContactAccepted -> return ()
+        }
 
 contactRequest :: (MonadIO m, MonadError String m) => (String -> IO ()) -> Peer -> m ()
 contactRequest _ = pairingRequest @ContactAccepted Proxy

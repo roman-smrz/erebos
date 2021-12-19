@@ -36,40 +36,41 @@ instance Storable AttachIdentity where
 
 instance PairingResult AttachIdentity where
     pairingServiceID _ = mkServiceID "4995a5f9-2d4d-48e9-ad3b-0bf1c2a1be7f"
+    defaultPairingAttributes _ = PairingAttributes
+        { pairingHookRequest = do
+            peer <- asks $ svcPeerIdentity
+            svcPrint $ "Attach from " ++ T.unpack (displayIdentity peer) ++ " initiated"
 
-    pairingHookRequest = do
-        peer <- asks $ svcPeerIdentity
-        svcPrint $ "Attach from " ++ T.unpack (displayIdentity peer) ++ " initiated"
+        , pairingHookResponse = \confirm -> do
+            peer <- asks $ svcPeerIdentity
+            svcPrint $ "Attach to " ++ T.unpack (displayIdentity peer) ++ ": " ++ confirm
 
-    pairingHookResponse confirm = do
-        peer <- asks $ svcPeerIdentity
-        svcPrint $ "Attach to " ++ T.unpack (displayIdentity peer) ++ ": " ++ confirm
+        , pairingHookRequestNonce = \confirm -> do
+            peer <- asks $ svcPeerIdentity
+            svcPrint $ "Attach from " ++ T.unpack (displayIdentity peer) ++ ": " ++ confirm
 
-    pairingHookRequestNonce confirm = do
-        peer <- asks $ svcPeerIdentity
-        svcPrint $ "Attach from " ++ T.unpack (displayIdentity peer) ++ ": " ++ confirm
+        , pairingHookRequestNonceFailed = do
+            peer <- asks $ svcPeerIdentity
+            svcPrint $ "Failed attach from " ++ T.unpack (displayIdentity peer)
 
-    pairingHookRequestNonceFailed = do
-        peer <- asks $ svcPeerIdentity
-        svcPrint $ "Failed attach from " ++ T.unpack (displayIdentity peer)
+        , pairingHookConfirm = \(AttachIdentity sdata keys _) -> do
+            verifyAttachedIdentity sdata >>= \case
+                Just identity -> do
+                    svcPrint $ "Attachment confirmed by peer"
+                    return $ Just $ AttachIdentity sdata keys (Just identity)
+                Nothing -> do
+                    svcPrint $ "Failed to verify new identity"
+                    throwError "Failed to verify new identity"
 
-    pairingHookConfirm (AttachIdentity sdata keys _) = do
-        verifyAttachedIdentity sdata >>= \case
-            Just identity -> do
-                svcPrint $ "Attachment confirmed by peer"
-                return $ Just $ AttachIdentity sdata keys (Just identity)
-            Nothing -> do
-                svcPrint $ "Failed to verify new identity"
-                throwError "Failed to verify new identity"
-
-    pairingHookAccept (AttachIdentity sdata keys _) = do
-        verifyAttachedIdentity sdata >>= \case
-            Just identity -> do
-                svcPrint $ "Accepted updated identity"
-                svcSetLocal =<< finalizeAttach identity keys =<< svcGetLocal
-            Nothing -> do
-                svcPrint $ "Failed to verify new identity"
-                throwError "Failed to verify new identity"
+        , pairingHookAccept = \(AttachIdentity sdata keys _) -> do
+            verifyAttachedIdentity sdata >>= \case
+                Just identity -> do
+                    svcPrint $ "Accepted updated identity"
+                    svcSetLocal =<< finalizeAttach identity keys =<< svcGetLocal
+                Nothing -> do
+                    svcPrint $ "Failed to verify new identity"
+                    throwError "Failed to verify new identity"
+        }
 
 attachToOwner :: (MonadIO m, MonadError String m) => (String -> IO ()) -> Peer -> m ()
 attachToOwner _ = pairingRequest @AttachIdentity Proxy
