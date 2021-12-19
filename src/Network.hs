@@ -365,33 +365,38 @@ startServer opt origHead logd' services = do
                 (global, svcs) <- atomically $ (,)
                     <$> takeTMVar svcStates
                     <*> takeTMVar (peerServiceState peer)
-                case (maybe (someServiceEmptyState <$> find ((svc ==) . someServiceID) services) Just $ M.lookup svc svcs,
-                         maybe (someServiceEmptyGlobalState <$> find ((svc ==) . someServiceID) services) Just $ M.lookup svc global) of
-                     (Just (SomeServiceState (proxy :: Proxy s) s),
-                         Just (SomeServiceGlobalState (_ :: Proxy gs) gs))
-                         | Just (Refl :: s :~: gs) <- eqT -> do
-                         let inp = ServiceInput
-                                 { svcPeer = peer
-                                 , svcPeerIdentity = peerId
-                                 , svcServer = server
-                                 , svcPrintOp = atomically . logd
-                                 }
-                         reloadHead origHead >>= \case
-                             Nothing -> atomically $ do
-                                 logd $ "current head deleted"
-                                 putTMVar (peerServiceState peer) svcs
-                                 putTMVar svcStates global
-                             Just h -> do
-                                 (rsp, (s', gs')) <- handleServicePacket h inp s gs (wrappedLoad ref :: Stored s)
-                                 when (not (null rsp)) $ do
-                                     sendToPeerList peer rsp
-                                 atomically $ do
-                                     putTMVar (peerServiceState peer) $ M.insert svc (SomeServiceState proxy s') svcs
-                                     putTMVar svcStates $ M.insert svc (SomeServiceGlobalState proxy gs') global
-                     _ -> atomically $ do
-                         logd $ "unhandled service '" ++ show (toUUID svc) ++ "'"
-                         putTMVar (peerServiceState peer) svcs
-                         putTMVar svcStates global
+                case find ((svc ==) . someServiceID) services of
+                    Just service@(SomeService (proxy :: Proxy s) attr) ->
+                        case (fromMaybe (someServiceEmptyState service) $ M.lookup svc svcs,
+                                fromMaybe (someServiceEmptyGlobalState service) $ M.lookup svc global) of
+                            ((SomeServiceState (_ :: Proxy ps) ps),
+                                    (SomeServiceGlobalState (_ :: Proxy gs) gs)) -> do
+                                Just (Refl :: s :~: ps) <- return $ eqT
+                                Just (Refl :: s :~: gs) <- return $ eqT
+
+                                let inp = ServiceInput
+                                        { svcAttributes = attr
+                                        , svcPeer = peer
+                                        , svcPeerIdentity = peerId
+                                        , svcServer = server
+                                        , svcPrintOp = atomically . logd
+                                        }
+                                reloadHead origHead >>= \case
+                                    Nothing -> atomically $ do
+                                        logd $ "current head deleted"
+                                        putTMVar (peerServiceState peer) svcs
+                                        putTMVar svcStates global
+                                    Just h -> do
+                                        (rsp, (s', gs')) <- handleServicePacket h inp ps gs (wrappedLoad ref :: Stored s)
+                                        when (not (null rsp)) $ do
+                                            sendToPeerList peer rsp
+                                        atomically $ do
+                                            putTMVar (peerServiceState peer) $ M.insert svc (SomeServiceState proxy s') svcs
+                                            putTMVar svcStates $ M.insert svc (SomeServiceGlobalState proxy gs') global
+                    _ -> atomically $ do
+                        logd $ "unhandled service '" ++ show (toUUID svc) ++ "'"
+                        putTMVar (peerServiceState peer) svcs
+                        putTMVar svcStates global
 
             _ -> do
                 atomically $ logd $ "service packet from peer with incomplete identity " ++ show (peerAddress peer)

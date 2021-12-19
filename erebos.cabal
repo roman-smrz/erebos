@@ -53,6 +53,7 @@ executable erebos
                        TupleSections,
                        TypeApplications,
                        TypeFamilies
+                       TypeFamilyDependencies
 
   -- other-extensions:
   build-depends:       aeson >=1.4 && <1.6,

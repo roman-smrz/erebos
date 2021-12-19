@@ -1,6 +1,6 @@
 module Service (
     Service(..),
-    SomeService(..), someServiceID,
+    SomeService(..), someService, someServiceAttr, someServiceID,
     SomeServiceState(..), fromServiceState, someServiceEmptyState,
     SomeServiceGlobalState(..), fromServiceGlobalState, someServiceEmptyGlobalState,
     ServiceID, mkServiceID,
@@ -38,6 +38,12 @@ class (Typeable s, Storable s, Typeable (ServiceState s), Typeable (ServiceGloba
     serviceID :: proxy s -> ServiceID
     serviceHandler :: Stored s -> ServiceHandler s ()
 
+    type ServiceAttributes s = attr | attr -> s
+    type ServiceAttributes s = Proxy s
+    defaultServiceAttributes :: proxy s -> ServiceAttributes s
+    default defaultServiceAttributes :: ServiceAttributes s ~ Proxy s => proxy s -> ServiceAttributes s
+    defaultServiceAttributes _ = Proxy
+
     type ServiceState s :: *
     type ServiceState s = ()
     emptyServiceState :: proxy s -> ServiceState s
@@ -51,10 +57,16 @@ class (Typeable s, Storable s, Typeable (ServiceState s), Typeable (ServiceGloba
     emptyServiceGlobalState _ = ()
 
 
-data SomeService = forall s. Service s => SomeService (Proxy s)
+data SomeService = forall s. Service s => SomeService (Proxy s) (ServiceAttributes s)
+
+someService :: forall s proxy. Service s => proxy s -> SomeService
+someService _ = SomeService @s Proxy (defaultServiceAttributes @s Proxy)
+
+someServiceAttr :: forall s. Service s => ServiceAttributes s -> SomeService
+someServiceAttr attr = SomeService @s Proxy attr
 
 someServiceID :: SomeService -> ServiceID
-someServiceID (SomeService s) = serviceID s
+someServiceID (SomeService s _) = serviceID s
 
 data SomeServiceState = forall s. Service s => SomeServiceState (Proxy s) (ServiceState s)
 
@@ -62,7 +74,7 @@ fromServiceState :: Service s => proxy s -> SomeServiceState -> Maybe (ServiceSt
 fromServiceState _ (SomeServiceState _ s) = cast s
 
 someServiceEmptyState :: SomeService -> SomeServiceState
-someServiceEmptyState (SomeService p) = SomeServiceState p (emptyServiceState p)
+someServiceEmptyState (SomeService p _) = SomeServiceState p (emptyServiceState p)
 
 data SomeServiceGlobalState = forall s. Service s => SomeServiceGlobalState (Proxy s) (ServiceGlobalState s)
 
@@ -70,7 +82,7 @@ fromServiceGlobalState :: Service s => proxy s -> SomeServiceGlobalState -> Mayb
 fromServiceGlobalState _ (SomeServiceGlobalState _ s) = cast s
 
 someServiceEmptyGlobalState :: SomeService -> SomeServiceGlobalState
-someServiceEmptyGlobalState (SomeService p) = SomeServiceGlobalState p (emptyServiceGlobalState p)
+someServiceEmptyGlobalState (SomeService p _) = SomeServiceGlobalState p (emptyServiceGlobalState p)
 
 
 newtype ServiceID = ServiceID UUID
@@ -79,8 +91,9 @@ newtype ServiceID = ServiceID UUID
 mkServiceID :: String -> ServiceID
 mkServiceID = maybe (error "Invalid service ID") ServiceID . U.fromString
 
-data ServiceInput = ServiceInput
-    { svcPeer :: Peer
+data ServiceInput s = ServiceInput
+    { svcAttributes :: ServiceAttributes s
+    , svcPeer :: Peer
     , svcPeerIdentity :: UnifiedIdentity
     , svcServer :: Server
     , svcPrintOp :: String -> IO ()
@@ -94,10 +107,10 @@ data ServiceHandlerState s = ServiceHandlerState
     , svcLocal :: Stored LocalState
     }
 
-newtype ServiceHandler s a = ServiceHandler (ReaderT ServiceInput (WriterT [ServiceReply s] (StateT (ServiceHandlerState s) (ExceptT String IO))) a)
-    deriving (Functor, Applicative, Monad, MonadReader ServiceInput, MonadWriter [ServiceReply s], MonadState (ServiceHandlerState s), MonadError String, MonadIO)
+newtype ServiceHandler s a = ServiceHandler (ReaderT (ServiceInput s) (WriterT [ServiceReply s] (StateT (ServiceHandlerState s) (ExceptT String IO))) a)
+    deriving (Functor, Applicative, Monad, MonadReader (ServiceInput s), MonadWriter [ServiceReply s], MonadState (ServiceHandlerState s), MonadError String, MonadIO)
 
-handleServicePacket :: Service s => Head LocalState -> ServiceInput -> ServiceState s -> ServiceGlobalState s -> Stored s -> IO ([ServiceReply s], (ServiceState s, ServiceGlobalState s))
+handleServicePacket :: Service s => Head LocalState -> ServiceInput s -> ServiceState s -> ServiceGlobalState s -> Stored s -> IO ([ServiceReply s], (ServiceState s, ServiceGlobalState s))
 handleServicePacket h input svc global packet = do
     let sstate = ServiceHandlerState { svcValue = svc, svcGlobal = global, svcLocal = headStoredObject h }
         ServiceHandler handler = serviceHandler packet

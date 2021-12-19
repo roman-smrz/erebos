@@ -129,11 +129,11 @@ interactiveLoop st opts = runInputT defaultSettings $ do
                                                         _ -> str ++ "\n";
     server <- liftIO $ do
         startServer (optServer opts) erebosHead extPrintLn
-            [ SomeService @AttachService Proxy
-            , SomeService @SyncService Proxy
-            , SomeService @ContactService Proxy
-            , SomeService @DirectMessage Proxy
-            , SomeService @DiscoveryService Proxy
+            [ someService @AttachService Proxy
+            , someService @SyncService Proxy
+            , someService @ContactService Proxy
+            , someService @DirectMessage Proxy
+            , someService @DiscoveryService Proxy
             ]
 
     peers <- liftIO $ newMVar []
