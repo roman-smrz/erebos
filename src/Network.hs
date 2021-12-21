@@ -12,6 +12,7 @@ module Network (
     Service(..),
     serverPeer, serverPeerIce,
     sendToPeer, sendToPeerStored, sendToPeerWith,
+    runPeerService,
 
     discoveryPort,
 ) where
@@ -61,12 +62,15 @@ announceIntervalSeconds = 60
 
 data Server = Server
     { serverStorage :: Storage
+    , serverOrigHead :: Head LocalState
     , serverIdentity_ :: MVar UnifiedIdentity
     , serverSocket :: MVar Socket
     , serverChanPacket :: Chan (PeerAddress, BC.ByteString)
     , serverOutQueue :: TQueue (Peer, Bool, TransportPacket)
     , serverDataResponse :: TQueue (Peer, Maybe PartialRef)
     , serverIOActions :: TQueue (ExceptT String IO ())
+    , serverServices :: [SomeService]
+    , serverServiceStates :: TMVar (M.Map ServiceID SomeServiceGlobalState)
     , serverPeers :: MVar (Map PeerAddress Peer)
     , serverChanPeer :: TChan Peer
     , serverErrorLog :: TQueue String
@@ -236,12 +240,15 @@ startServer opt origHead logd' services = do
 
     let server = Server
             { serverStorage = storage
+            , serverOrigHead = origHead
             , serverIdentity_ = midentity
             , serverSocket = ssocket
             , serverChanPacket = chanPacket
             , serverOutQueue = outQueue
             , serverDataResponse = dataResponse
             , serverIOActions = ioActions
+            , serverServices = services
+            , serverServiceStates = svcStates
             , serverPeers = peers
             , serverChanPeer = chanPeer
             , serverErrorLog = errlog
@@ -360,46 +367,9 @@ startServer opt origHead logd' services = do
 
     void $ forkIO $ forever $ do
         (peer, svc, ref) <- atomically $ readTQueue chanSvc
-        atomically (readTVar (peerIdentityVar peer)) >>= \case
-            PeerIdentityFull peerId -> do
-                (global, svcs) <- atomically $ (,)
-                    <$> takeTMVar svcStates
-                    <*> takeTMVar (peerServiceState peer)
-                case find ((svc ==) . someServiceID) services of
-                    Just service@(SomeService (proxy :: Proxy s) attr) ->
-                        case (fromMaybe (someServiceEmptyState service) $ M.lookup svc svcs,
-                                fromMaybe (someServiceEmptyGlobalState service) $ M.lookup svc global) of
-                            ((SomeServiceState (_ :: Proxy ps) ps),
-                                    (SomeServiceGlobalState (_ :: Proxy gs) gs)) -> do
-                                Just (Refl :: s :~: ps) <- return $ eqT
-                                Just (Refl :: s :~: gs) <- return $ eqT
-
-                                let inp = ServiceInput
-                                        { svcAttributes = attr
-                                        , svcPeer = peer
-                                        , svcPeerIdentity = peerId
-                                        , svcServer = server
-                                        , svcPrintOp = atomically . logd
-                                        }
-                                reloadHead origHead >>= \case
-                                    Nothing -> atomically $ do
-                                        logd $ "current head deleted"
-                                        putTMVar (peerServiceState peer) svcs
-                                        putTMVar svcStates global
-                                    Just h -> do
-                                        (rsp, (s', gs')) <- handleServicePacket h inp ps gs (wrappedLoad ref :: Stored s)
-                                        when (not (null rsp)) $ do
-                                            sendToPeerList peer rsp
-                                        atomically $ do
-                                            putTMVar (peerServiceState peer) $ M.insert svc (SomeServiceState proxy s') svcs
-                                            putTMVar svcStates $ M.insert svc (SomeServiceGlobalState proxy gs') global
-                    _ -> atomically $ do
-                        logd $ "unhandled service '" ++ show (toUUID svc) ++ "'"
-                        putTMVar (peerServiceState peer) svcs
-                        putTMVar svcStates global
-
-            _ -> do
-                atomically $ logd $ "service packet from peer with incomplete identity " ++ show (peerAddress peer)
+        case find ((svc ==) . someServiceID) (serverServices server) of
+            Just service@(SomeService (_ :: Proxy s) attr) -> runPeerServiceOn (Just (service, attr)) peer (serviceHandler $ wrappedLoad @s ref)
+            _ -> atomically $ logd $ "unhandled service '" ++ show (toUUID svc) ++ "'"
 
     return server
 
@@ -810,6 +780,61 @@ sendToPeerWith peer fobj = do
          Right (Just obj) -> sendToPeer peer obj
          Right Nothing -> return ()
          Left err -> throwError err
+
+
+lookupService :: forall s. Service s => Proxy s -> [SomeService] -> Maybe (SomeService, ServiceAttributes s)
+lookupService proxy (service@(SomeService (_ :: Proxy t) attr) : rest)
+    | Just (Refl :: s :~: t) <- eqT = Just (service, attr)
+    | otherwise = lookupService proxy rest
+lookupService _ [] = Nothing
+
+runPeerService :: forall s m. (Service s, MonadIO m) => Peer -> ServiceHandler s () -> m ()
+runPeerService = runPeerServiceOn Nothing
+
+runPeerServiceOn :: forall s m. (Service s, MonadIO m) => Maybe (SomeService, ServiceAttributes s) -> Peer -> ServiceHandler s () -> m ()
+runPeerServiceOn mbservice peer handler = liftIO $ do
+    let server = peerServer peer
+        proxy = Proxy @s
+        svc = serviceID proxy
+        logd = writeTQueue (serverErrorLog server)
+    case mbservice `mplus` lookupService proxy (serverServices server) of
+        Just (service, attr) ->
+            atomically (readTVar (peerIdentityVar peer)) >>= \case
+                PeerIdentityFull peerId -> do
+                    (global, svcs) <- atomically $ (,)
+                        <$> takeTMVar (serverServiceStates server)
+                        <*> takeTMVar (peerServiceState peer)
+                    case (fromMaybe (someServiceEmptyState service) $ M.lookup svc svcs,
+                            fromMaybe (someServiceEmptyGlobalState service) $ M.lookup svc global) of
+                        ((SomeServiceState (_ :: Proxy ps) ps),
+                                (SomeServiceGlobalState (_ :: Proxy gs) gs)) -> do
+                            Just (Refl :: s :~: ps) <- return $ eqT
+                            Just (Refl :: s :~: gs) <- return $ eqT
+
+                            let inp = ServiceInput
+                                    { svcAttributes = attr
+                                    , svcPeer = peer
+                                    , svcPeerIdentity = peerId
+                                    , svcServer = server
+                                    , svcPrintOp = atomically . logd
+                                    }
+                            reloadHead (serverOrigHead server) >>= \case
+                                Nothing -> atomically $ do
+                                    logd $ "current head deleted"
+                                    putTMVar (peerServiceState peer) svcs
+                                    putTMVar (serverServiceStates server) global
+                                Just h -> do
+                                    (rsp, (s', gs')) <- runServiceHandler h inp ps gs handler
+                                    when (not (null rsp)) $ do
+                                        sendToPeerList peer rsp
+                                    atomically $ do
+                                        putTMVar (peerServiceState peer) $ M.insert svc (SomeServiceState proxy s') svcs
+                                        putTMVar (serverServiceStates server) $ M.insert svc (SomeServiceGlobalState proxy gs') global
+                _ -> do
+                    atomically $ logd $ "can't run service handler on peer with incomplete identity " ++ show (peerAddress peer)
+
+        _ -> atomically $ do
+            logd $ "unhandled service '" ++ show (toUUID svc) ++ "'"
 
 
 foreign import ccall unsafe "Network/ifaddrs.h broadcast_addresses" cBroadcastAddresses :: IO (Ptr Word32)

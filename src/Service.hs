@@ -8,7 +8,7 @@ module Service (
     ServiceHandler,
     ServiceInput(..),
     ServiceReply(..),
-    handleServicePacket,
+    runServiceHandler,
 
     svcGet, svcSet, svcModify,
     svcGetGlobal, svcSetGlobal, svcModifyGlobal,
@@ -110,10 +110,10 @@ data ServiceHandlerState s = ServiceHandlerState
 newtype ServiceHandler s a = ServiceHandler (ReaderT (ServiceInput s) (WriterT [ServiceReply s] (StateT (ServiceHandlerState s) (ExceptT String IO))) a)
     deriving (Functor, Applicative, Monad, MonadReader (ServiceInput s), MonadWriter [ServiceReply s], MonadState (ServiceHandlerState s), MonadError String, MonadIO)
 
-handleServicePacket :: Service s => Head LocalState -> ServiceInput s -> ServiceState s -> ServiceGlobalState s -> Stored s -> IO ([ServiceReply s], (ServiceState s, ServiceGlobalState s))
-handleServicePacket h input svc global packet = do
+runServiceHandler :: Service s => Head LocalState -> ServiceInput s -> ServiceState s -> ServiceGlobalState s -> ServiceHandler s () -> IO ([ServiceReply s], (ServiceState s, ServiceGlobalState s))
+runServiceHandler h input svc global shandler = do
     let sstate = ServiceHandlerState { svcValue = svc, svcGlobal = global, svcLocal = headStoredObject h }
-        ServiceHandler handler = serviceHandler packet
+        ServiceHandler handler = shandler
     (runExceptT $ flip runStateT sstate $ execWriterT $ flip runReaderT input $ handler) >>= \case
         Left err -> do
             svcPrintOp input $ "service failed: " ++ err
@@ -121,7 +121,7 @@ handleServicePacket h input svc global packet = do
         Right (rsp, sstate')
             | svcLocal sstate' == svcLocal sstate -> return (rsp, (svcValue sstate', svcGlobal sstate'))
             | otherwise -> replaceHead h (svcLocal sstate') >>= \case
-                Left (Just h') -> handleServicePacket h' input svc global packet
+                Left (Just h') -> runServiceHandler h' input svc global shandler
                 _              -> return (rsp, (svcValue sstate', svcGlobal sstate'))
 
 svcGet :: ServiceHandler s (ServiceState s)
