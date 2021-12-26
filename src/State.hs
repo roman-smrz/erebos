@@ -2,6 +2,7 @@ module State (
     LocalState(..),
     SharedState, SharedType(..),
     SharedTypeID, mkSharedTypeID,
+    MonadHead(..),
 
     loadLocalStateHead,
     updateLocalState, updateLocalState_,
@@ -15,6 +16,8 @@ module State (
     updateSharedIdentity,
     interactiveIdentityUpdate,
 ) where
+
+import Control.Monad.Reader
 
 import Data.Foldable
 import Data.Maybe
@@ -78,6 +81,15 @@ instance SharedType (Signed IdentityData) where
     sharedTypeID _ = mkSharedTypeID "0c6c1fe0-f2d7-4891-926b-c332449f7871"
 
 
+class MonadHead a m where
+    updateLocalHead :: (Stored a -> IO (Stored a, b)) -> m b
+
+instance (HeadType a, MonadIO m) => MonadHead a (ReaderT (Head a) m) where
+    updateLocalHead f = do
+        h <- ask
+        liftIO $ snd <$> updateHead h f
+
+
 loadLocalStateHead :: Storage -> IO (Head LocalState)
 loadLocalStateHead st = loadHeads st >>= \case
     (h:_) -> return h
@@ -114,20 +126,20 @@ headLocalIdentity h =
             (validateIdentity $ lsIdentity ls)
 
 
-updateLocalState_ :: Head LocalState -> (Stored LocalState -> IO (Stored LocalState)) -> IO ()
-updateLocalState_ h f = updateLocalState h (fmap (,()) . f)
+updateLocalState_ :: MonadHead LocalState m => (Stored LocalState -> IO (Stored LocalState)) -> m ()
+updateLocalState_ f = updateLocalState (fmap (,()) . f)
 
-updateLocalState :: Head LocalState -> (Stored LocalState -> IO (Stored LocalState, a)) -> IO a
-updateLocalState h f = snd <$> updateHead h f
+updateLocalState :: MonadHead LocalState m => (Stored LocalState -> IO (Stored LocalState, a)) -> m a
+updateLocalState = updateLocalHead
 
-updateSharedState_ :: SharedType a => Head LocalState -> ([Stored a] -> IO ([Stored a])) -> IO ()
-updateSharedState_ h f = updateSharedState h (fmap (,()) . f)
+updateSharedState_ :: (SharedType a, MonadHead LocalState m) => ([Stored a] -> IO ([Stored a])) -> m ()
+updateSharedState_ f = updateSharedState (fmap (,()) . f)
 
-updateSharedState :: forall a b. SharedType a => Head LocalState -> ([Stored a] -> IO ([Stored a], b)) -> IO b
-updateSharedState h f = updateLocalState h $ \ls -> do
+updateSharedState :: forall a b m. (SharedType a, MonadHead LocalState m) => ([Stored a] -> IO ([Stored a], b)) -> m b
+updateSharedState f = updateLocalHead $ \ls -> do
     let shared = lsShared $ fromStored ls
         val = lookupSharedValue shared
-        st = refStorage $ headRef h
+        st = storedStorage ls
     (val', x) <- f val
     (,x) <$> if val' == val
                 then return ls
@@ -148,14 +160,14 @@ makeSharedStateUpdate st val prev = wrappedStore st SharedState
     }
 
 
-mergeSharedIdentity :: Head LocalState -> IO UnifiedIdentity
-mergeSharedIdentity = flip updateSharedState $ \sdata -> do
+mergeSharedIdentity :: MonadHead LocalState m => m UnifiedIdentity
+mergeSharedIdentity = updateSharedState $ \sdata -> do
     let Just cidentity = validateIdentityF sdata
     identity <- mergeIdentity cidentity
     return ([idData identity], identity)
 
-updateSharedIdentity :: Head LocalState -> IO ()
-updateSharedIdentity = flip updateSharedState_ $ \sdata -> do
+updateSharedIdentity :: MonadHead LocalState m => m ()
+updateSharedIdentity = updateSharedState_ $ \sdata -> do
     let Just identity = validateIdentityF sdata
     (:[]) . idData <$> interactiveIdentityUpdate identity
 

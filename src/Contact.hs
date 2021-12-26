@@ -123,17 +123,15 @@ contactAccept printMsg h peer = do
             return (Nothing, OurRequestReady)
         OurRequestConfirm (Just ContactAccepted) -> do
             PeerIdentityFull pid <- peerIdentity peer
-            liftIO $ do
-                printMsg $ "Contact accepted"
-                updateLocalState_ h $ finalizeContact pid
+            liftIO $ printMsg $ "Contact accepted"
+            flip runReaderT h $ updateLocalState_ $ finalizeContact pid
             return (Nothing, PairingDone)
         OurRequestReady -> throwError $ "alredy accepted, waiting for peer"
         PeerRequest {} -> throwError $ "waiting for peer"
         PeerRequestConfirm -> do
             PeerIdentityFull pid <- peerIdentity peer
-            liftIO $ do
-                printMsg $ "Contact accepted"
-                updateLocalState_ h $ finalizeContact pid
+            liftIO $ printMsg $ "Contact accepted"
+            flip runReaderT h $ updateLocalState_ $ finalizeContact pid
             return (Just $ PairingAccept ContactAccepted, PairingDone)
         PairingDone -> throwError $ "alredy done"
         PairingFailed -> throwError $ "alredy failed"

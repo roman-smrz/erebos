@@ -88,15 +88,14 @@ attachAccept printMsg h peer = do
             liftIO $ printMsg $ "Confirmed peer, but verification of received identity failed"
             return (Nothing, NoPairing)
         OurRequestConfirm (Just (AttachIdentity _ keys (Just identity))) -> do
-            liftIO $ do
-                printMsg $ "Accepted updated identity"
-                updateLocalState_ h $ finalizeAttach identity keys
+            liftIO $ printMsg $ "Accepted updated identity"
+            flip runReaderT h $ updateLocalState_ $ finalizeAttach identity keys
             return (Nothing, PairingDone)
         OurRequestReady -> throwError $ "alredy accepted, waiting for peer"
         PeerRequest {} -> throwError $ "waiting for peer"
         PeerRequestConfirm -> do
             liftIO $ printMsg $ "Accepted new attached device, seding updated identity"
-            owner <- liftIO $ mergeSharedIdentity h
+            owner <- runReaderT mergeSharedIdentity h
             PeerIdentityFull pid <- peerIdentity peer
             Just secret <- liftIO $ loadKey $ idKeyIdentity owner
             liftIO $ do

@@ -110,6 +110,12 @@ data ServiceHandlerState s = ServiceHandlerState
 newtype ServiceHandler s a = ServiceHandler (ReaderT (ServiceInput s) (WriterT [ServiceReply s] (StateT (ServiceHandlerState s) (ExceptT String IO))) a)
     deriving (Functor, Applicative, Monad, MonadReader (ServiceInput s), MonadWriter [ServiceReply s], MonadState (ServiceHandlerState s), MonadError String, MonadIO)
 
+instance MonadHead LocalState (ServiceHandler s) where
+    updateLocalHead f = do
+        (ls, x) <- liftIO . f =<< gets svcLocal
+        modify $ \s -> s { svcLocal = ls }
+        return x
+
 runServiceHandler :: Service s => Head LocalState -> ServiceInput s -> ServiceState s -> ServiceGlobalState s -> ServiceHandler s () -> IO ([ServiceReply s], (ServiceState s, ServiceGlobalState s))
 runServiceHandler h input svc global shandler = do
     let sstate = ServiceHandlerState { svcValue = svc, svcGlobal = global, svcLocal = headStoredObject h }

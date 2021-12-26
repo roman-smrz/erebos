@@ -99,7 +99,7 @@ main = do
             Nothing -> error "ref does not exist"
             Just ref -> print $ storedGeneration (wrappedLoad ref :: Stored Object)
 
-        ["update-identity"] -> updateSharedIdentity =<< loadLocalStateHead st
+        ["update-identity"] -> runReaderT updateSharedIdentity =<< loadLocalStateHead st
 
         ("update-identity" : srefs) -> do
             sequence <$> mapM (readRef st . BC.pack) srefs >>= \case
@@ -290,8 +290,7 @@ cmdHistory = void $ do
 
 cmdUpdateIdentity :: Command
 cmdUpdateIdentity = void $ do
-    ehead <- asks ciHead
-    liftIO $ updateSharedIdentity ehead
+    runReaderT updateSharedIdentity =<< asks ciHead
 
 cmdAttach :: Command
 cmdAttach = join $ attachToOwner
