@@ -5,6 +5,7 @@ module Pairing (
     PairingResult(..),
 
     pairingRequest,
+    pairingAccept,
 ) where
 
 import Control.Monad.Except
@@ -35,7 +36,7 @@ data PairingService a = PairingRequest RefDigest
 
 data PairingState a = NoPairing
                     | OurRequest Bytes
-                    | OurRequestConfirm (Maybe a)
+                    | OurRequestConfirm (Maybe (PairingVerifiedResult a))
                     | OurRequestReady
                     | PeerRequest Bytes RefDigest
                     | PeerRequestConfirm
@@ -47,12 +48,21 @@ data PairingAttributes a = PairingAttributes
     , pairingHookResponse :: String -> ServiceHandler (PairingService a) ()
     , pairingHookRequestNonce :: String -> ServiceHandler (PairingService a) ()
     , pairingHookRequestNonceFailed :: ServiceHandler (PairingService a) ()
-    , pairingHookConfirm :: a -> ServiceHandler (PairingService a) (Maybe a)
-    , pairingHookAccept :: a -> ServiceHandler (PairingService a) ()
+    , pairingHookConfirmedResponse :: ServiceHandler (PairingService a) ()
+    , pairingHookConfirmedRequest :: ServiceHandler (PairingService a) ()
+    , pairingHookAcceptedResponse :: ServiceHandler (PairingService a) ()
+    , pairingHookAcceptedRequest :: ServiceHandler (PairingService a) ()
+    , pairingHookVerifyFailed :: ServiceHandler (PairingService a) ()
     }
 
 class (Typeable a, Storable a) => PairingResult a where
+    type PairingVerifiedResult a :: *
+    type PairingVerifiedResult a = a
+
     pairingServiceID :: proxy a -> ServiceID
+    pairingVerifyResult :: a -> ServiceHandler (PairingService a) (Maybe (PairingVerifiedResult a))
+    pairingFinalizeRequest :: PairingVerifiedResult a -> ServiceHandler (PairingService a) ()
+    pairingFinalizeResponse :: ServiceHandler (PairingService a) a
     defaultPairingAttributes :: proxy (PairingService a) -> PairingAttributes a
 
 
@@ -110,20 +120,29 @@ instance PairingResult a => Service (PairingService a) where
             replyPacket PairingDecline
 
         (OurRequestConfirm _, PairingAccept x) -> do
-            hook <- asks $ pairingHookConfirm . svcAttributes
-            (svcSet . OurRequestConfirm =<< hook x) `catchError` \_ -> do
-                svcSet $ PairingFailed
-                replyPacket PairingDecline
+            flip catchError (\_ -> svcSet PairingFailed >> replyPacket PairingDecline) $ do
+                pairingVerifyResult x >>= \case
+                    Just x' -> do
+                        join $ asks $ pairingHookConfirmedRequest . svcAttributes
+                        svcSet $ OurRequestConfirm (Just x')
+                    Nothing -> do
+                        join $ asks $ pairingHookVerifyFailed . svcAttributes
+                        throwError ""
 
         (OurRequestConfirm _, _) -> do
             svcSet $ PairingFailed
             replyPacket PairingDecline
 
         (OurRequestReady, PairingAccept x) -> do
-            hook <- asks $ pairingHookAccept . svcAttributes
-            hook x `catchError` \_ -> do
-                svcSet $ PairingFailed
-                replyPacket PairingDecline
+            flip catchError (\_ -> svcSet PairingFailed >> replyPacket PairingDecline) $ do
+                pairingVerifyResult x >>= \case
+                    Just x' -> do
+                        pairingFinalizeRequest x'
+                        join $ asks $ pairingHookAcceptedResponse . svcAttributes
+                        svcSet $ PairingDone
+                    Nothing -> do
+                        join $ asks $ pairingHookVerifyFailed . svcAttributes
+                        throwError ""
         (OurRequestReady, _) -> do
             svcSet $ PairingFailed
             replyPacket PairingDecline
@@ -173,4 +192,25 @@ pairingRequest _ peer = do
         _ -> throwError "incomplete peer identity"
     sendToPeerWith @(PairingService a) peer $ \case
         NoPairing -> return (Just $ PairingRequest (nonceDigest self pid nonce BA.empty), OurRequest nonce)
-        _ -> throwError "alredy in progress"
+        _ -> throwError "already in progress"
+
+pairingAccept :: forall a m proxy. (PairingResult a, MonadIO m, MonadError String m) => proxy a -> Peer -> m ()
+pairingAccept _ peer = runPeerService @(PairingService a) peer $ do
+    svcGet >>= \case
+        NoPairing -> throwError $ "none in progress"
+        OurRequest {} -> throwError $ "waiting for peer"
+        OurRequestConfirm Nothing -> do
+            join $ asks $ pairingHookConfirmedResponse . svcAttributes
+            svcSet OurRequestReady
+        OurRequestConfirm (Just verified) -> do
+            join $ asks $ pairingHookAcceptedResponse . svcAttributes
+            pairingFinalizeRequest verified
+            svcSet PairingDone
+        OurRequestReady -> throwError $ "already accepted, waiting for peer"
+        PeerRequest {} -> throwError $ "waiting for peer"
+        PeerRequestConfirm -> do
+            join $ asks $ pairingHookAcceptedRequest . svcAttributes
+            replyPacket . PairingAccept =<< pairingFinalizeResponse
+            svcSet PairingDone
+        PairingDone -> throwError $ "already done"
+        PairingFailed -> throwError $ "already failed"

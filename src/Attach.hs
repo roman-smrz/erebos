@@ -22,20 +22,56 @@ import Storage.Key
 
 type AttachService = PairingService AttachIdentity
 
-data AttachIdentity = AttachIdentity (Stored (Signed IdentityData)) [ScrubbedBytes] (Maybe UnifiedIdentity)
+data AttachIdentity = AttachIdentity (Stored (Signed IdentityData)) [ScrubbedBytes]
 
 instance Storable AttachIdentity where
-    store' (AttachIdentity x keys _) = storeRec $ do
+    store' (AttachIdentity x keys) = storeRec $ do
          storeRef "identity" x
          mapM_ (storeBinary "skey") keys
 
     load' = loadRec $ AttachIdentity
         <$> loadRef "identity"
         <*> loadBinaries "skey"
-        <*> pure Nothing
 
 instance PairingResult AttachIdentity where
     pairingServiceID _ = mkServiceID "4995a5f9-2d4d-48e9-ad3b-0bf1c2a1be7f"
+
+    type PairingVerifiedResult AttachIdentity = (UnifiedIdentity, [ScrubbedBytes])
+
+    pairingVerifyResult (AttachIdentity sdata keys) = do
+        curid <- lsIdentity . fromStored <$> svcGetLocal
+        secret <- maybe (throwError "failed to load own secret key") return =<<
+            liftIO (loadKey $ iddKeyIdentity $ fromStored $ signedData $ fromStored curid)
+        sdata' <- liftIO $ wrappedStore (storedStorage sdata) =<< signAdd secret (fromStored sdata)
+        return $ do
+            guard $ iddKeyIdentity (fromStored $ signedData $ fromStored sdata) ==
+                iddKeyIdentity (fromStored $ signedData $ fromStored curid)
+            identity <- validateIdentity sdata'
+            guard $ iddPrev (fromStored $ signedData $ fromStored $ idData identity) == [curid]
+            return (identity, keys)
+
+    pairingFinalizeRequest (identity, keys) = updateLocalState_ $ \slocal -> do
+        let owner = finalOwner identity
+            st = storedStorage slocal
+        pkeys <- mapM (copyStored st) [ idKeyIdentity owner, idKeyMessage owner ]
+        mapM_ storeKey $ catMaybes [ keyFromData sec pub | sec <- keys, pub <- pkeys ]
+
+        shared <- makeSharedStateUpdate st (idDataF owner) (lsShared $ fromStored slocal)
+        wrappedStore st (fromStored slocal)
+            { lsIdentity = idData identity
+            , lsShared = [ shared ]
+            }
+
+    pairingFinalizeResponse = do
+        st <- storedStorage <$> svcGetLocal
+        owner <- mergeSharedIdentity
+        pid <- asks svcPeerIdentity
+        secret <- maybe (throwError "failed to load secret key") return =<< liftIO (loadKey $ idKeyIdentity owner)
+        identity <- liftIO $ wrappedStore st =<< sign secret =<< wrappedStore st (emptyIdentityData $ idKeyIdentity pid)
+            { iddPrev = [idData pid], iddOwner = Just (idData owner) }
+        skeys <- liftIO $ map keyGetData . catMaybes <$> mapM loadKey [ idKeyIdentity owner, idKeyMessage owner ]
+        return $ AttachIdentity identity skeys
+
     defaultPairingAttributes _ = PairingAttributes
         { pairingHookRequest = do
             peer <- asks $ svcPeerIdentity
@@ -53,81 +89,24 @@ instance PairingResult AttachIdentity where
             peer <- asks $ svcPeerIdentity
             svcPrint $ "Failed attach from " ++ T.unpack (displayIdentity peer)
 
-        , pairingHookConfirm = \(AttachIdentity sdata keys _) -> do
-            verifyAttachedIdentity sdata >>= \case
-                Just identity -> do
-                    svcPrint $ "Attachment confirmed by peer"
-                    return $ Just $ AttachIdentity sdata keys (Just identity)
-                Nothing -> do
-                    svcPrint $ "Failed to verify new identity"
-                    throwError "Failed to verify new identity"
+        , pairingHookConfirmedResponse = do
+            svcPrint $ "Confirmed peer, waiting for updated identity"
 
-        , pairingHookAccept = \(AttachIdentity sdata keys _) -> do
-            verifyAttachedIdentity sdata >>= \case
-                Just identity -> do
-                    svcPrint $ "Accepted updated identity"
-                    svcSetLocal =<< finalizeAttach identity keys =<< svcGetLocal
-                Nothing -> do
-                    svcPrint $ "Failed to verify new identity"
-                    throwError "Failed to verify new identity"
+        , pairingHookConfirmedRequest = do
+            svcPrint $ "Attachment confirmed by peer"
+
+        , pairingHookAcceptedResponse = do
+            svcPrint $ "Accepted updated identity"
+
+        , pairingHookAcceptedRequest = do
+            svcPrint $ "Accepted new attached device, seding updated identity"
+
+        , pairingHookVerifyFailed = do
+            svcPrint $ "Failed to verify new identity"
         }
 
-attachToOwner :: (MonadIO m, MonadError String m) => (String -> IO ()) -> Peer -> m ()
-attachToOwner _ = pairingRequest @AttachIdentity Proxy
+attachToOwner :: (MonadIO m, MonadError String m) => Peer -> m ()
+attachToOwner = pairingRequest @AttachIdentity Proxy
 
-attachAccept :: (MonadIO m, MonadError String m) => (String -> IO ()) -> Head LocalState -> Peer -> m ()
-attachAccept printMsg h peer = do
-    let st = refStorage $ headRef h
-    sendToPeerWith peer $ \case
-        NoPairing -> throwError $ "none in progress"
-        OurRequest {} -> throwError $ "waiting for peer"
-        OurRequestConfirm Nothing -> do
-            liftIO $ printMsg $ "Confirmed peer, waiting for updated identity"
-            return (Nothing, OurRequestReady)
-        OurRequestConfirm (Just (AttachIdentity _ _ Nothing)) -> do
-            liftIO $ printMsg $ "Confirmed peer, but verification of received identity failed"
-            return (Nothing, NoPairing)
-        OurRequestConfirm (Just (AttachIdentity _ keys (Just identity))) -> do
-            liftIO $ printMsg $ "Accepted updated identity"
-            flip runReaderT h $ updateLocalState_ $ finalizeAttach identity keys
-            return (Nothing, PairingDone)
-        OurRequestReady -> throwError $ "alredy accepted, waiting for peer"
-        PeerRequest {} -> throwError $ "waiting for peer"
-        PeerRequestConfirm -> do
-            liftIO $ printMsg $ "Accepted new attached device, seding updated identity"
-            owner <- runReaderT mergeSharedIdentity h
-            PeerIdentityFull pid <- peerIdentity peer
-            Just secret <- liftIO $ loadKey $ idKeyIdentity owner
-            liftIO $ do
-                identity <- wrappedStore st =<< sign secret =<< wrappedStore st (emptyIdentityData $ idKeyIdentity pid)
-                    { iddPrev = [idData pid], iddOwner = Just (idData owner) }
-                skeys <- map keyGetData . catMaybes <$> mapM loadKey [ idKeyIdentity owner, idKeyMessage owner ]
-                return (Just $ PairingAccept $ AttachIdentity identity skeys Nothing, PairingDone)
-        PairingDone -> throwError $ "alredy done"
-        PairingFailed -> throwError $ "alredy failed"
-
-verifyAttachedIdentity :: Stored (Signed IdentityData) -> ServiceHandler s (Maybe UnifiedIdentity)
-verifyAttachedIdentity sdata = do
-    curid <- lsIdentity . fromStored <$> svcGetLocal
-    secret <- maybe (throwError "failed to load own secret key") return =<<
-        liftIO (loadKey $ iddKeyIdentity $ fromStored $ signedData $ fromStored curid)
-    sdata' <- liftIO $ wrappedStore (storedStorage sdata) =<< signAdd secret (fromStored sdata)
-    return $ do
-        guard $ iddKeyIdentity (fromStored $ signedData $ fromStored sdata) ==
-            iddKeyIdentity (fromStored $ signedData $ fromStored curid)
-        identity <- validateIdentity sdata'
-        guard $ iddPrev (fromStored $ signedData $ fromStored $ idData identity) == [curid]
-        return identity
-
-finalizeAttach :: MonadIO m => UnifiedIdentity -> [ScrubbedBytes] -> Stored LocalState -> m (Stored LocalState)
-finalizeAttach identity skeys slocal = liftIO $ do
-    let owner = finalOwner identity
-        st = storedStorage slocal
-    pkeys <- mapM (copyStored st) [ idKeyIdentity owner, idKeyMessage owner ]
-    mapM_ storeKey $ catMaybes [ keyFromData sec pub | sec <- skeys, pub <- pkeys ]
-
-    shared <- makeSharedStateUpdate st (idDataF owner) (lsShared $ fromStored slocal)
-    wrappedStore st (fromStored slocal)
-        { lsIdentity = idData identity
-        , lsShared = [ shared ]
-        }
+attachAccept :: (MonadIO m, MonadError String m) => Peer -> m ()
+attachAccept = pairingAccept @AttachIdentity Proxy

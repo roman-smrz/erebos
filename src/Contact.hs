@@ -86,6 +86,17 @@ instance Storable ContactAccepted where
 instance PairingResult ContactAccepted where
     pairingServiceID _ = mkServiceID "d9c37368-0da1-4280-93e9-d9bd9a198084"
 
+    pairingVerifyResult = return . Just
+
+    pairingFinalizeRequest ContactAccepted = do
+        pid <- asks svcPeerIdentity
+        updateLocalState_ $ finalizeContact pid
+
+    pairingFinalizeResponse = do
+        pid <- asks svcPeerIdentity
+        updateLocalState_ $ finalizeContact pid
+        return ContactAccepted
+
     defaultPairingAttributes _ = PairingAttributes
         { pairingHookRequest = do
             peer <- asks $ svcPeerIdentity
@@ -103,38 +114,26 @@ instance PairingResult ContactAccepted where
             peer <- asks $ svcPeerIdentity
             svcPrint $ "Failed contact request from " ++ T.unpack (displayIdentity peer)
 
-        , pairingHookConfirm = \ContactAccepted -> do
-            svcPrint $ "Contact confirmed by peer"
-            return $ Just ContactAccepted
+        , pairingHookConfirmedResponse = do
+            svcPrint $ "Contact accepted, waiting for peer confirmation"
 
-        , pairingHookAccept = \ContactAccepted -> return ()
+        , pairingHookConfirmedRequest = do
+            svcPrint $ "Contact confirmed by peer"
+
+        , pairingHookAcceptedResponse = do
+            svcPrint $ "Contact accepted"
+
+        , pairingHookAcceptedRequest = do
+            svcPrint $ "Contact accepted"
+
+        , pairingHookVerifyFailed = return ()
         }
 
-contactRequest :: (MonadIO m, MonadError String m) => (String -> IO ()) -> Peer -> m ()
-contactRequest _ = pairingRequest @ContactAccepted Proxy
+contactRequest :: (MonadIO m, MonadError String m) => Peer -> m ()
+contactRequest = pairingRequest @ContactAccepted Proxy
 
-contactAccept :: (MonadIO m, MonadError String m) => (String -> IO ()) -> Head LocalState -> Peer -> m ()
-contactAccept printMsg h peer = do
-    sendToPeerWith peer $ \case
-        NoPairing -> throwError $ "none in progress"
-        OurRequest {} -> throwError $ "waiting for peer"
-        OurRequestConfirm Nothing -> do
-            liftIO $ printMsg $ "Contact accepted, waiting for peer confirmation"
-            return (Nothing, OurRequestReady)
-        OurRequestConfirm (Just ContactAccepted) -> do
-            PeerIdentityFull pid <- peerIdentity peer
-            liftIO $ printMsg $ "Contact accepted"
-            flip runReaderT h $ updateLocalState_ $ finalizeContact pid
-            return (Nothing, PairingDone)
-        OurRequestReady -> throwError $ "alredy accepted, waiting for peer"
-        PeerRequest {} -> throwError $ "waiting for peer"
-        PeerRequestConfirm -> do
-            PeerIdentityFull pid <- peerIdentity peer
-            liftIO $ printMsg $ "Contact accepted"
-            flip runReaderT h $ updateLocalState_ $ finalizeContact pid
-            return (Just $ PairingAccept ContactAccepted, PairingDone)
-        PairingDone -> throwError $ "alredy done"
-        PairingFailed -> throwError $ "alredy failed"
+contactAccept :: (MonadIO m, MonadError String m) => Peer -> m ()
+contactAccept = pairingAccept @ContactAccepted Proxy
 
 finalizeContact :: MonadIO m => UnifiedIdentity -> Stored LocalState -> m (Stored LocalState)
 finalizeContact identity slocal = liftIO $ do

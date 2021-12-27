@@ -294,14 +294,11 @@ cmdUpdateIdentity = void $ do
 
 cmdAttach :: Command
 cmdAttach = join $ attachToOwner
-    <$> asks ciPrint
-    <*> (maybe (throwError "no peer selected") return =<< gets csPeer)
+    <$> (maybe (throwError "no peer selected") return =<< gets csPeer)
 
 cmdAttachAccept :: Command
 cmdAttachAccept = join $ attachAccept
-    <$> asks ciPrint
-    <*> asks ciHead
-    <*> (maybe (throwError "no peer selected") return =<< gets csPeer)
+    <$> (maybe (throwError "no peer selected") return =<< gets csPeer)
 
 cmdContacts :: Command
 cmdContacts = do
@@ -315,14 +312,11 @@ cmdContacts = do
 
 cmdContactAdd :: Command
 cmdContactAdd = join $ contactRequest
-    <$> asks ciPrint
-    <*> (maybe (throwError "no peer selected") return =<< gets csPeer)
+    <$> (maybe (throwError "no peer selected") return =<< gets csPeer)
 
 cmdContactAccept :: Command
 cmdContactAccept = join $ contactAccept
-    <$> asks ciPrint
-    <*> asks ciHead
-    <*> (maybe (throwError "no peer selected") return =<< gets csPeer)
+    <$> (maybe (throwError "no peer selected") return =<< gets csPeer)
 
 cmdDiscoveryInit :: Command
 cmdDiscoveryInit = void $ do
