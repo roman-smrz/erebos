@@ -1,6 +1,8 @@
 module Attach (
     AttachService,
-    attachToOwner, attachAccept,
+    attachToOwner,
+    attachAccept,
+    attachReject,
 ) where
 
 import Control.Monad.Except
@@ -103,6 +105,12 @@ instance PairingResult AttachIdentity where
 
         , pairingHookVerifyFailed = do
             svcPrint $ "Failed to verify new identity"
+
+        , pairingHookRejected = do
+            svcPrint $ "Attachment rejected by peer"
+
+        , pairingHookFailed = do
+            svcPrint $ "Attachement failed"
         }
 
 attachToOwner :: (MonadIO m, MonadError String m) => Peer -> m ()
@@ -110,3 +118,6 @@ attachToOwner = pairingRequest @AttachIdentity Proxy
 
 attachAccept :: (MonadIO m, MonadError String m) => Peer -> m ()
 attachAccept = pairingAccept @AttachIdentity Proxy
+
+attachReject :: (MonadIO m, MonadError String m) => Peer -> m ()
+attachReject = pairingReject @AttachIdentity Proxy

@@ -5,6 +5,7 @@ module Contact (
     ContactService,
     contactRequest,
     contactAccept,
+    contactReject,
 ) where
 
 import Control.Arrow
@@ -127,6 +128,12 @@ instance PairingResult ContactAccepted where
             svcPrint $ "Contact accepted"
 
         , pairingHookVerifyFailed = return ()
+
+        , pairingHookRejected = do
+            svcPrint $ "Contact rejected by peer"
+
+        , pairingHookFailed = do
+            svcPrint $ "Contact failed"
         }
 
 contactRequest :: (MonadIO m, MonadError String m) => Peer -> m ()
@@ -134,6 +141,9 @@ contactRequest = pairingRequest @ContactAccepted Proxy
 
 contactAccept :: (MonadIO m, MonadError String m) => Peer -> m ()
 contactAccept = pairingAccept @ContactAccepted Proxy
+
+contactReject :: (MonadIO m, MonadError String m) => Peer -> m ()
+contactReject = pairingReject @ContactAccepted Proxy
 
 finalizeContact :: MonadIO m => UnifiedIdentity -> Stored LocalState -> m (Stored LocalState)
 finalizeContact identity slocal = liftIO $ do

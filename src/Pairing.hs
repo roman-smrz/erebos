@@ -6,6 +6,7 @@ module Pairing (
 
     pairingRequest,
     pairingAccept,
+    pairingReject,
 ) where
 
 import Control.Monad.Except
@@ -41,7 +42,6 @@ data PairingState a = NoPairing
                     | PeerRequest Bytes RefDigest
                     | PeerRequestConfirm
                     | PairingDone
-                    | PairingFailed
 
 data PairingAttributes a = PairingAttributes
     { pairingHookRequest :: ServiceHandler (PairingService a) ()
@@ -53,6 +53,8 @@ data PairingAttributes a = PairingAttributes
     , pairingHookAcceptedResponse :: ServiceHandler (PairingService a) ()
     , pairingHookAcceptedRequest :: ServiceHandler (PairingService a) ()
     , pairingHookVerifyFailed :: ServiceHandler (PairingService a) ()
+    , pairingHookRejected :: ServiceHandler (PairingService a) ()
+    , pairingHookFailed :: ServiceHandler (PairingService a) ()
     }
 
 class (Typeable a, Storable a) => PairingResult a where
@@ -107,6 +109,11 @@ instance PairingResult a => Service (PairingService a) where
             replyPacket $ PairingResponse nonce
         (NoPairing, _) -> return ()
 
+        (PairingDone, _) -> return ()
+        (_, PairingDecline) -> do
+            join $ asks $ pairingHookRejected . svcAttributes
+            svcSet NoPairing
+
         (OurRequest nonce, PairingResponse pnonce) -> do
             peer <- asks $ svcPeerIdentity
             self <- maybe (throwError "failed to validate own identity") return .
@@ -115,26 +122,23 @@ instance PairingResult a => Service (PairingService a) where
             hook $ confirmationNumber $ nonceDigest self peer nonce pnonce
             svcSet $ OurRequestConfirm Nothing
             replyPacket $ PairingRequestNonce nonce
-        (OurRequest _, _) -> do
-            svcSet $ PairingFailed
-            replyPacket PairingDecline
+        (OurRequest _, _) -> reject
 
         (OurRequestConfirm _, PairingAccept x) -> do
-            flip catchError (\_ -> svcSet PairingFailed >> replyPacket PairingDecline) $ do
+            flip catchError (const reject) $ do
                 pairingVerifyResult x >>= \case
                     Just x' -> do
                         join $ asks $ pairingHookConfirmedRequest . svcAttributes
                         svcSet $ OurRequestConfirm (Just x')
                     Nothing -> do
                         join $ asks $ pairingHookVerifyFailed . svcAttributes
-                        throwError ""
+                        svcSet NoPairing
+                        replyPacket PairingDecline
 
-        (OurRequestConfirm _, _) -> do
-            svcSet $ PairingFailed
-            replyPacket PairingDecline
+        (OurRequestConfirm _, _) -> reject
 
         (OurRequestReady, PairingAccept x) -> do
-            flip catchError (\_ -> svcSet PairingFailed >> replyPacket PairingDecline) $ do
+            flip catchError (const reject) $ do
                 pairingVerifyResult x >>= \case
                     Just x' -> do
                         pairingFinalizeRequest x'
@@ -143,9 +147,7 @@ instance PairingResult a => Service (PairingService a) where
                     Nothing -> do
                         join $ asks $ pairingHookVerifyFailed . svcAttributes
                         throwError ""
-        (OurRequestReady, _) -> do
-            svcSet $ PairingFailed
-            replyPacket PairingDecline
+        (OurRequestReady, _) -> reject
 
         (PeerRequest nonce dgst, PairingRequestNonce pnonce) -> do
             peer <- asks $ svcPeerIdentity
@@ -156,17 +158,16 @@ instance PairingResult a => Service (PairingService a) where
                        hook $ confirmationNumber $ nonceDigest peer self pnonce nonce
                        svcSet PeerRequestConfirm
                else do join $ asks $ pairingHookRequestNonceFailed . svcAttributes
-                       svcSet PairingFailed
+                       svcSet NoPairing
                        replyPacket PairingDecline
-        (PeerRequest _ _, _) -> do
-            svcSet $ PairingFailed
-            replyPacket PairingDecline
-        (PeerRequestConfirm, _) -> do
-            svcSet $ PairingFailed
-            replyPacket PairingDecline
+        (PeerRequest _ _, _) -> reject
+        (PeerRequestConfirm, _) -> reject
 
-        (PairingDone, _) -> return ()
-        (PairingFailed, _) -> return ()
+reject :: PairingResult a => ServiceHandler (PairingService a) ()
+reject = do
+    join $ asks $ pairingHookFailed . svcAttributes
+    svcSet NoPairing
+    replyPacket PairingDecline
 
 
 nonceDigest :: UnifiedIdentity -> UnifiedIdentity -> Bytes -> Bytes -> RefDigest
@@ -213,4 +214,10 @@ pairingAccept _ peer = runPeerService @(PairingService a) peer $ do
             replyPacket . PairingAccept =<< pairingFinalizeResponse
             svcSet PairingDone
         PairingDone -> throwError $ "already done"
-        PairingFailed -> throwError $ "already failed"
+
+pairingReject :: forall a m proxy. (PairingResult a, MonadIO m, MonadError String m) => proxy a -> Peer -> m ()
+pairingReject _ peer = runPeerService @(PairingService a) peer $ do
+    svcGet >>= \case
+        NoPairing -> throwError $ "none in progress"
+        PairingDone -> throwError $ "already done"
+        _ -> reject

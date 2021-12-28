@@ -230,9 +230,11 @@ commands =
     , ("update-identity", cmdUpdateIdentity)
     , ("attach", cmdAttach)
     , ("attach-accept", cmdAttachAccept)
+    , ("attach-reject", cmdAttachReject)
     , ("contacts", cmdContacts)
     , ("contact-add", cmdContactAdd)
     , ("contact-accept", cmdContactAccept)
+    , ("contact-reject", cmdContactReject)
     , ("discovery-init", cmdDiscoveryInit)
     , ("discovery", cmdDiscovery)
     , ("ice-create", cmdIceCreate)
@@ -300,6 +302,10 @@ cmdAttachAccept :: Command
 cmdAttachAccept = join $ attachAccept
     <$> (maybe (throwError "no peer selected") return =<< gets csPeer)
 
+cmdAttachReject :: Command
+cmdAttachReject = join $ attachReject
+    <$> (maybe (throwError "no peer selected") return =<< gets csPeer)
+
 cmdContacts :: Command
 cmdContacts = do
     args <- words <$> asks ciLine
@@ -316,6 +322,10 @@ cmdContactAdd = join $ contactRequest
 
 cmdContactAccept :: Command
 cmdContactAccept = join $ contactAccept
+    <$> (maybe (throwError "no peer selected") return =<< gets csPeer)
+
+cmdContactReject :: Command
+cmdContactReject = join $ contactReject
     <$> (maybe (throwError "no peer selected") return =<< gets csPeer)
 
 cmdDiscoveryInit :: Command
