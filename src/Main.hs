@@ -39,6 +39,7 @@ import State
 import Storage
 import Storage.Merge
 import Sync
+import Test
 
 data Options = Options
     { optServer :: ServerOptions
@@ -108,6 +109,8 @@ main = do
                     | Just idt <- validateIdentityF $ map wrappedLoad refs -> do
                         BC.putStrLn . showRefDigest . refDigest . storedRef . idData =<< interactiveIdentityUpdate idt
                     | otherwise -> error "invalid identity"
+
+        ["test"] -> runTestTool st
 
         args -> do
             opts <- case getOpt Permute options args of
