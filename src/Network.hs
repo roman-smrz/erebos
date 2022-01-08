@@ -138,7 +138,7 @@ data PeerIdentity = PeerIdentityUnknown (TVar [UnifiedIdentity -> ExceptT String
 data PeerChannel = ChannelWait
                  | ChannelOurRequest (Stored ChannelRequest)
                  | ChannelPeerRequest WaitingRef
-                 | ChannelOurAccept (Stored ChannelAccept) (Stored Channel)
+                 | ChannelOurAccept (Stored ChannelAccept) Channel
                  | ChannelEstablished Channel
 
 peerIdentity :: MonadIO m => Peer -> m PeerIdentity
@@ -328,9 +328,9 @@ startServer opt origHead logd' services = do
                     case M.lookup paddr pvalue of
                         Just peer -> do
                             mbch <- atomically (readTVar (peerChannel peer)) >>= return . \case
-                                ChannelEstablished ch  -> Just ch
-                                ChannelOurAccept _ sch -> Just $ fromStored sch
-                                _                      -> Nothing
+                                ChannelEstablished ch -> Just ch
+                                ChannelOurAccept _ ch -> Just ch
+                                _                     -> Nothing
 
                             if  | Just ch <- mbch
                                 , Right plain <- runExcept $ channelDecrypt ch msg
@@ -492,7 +492,7 @@ handlePacket origHead identity secure peer chanSvc svcs (TransportHeader headers
             Acknowledged ref -> do
                 readTVarP (peerChannel peer) >>= \case
                     ChannelOurAccept acc ch | refDigest (storedRef acc) == refDigest ref -> do
-                        writeTVarP (peerChannel peer) $ ChannelEstablished (fromStored ch)
+                        writeTVarP (peerChannel peer) $ ChannelEstablished ch
                         liftSTM $ finalizedChannel peer origHead identity
                     _ -> return ()
 
@@ -630,7 +630,7 @@ handleChannelAccept oh identity accref = do
                     ch <- acceptedChannel identity upid (wrappedLoad acc)
                     liftIO $ atomically $ do
                         sendToPeerS peer $ TransportPacket (TransportHeader [Acknowledged accref]) []
-                        writeTVar (peerChannel peer) $ ChannelEstablished $ fromStored ch
+                        writeTVar (peerChannel peer) $ ChannelEstablished ch
                         finalizedChannel peer oh identity
 
                 Left dgst -> throwError $ "missing accept data " ++ BC.unpack (showRefDigest dgst)

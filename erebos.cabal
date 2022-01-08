@@ -60,6 +60,7 @@ executable erebos
   -- other-extensions:
   build-depends:       aeson >=1.4 && <1.6,
                        base >=4.13 && <4.15,
+                       binary >=0.8 && <0.9,
                        bytestring >=0.10 && <0.12,
                        cereal >= 0.5 && <0.6,
                        containers >= 0.6 && <0.7,
