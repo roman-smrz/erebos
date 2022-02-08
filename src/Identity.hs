@@ -23,6 +23,7 @@ import Control.Monad
 import Control.Monad.Except
 import qualified Control.Monad.Identity as I
 
+import Data.Either
 import Data.Foldable
 import Data.Function
 import Data.List
@@ -214,15 +215,23 @@ toComposedIdentity idt = idt { idData_ = toList $ idDataF idt
                              }
 
 
-updateIdentitySets :: Foldable m => [(Stored (Signed IdentityData), Set (Stored (Signed IdentityData)))] -> Identity m -> ComposedIdentity
-updateIdentitySets updates orig@Identity { idData_ = idata } =
-    case validateIdentityF $ map update $ toList idata of
-         Just updated -> updated { idOwner_ = updateIdentitySets updates <$> idOwner_ updated }
-         Nothing -> toComposedIdentity orig
-    where update x = foldl (\y (y', set) -> if y `S.member` set then y' else y) x updates
-
 updateIdentity :: Foldable m => [Stored (Signed IdentityData)] -> Identity m -> ComposedIdentity
-updateIdentity = updateIdentitySets . map (\u -> (u, ancestors [u]))
+updateIdentity [] orig = toComposedIdentity orig
+updateIdentity updates orig =
+    case validateIdentityF $ filterAncestors (ourUpdates ++ idata) of
+         -- need to filter ancestors here as validateIdentityF currently stores the whole list in idData_
+         Just updated -> updated
+             { idOwner_ = updateIdentity ownerUpdates <$> idOwner_ updated
+             , idUpdates_ = ownerUpdates
+             }
+         Nothing -> toComposedIdentity orig
+    where idata = toList $ idData_ orig
+          ilen = length idata
+          (ourUpdates, ownerUpdates) = partitionEithers $ flip map (filterAncestors $ updates ++ idUpdates_ orig) $
+              -- if an update is related to anything in idData_, use it here, otherwise push to owners
+              \u -> if length (filterAncestors (u : idata)) < ilen + 1
+                       then Left u
+                       else Right u
 
 updateOwners :: [Stored (Signed IdentityData)] -> Identity m -> Identity m
 updateOwners updates orig@Identity { idOwner_ = Just owner, idUpdates_ = cupdates } =

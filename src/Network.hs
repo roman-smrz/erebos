@@ -294,15 +294,16 @@ startServer opt origHead logd' services = do
             let announceUpdate identity = do
                     st <- derivePartialStorage storage
                     let selfRef = partialRef st $ storedRef $ idData identity
-                        updateRefs = map (partialRef st . storedRef) $ idUpdates identity
-                        hitems = AnnounceSelf selfRef : map AnnounceUpdate updateRefs
+                        updateRefs = selfRef : map (partialRef st . storedRef) (idUpdates identity)
+                        ackedBy = concat [[ Acknowledged r, Rejected r, DataRequest r ] | r <- updateRefs ]
+                        hitems = map AnnounceUpdate updateRefs
                         packet = TransportPacket (TransportHeader $  hitems) []
 
                     ps <- readMVar peers
                     forM_ ps $ \peer -> atomically $ do
                         ((,) <$> readTVar (peerIdentityVar peer) <*> readTVar (peerChannel peer)) >>= \case
                             (PeerIdentityFull _, ChannelEstablished _) ->
-                                writeTQueue (peerOutQueue peer) (True, [], packet)
+                                writeTQueue (peerOutQueue peer) (True, ackedBy, packet)
                             _  -> return ()
 
             let shareState self shared peer = do
@@ -591,7 +592,7 @@ handlePacket origHead identity secure peer chanSvc svcs (TransportHeader headers
                             addHeader $ AnnounceSelf ref
                             writeTVarP (peerIdentityVar peer) $ PeerIdentityRef wref idwait
                             liftSTM $ writeTChan (serverChanPeer $ peerServer peer) peer
-                        _ -> addHeader $ Acknowledged pref
+                        _ -> return ()
 
             AnnounceUpdate ref -> do
                 readTVarP (peerIdentityVar peer) >>= \case
@@ -716,9 +717,9 @@ finalizedChannel peer oh self = do
     -- Identity update
     do
         let selfRef = partialRef ist $ storedRef $ idData $ self
-            updateRefs = map (partialRef ist . storedRef) $ idUpdates $ self
-        sendToPeerS peer [] $ flip TransportPacket [] $ TransportHeader $
-            AnnounceSelf selfRef : map AnnounceUpdate updateRefs
+            updateRefs = selfRef : map (partialRef ist . storedRef) (idUpdates self)
+            ackedBy = concat [[ Acknowledged r, Rejected r, DataRequest r ] | r <- updateRefs ]
+        sendToPeerS peer ackedBy $ flip TransportPacket [] $ TransportHeader $ map AnnounceUpdate updateRefs
 
     -- Shared state
     readTVar (peerIdentityVar peer) >>= \case
@@ -741,7 +742,7 @@ handleIdentityAnnounce :: UnifiedIdentity -> Peer -> Ref -> WaitingRefCallback
 handleIdentityAnnounce self peer ref = liftIO $ atomically $ do
     let validateAndUpdate upds act = case validateIdentity $ wrappedLoad ref of
             Just pid' -> do
-                let pid = updateOwners upds pid'
+                let pid = fromMaybe pid' $ toUnifiedIdentity (updateIdentity upds pid')
                 writeTVar (peerIdentityVar peer) $ PeerIdentityFull pid
                 writeTChan (serverChanPeer $ peerServer peer) peer
                 act pid
@@ -766,9 +767,9 @@ handleIdentityUpdate :: Peer -> Ref -> WaitingRefCallback
 handleIdentityUpdate peer ref = liftIO $ atomically $ do
     pidentity <- readTVar (peerIdentityVar peer)
     if  | PeerIdentityFull pid <- pidentity
+        , Just pid' <- toUnifiedIdentity $ updateIdentity [wrappedLoad ref] pid
         -> do
-            writeTVar (peerIdentityVar peer) $ PeerIdentityFull $
-                updateOwners [wrappedLoad ref] pid
+            writeTVar (peerIdentityVar peer) $ PeerIdentityFull pid'
             writeTChan (serverChanPeer $ peerServer peer) peer
 
         | otherwise -> return ()
