@@ -20,7 +20,7 @@ import Crypto.Cipher.Types
 import Crypto.Error
 
 import Data.Binary
-import Data.ByteArray
+import Data.ByteArray (ByteArray, Bytes, ScrubbedBytes, append, convert)
 import Data.ByteArray qualified as BA
 import Data.ByteString qualified as B
 import Data.ByteString.Lazy qualified as BL
@@ -90,8 +90,13 @@ createChannelRequest st self peer = liftIO $ do
 
 acceptChannelRequest :: (MonadIO m, MonadError String m) => UnifiedIdentity -> UnifiedIdentity -> Stored ChannelRequest -> m (Stored ChannelAccept, Channel)
 acceptChannelRequest self peer req = do
-    when ((crPeers $ fromStored $ signedData $ fromStored req) /= sort (map idData [self, peer])) $
-        throwError $ "mismatched peers in channel request"
+    case sequence $ map validateIdentity $ crPeers $ fromStored $ signedData $ fromStored req of
+        Nothing -> throwError $ "invalid peers in channel request"
+        Just peers -> do
+            when (not $ any (self `sameIdentity`) peers) $
+                throwError $ "self identity missing in channel request peers"
+            when (not $ any (peer `sameIdentity`) peers) $
+                throwError $ "peer identity missing in channel request peers"
     when (idKeyMessage peer `notElem` (map (sigKey . fromStored) $ signedSignature $ fromStored req)) $
         throwError $ "channel requent not signed by peer"
 
@@ -116,8 +121,13 @@ acceptedChannel self peer acc = do
     let req = caRequest $ fromStored $ signedData $ fromStored acc
         KeySizeFixed ksize = cipherKeySize (undefined :: AES128)
 
-    when ((crPeers $ fromStored $ signedData $ fromStored req) /= sort (map idData [self, peer])) $
-        throwError $ "mismatched peers in channel accept"
+    case sequence $ map validateIdentity $ crPeers $ fromStored $ signedData $ fromStored req of
+        Nothing -> throwError $ "invalid peers in channel accept"
+        Just peers -> do
+            when (not $ any (self `sameIdentity`) peers) $
+                throwError $ "self identity missing in channel accept peers"
+            when (not $ any (peer `sameIdentity`) peers) $
+                throwError $ "peer identity missing in channel accept peers"
     when (idKeyMessage peer `notElem` (map (sigKey . fromStored) $ signedSignature $ fromStored acc)) $
         throwError $ "channel accept not signed by peer"
     when (idKeyMessage self `notElem` (map (sigKey . fromStored) $ signedSignature $ fromStored req)) $
