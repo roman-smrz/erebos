@@ -163,6 +163,7 @@ commands = map (T.pack *** id)
     , ("start-server", cmdStartServer)
     , ("watch-local-identity", cmdWatchLocalIdentity)
     , ("watch-shared-identity", cmdWatchSharedIdentity)
+    , ("update-local-identity", cmdUpdateLocalIdentity)
     , ("update-shared-identity", cmdUpdateSharedIdentity)
     , ("attach-to", cmdAttachTo)
     , ("attach-accept", cmdAttachAccept)
@@ -244,6 +245,22 @@ cmdWatchSharedIdentity = do
         Nothing -> do
             outLine out $ "shared-identity-failed"
     modify $ \s -> s { tsWatchedSharedIdentity = Just w }
+
+cmdUpdateLocalIdentity :: Command
+cmdUpdateLocalIdentity = do
+    [name] <- asks tiParams
+    updateLocalState_ $ \ls -> do
+        let Just identity = validateIdentity $ lsIdentity $ fromStored ls
+            st = storedStorage ls
+            public = idKeyIdentity identity
+
+        Just secret <- loadKey public
+        nidata <- maybe (error "created invalid identity") (return . idData) . validateIdentity =<<
+            wrappedStore st =<< sign secret =<< wrappedStore st (emptyIdentityData public)
+            { iddPrev = toList $ idDataF identity
+            , iddName = Just name
+            }
+        wrappedStore st $ (fromStored ls) { lsIdentity = nidata }
 
 cmdUpdateSharedIdentity :: Command
 cmdUpdateSharedIdentity = do
