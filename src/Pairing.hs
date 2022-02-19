@@ -33,7 +33,7 @@ data PairingService a = PairingRequest RefDigest
                       | PairingResponse Bytes
                       | PairingRequestNonce Bytes
                       | PairingAccept a
-                      | PairingDecline
+                      | PairingReject
 
 data PairingState a = NoPairing
                     | OurRequest Bytes
@@ -73,19 +73,19 @@ instance Storable a => Storable (PairingService a) where
     store' (PairingResponse x) = storeRec $ storeBinary "response" x
     store' (PairingRequestNonce x) = storeRec $ storeBinary "reqnonce" x
     store' (PairingAccept x) = store' x
-    store' (PairingDecline) = storeRec $ storeText "decline" ""
+    store' (PairingReject) = storeRec $ storeText "reject" ""
 
     load' = do
         res <- loadRec $ do
             (req :: Maybe Bytes) <- loadMbBinary "request"
             rsp <- loadMbBinary "response"
             rnonce <- loadMbBinary "reqnonce"
-            (decline :: Maybe T.Text) <- loadMbText "decline"
+            (rej :: Maybe T.Text) <- loadMbText "reject"
             return $ catMaybes
                     [ PairingRequest <$> (refDigestFromByteString =<< req)
                     , PairingResponse <$> rsp
                     , PairingRequestNonce <$> rnonce
-                    , const PairingDecline <$> decline
+                    , const PairingReject <$> rej
                     ]
         case res of
              x:_ -> return x
@@ -110,7 +110,7 @@ instance PairingResult a => Service (PairingService a) where
         (NoPairing, _) -> return ()
 
         (PairingDone, _) -> return ()
-        (_, PairingDecline) -> do
+        (_, PairingReject) -> do
             join $ asks $ pairingHookRejected . svcAttributes
             svcSet NoPairing
 
@@ -133,7 +133,7 @@ instance PairingResult a => Service (PairingService a) where
                     Nothing -> do
                         join $ asks $ pairingHookVerifyFailed . svcAttributes
                         svcSet NoPairing
-                        replyPacket PairingDecline
+                        replyPacket PairingReject
 
         (OurRequestConfirm _, _) -> reject
 
@@ -159,7 +159,7 @@ instance PairingResult a => Service (PairingService a) where
                        svcSet PeerRequestConfirm
                else do join $ asks $ pairingHookRequestNonceFailed . svcAttributes
                        svcSet NoPairing
-                       replyPacket PairingDecline
+                       replyPacket PairingReject
         (PeerRequest _ _, _) -> reject
         (PeerRequestConfirm, _) -> reject
 
@@ -167,7 +167,7 @@ reject :: PairingResult a => ServiceHandler (PairingService a) ()
 reject = do
     join $ asks $ pairingHookFailed . svcAttributes
     svcSet NoPairing
-    replyPacket PairingDecline
+    replyPacket PairingReject
 
 
 nonceDigest :: UnifiedIdentity -> UnifiedIdentity -> Bytes -> Bytes -> RefDigest
