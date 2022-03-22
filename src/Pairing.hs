@@ -18,6 +18,7 @@ import Data.Bits
 import Data.ByteArray (Bytes, convert)
 import qualified Data.ByteArray as BA
 import qualified Data.ByteString.Char8 as BC
+import Data.Kind
 import Data.Maybe
 import qualified Data.Text as T
 import Data.Typeable
@@ -58,7 +59,7 @@ data PairingAttributes a = PairingAttributes
     }
 
 class (Typeable a, Storable a) => PairingResult a where
-    type PairingVerifiedResult a :: *
+    type PairingVerifiedResult a :: Type
     type PairingVerifiedResult a = a
 
     pairingServiceID :: proxy a -> ServiceID

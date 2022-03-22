@@ -25,6 +25,7 @@ import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Writer
 
+import Data.Kind
 import Data.Typeable
 import Data.UUID (UUID)
 import qualified Data.UUID as U
@@ -44,13 +45,13 @@ class (Typeable s, Storable s, Typeable (ServiceState s), Typeable (ServiceGloba
     default defaultServiceAttributes :: ServiceAttributes s ~ Proxy s => proxy s -> ServiceAttributes s
     defaultServiceAttributes _ = Proxy
 
-    type ServiceState s :: *
+    type ServiceState s :: Type
     type ServiceState s = ()
     emptyServiceState :: proxy s -> ServiceState s
     default emptyServiceState :: ServiceState s ~ () => proxy s -> ServiceState s
     emptyServiceState _ = ()
 
-    type ServiceGlobalState s :: *
+    type ServiceGlobalState s :: Type
     type ServiceGlobalState s = ()
     emptyServiceGlobalState :: proxy s -> ServiceGlobalState s
     default emptyServiceGlobalState :: ServiceGlobalState s ~ () => proxy s -> ServiceGlobalState s

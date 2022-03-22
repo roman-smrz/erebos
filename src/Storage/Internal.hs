@@ -22,6 +22,7 @@ import Data.Char
 import Data.Function
 import Data.Hashable
 import qualified Data.HashTable.IO as HT
+import Data.Kind
 import Data.List
 import Data.Map (Map)
 import qualified Data.Map as M
@@ -176,7 +177,7 @@ type Complete = Identity
 type Partial = Either RefDigest
 
 class (Traversable compl, Monad compl) => StorageCompleteness compl where
-    type LoadResult compl a :: *
+    type LoadResult compl a :: Type
     returnLoadResult :: compl a -> LoadResult compl a
     ioLoadBytes :: Ref' compl -> IO (compl BL.ByteString)
 
