@@ -52,8 +52,8 @@ deriving instance Show (m (Stored (Signed IdentityData))) => Show (Identity m)
 type ComposedIdentity = Identity []
 type UnifiedIdentity = Identity I.Identity
 
-instance Eq UnifiedIdentity where
-    (==) = (==) `on` (idData &&& idUpdates)
+instance Eq (m (Stored (Signed IdentityData))) => Eq (Identity m) where
+    (==) = (==) `on` (idData_ &&& idUpdates_)
 
 data IdentityData = IdentityData
     { iddPrev :: [Stored (Signed IdentityData)]
@@ -78,6 +78,11 @@ instance Storable IdentityData where
         <*> loadMbRef "owner"
         <*> loadRef "key-id"
         <*> loadMbRef "key-msg"
+
+instance Mergeable (Maybe ComposedIdentity) where
+    type Component (Maybe ComposedIdentity) = Signed IdentityData
+    mergeSorted = validateIdentityF
+    toComponents = maybe [] idDataF
 
 idData :: UnifiedIdentity -> Stored (Signed IdentityData)
 idData = I.runIdentity . idDataF

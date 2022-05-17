@@ -181,7 +181,7 @@ cmdCreateIdentity = do
             else foldrM (\n o -> Just <$> createIdentity st (Just n) o) Nothing names
 
         shared <- case names of
-            _:_:_ -> (:[]) <$> makeSharedStateUpdate st (idDataF $ finalOwner identity) []
+            _:_:_ -> (:[]) <$> makeSharedStateUpdate st (Just $ finalOwner identity) []
             _ -> return []
 
         storeHead st $ LocalState
@@ -239,8 +239,8 @@ cmdWatchSharedIdentity = do
     Nothing <- gets tsWatchedSharedIdentity
 
     out <- asks tiOutput
-    w <- liftIO $ watchHeadWith h (lookupSharedValue . lsShared . headObject) $ \sdata -> case validateIdentityF sdata of
-        Just idt -> do
+    w <- liftIO $ watchHeadWith h (lookupSharedValue . lsShared . headObject) $ \case
+        Just (idt :: ComposedIdentity) -> do
             outLine out $ unwords $ "shared-identity" : map (maybe "<unnamed>" T.unpack . idName) (unfoldOwners idt)
         Nothing -> do
             outLine out $ "shared-identity-failed"
@@ -265,13 +265,12 @@ cmdUpdateLocalIdentity = do
 cmdUpdateSharedIdentity :: Command
 cmdUpdateSharedIdentity = do
     [name] <- asks tiParams
-    updateSharedState_ $ \sdata -> do
-        let Just identity = validateIdentityF sdata
-            st = storedStorage $ head sdata
+    updateSharedState_ $ \(Just identity) -> do
+        let st = storedStorage $ head $ idDataF identity
             public = idKeyIdentity identity
 
         Just secret <- loadKey public
-        maybe (error "created invalid identity") (return . (:[]) . idData) . validateIdentity =<<
+        maybe (error "created invalid identity") (return . Just . toComposedIdentity) . validateIdentity =<<
             wrappedStore st =<< sign secret =<< wrappedStore st (emptyIdentityData public)
             { iddPrev = toList $ idDataF identity
             , iddName = Just name

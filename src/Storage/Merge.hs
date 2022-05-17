@@ -18,6 +18,7 @@ import Control.Concurrent.MVar
 
 import qualified Data.ByteString.Char8 as BC
 import qualified Data.HashTable.IO as HT
+import Data.Kind
 import Data.List
 import Data.Maybe
 import Data.Set (Set)
@@ -29,17 +30,17 @@ import Storage
 import Storage.Internal
 import Util
 
-class Storable a => Mergeable a where
-    mergeSorted :: [Stored a] -> a
+class Storable (Component a) => Mergeable a where
+    type Component a :: Type
+    mergeSorted :: [Stored (Component a)] -> a
+    toComponents :: a -> [Stored (Component a)]
 
-merge :: Mergeable a => [Stored a] -> a
+merge :: Mergeable a => [Stored (Component a)] -> a
 merge [] = error "merge: empty list"
-merge [x] = fromStored x
 merge xs = mergeSorted $ filterAncestors xs
 
-storeMerge :: Mergeable a => [Stored a] -> IO (Stored a)
+storeMerge :: (Mergeable a, Storable a) => [Stored (Component a)] -> IO (Stored a)
 storeMerge [] = error "merge: empty list"
-storeMerge [x] = return x
 storeMerge xs@(Stored ref _ : _) = wrappedStore (refStorage ref) $ mergeSorted $ filterAncestors xs
 
 previous :: Storable a => Stored a -> [Stored a]

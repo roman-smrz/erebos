@@ -2,6 +2,9 @@ module Message (
     DirectMessage(..),
     sendDirectMessage,
 
+    DirectMessageThreads,
+    toThreadList,
+
     DirectMessageThread(..),
     threadToList,
     messageThreadView,
@@ -56,7 +59,7 @@ instance Service DirectMessage where
         tzone <- liftIO $ getCurrentTimeZone
         erb <- svcGetLocal
         let st = storedStorage erb
-            prev = lookupSharedValue $ lsShared $ fromStored erb
+            DirectMessageThreads prev _ = lookupSharedValue $ lsShared $ fromStored erb
             sent = findMsgProperty powner msSent prev
             received = findMsgProperty powner msReceived prev
         if powner `sameIdentity` msgFrom msg ||
@@ -70,7 +73,8 @@ instance Service DirectMessage where
                        , msReceived = filterAncestors $ smsg : received
                        , msSeen = []
                        }
-                   shared <- makeSharedStateUpdate st [next] (lsShared $ fromStored erb)
+                   let threads = DirectMessageThreads [next] (messageThreadView [next])
+                   shared <- makeSharedStateUpdate st threads (lsShared $ fromStored erb)
                    wrappedStore st (fromStored erb) { lsShared = [shared] }
                svcSetLocal erb'
                when (powner `sameIdentity` msgFrom msg) $ do
@@ -88,6 +92,11 @@ data MessageState = MessageState
     , msSeen :: [Stored DirectMessage]
     }
 
+data DirectMessageThreads = DirectMessageThreads [Stored MessageState] [DirectMessageThread]
+
+toThreadList :: DirectMessageThreads -> [DirectMessageThread]
+toThreadList (DirectMessageThreads _ threads) = threads
+
 instance Storable MessageState where
     store' ms = storeRec $ do
         mapM_ (storeRef "PREV") $ msPrev ms
@@ -103,7 +112,12 @@ instance Storable MessageState where
         <*> loadRefs "received"
         <*> loadRefs "seen"
 
-instance SharedType MessageState where
+instance Mergeable DirectMessageThreads where
+    type Component DirectMessageThreads = MessageState
+    mergeSorted mss = DirectMessageThreads mss (messageThreadView mss)
+    toComponents (DirectMessageThreads mss _) = mss
+
+instance SharedType DirectMessageThreads where
     sharedTypeID _ = mkSharedTypeID "ee793681-5976-466a-b0f0-4e1907d3fade"
 
 findMsgProperty :: Foldable m => Identity m -> (MessageState -> [a]) -> [Stored MessageState] -> [a]
@@ -121,7 +135,7 @@ sendDirectMessage h peer text = do
         self = headLocalIdentity h
         powner = finalOwner pid
 
-    smsg <- flip runReaderT h $ updateSharedState $ \prev -> do
+    smsg <- flip runReaderT h $ updateSharedState $ \(DirectMessageThreads prev _) -> do
         let sent = findMsgProperty powner msSent prev
             received = findMsgProperty powner msReceived prev
 
@@ -139,7 +153,7 @@ sendDirectMessage h peer text = do
             , msReceived = []
             , msSeen = []
             }
-        return ([next], smsg)
+        return (DirectMessageThreads [next] (messageThreadView [next]), smsg)
 
     sendToPeerStored peer smsg
     return smsg

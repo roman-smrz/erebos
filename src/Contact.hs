@@ -2,6 +2,9 @@ module Contact (
     Contact(..),
     contactView,
 
+    Contacts,
+    toContactList,
+
     ContactService,
     contactRequest,
     contactAccept,
@@ -38,6 +41,11 @@ data ContactData = ContactData
     , cdName :: Maybe Text
     }
 
+data Contacts = Contacts [Stored ContactData] [Contact]
+
+toContactList :: Contacts -> [Contact]
+toContactList (Contacts _ list) = list
+
 instance Storable ContactData where
     store' x = storeRec $ do
         mapM_ (storeRef "PREV") $ cdPrev x
@@ -49,7 +57,12 @@ instance Storable ContactData where
         <*> loadRefs "identity"
         <*> loadMbText "name"
 
-instance SharedType ContactData where
+instance Mergeable Contacts where
+    type Component Contacts = ContactData
+    mergeSorted cdata = Contacts cdata $ contactView cdata
+    toComponents (Contacts cdata _) = cdata
+
+instance SharedType Contacts where
     sharedTypeID _ = mkSharedTypeID "34fbb61e-6022-405f-b1b3-a5a1abecd25e"
 
 contactView :: [Stored ContactData] -> [Contact]
@@ -91,11 +104,11 @@ instance PairingResult ContactAccepted where
 
     pairingFinalizeRequest ContactAccepted = do
         pid <- asks svcPeerIdentity
-        updateLocalState_ $ finalizeContact pid
+        finalizeContact pid
 
     pairingFinalizeResponse = do
         pid <- asks svcPeerIdentity
-        updateLocalState_ $ finalizeContact pid
+        finalizeContact pid
         return ContactAccepted
 
     defaultPairingAttributes _ = PairingAttributes
@@ -145,13 +158,12 @@ contactAccept = pairingAccept @ContactAccepted Proxy
 contactReject :: (MonadIO m, MonadError String m) => Peer -> m ()
 contactReject = pairingReject @ContactAccepted Proxy
 
-finalizeContact :: MonadIO m => UnifiedIdentity -> Stored LocalState -> m (Stored LocalState)
-finalizeContact identity slocal = liftIO $ do
-    let st = storedStorage slocal
+finalizeContact :: MonadHead LocalState m => UnifiedIdentity -> m ()
+finalizeContact identity = updateSharedState_ $ \(Contacts prev _) -> do
+    let st = storedStorage $ idData identity
     contact <- wrappedStore st ContactData
-            { cdPrev = lookupSharedValue $ lsShared $ fromStored slocal
+            { cdPrev = prev
             , cdIdentity = idDataF $ finalOwner identity
             , cdName = Nothing
             }
-    shared <- makeSharedStateUpdate st [contact] (lsShared $ fromStored slocal)
-    wrappedStore st (fromStored slocal) { lsShared = [shared] }
+    return $ Contacts [contact] (contactView [contact])

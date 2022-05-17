@@ -286,7 +286,7 @@ cmdHistory = void $ do
     let powner = finalOwner pid
 
     case find (sameIdentity powner . msgPeer) $
-            messageThreadView $ lookupSharedValue $ lsShared $ headObject ehead of
+            toThreadList $ lookupSharedValue $ lsShared $ headObject ehead of
         Just thread -> do
             tzone <- liftIO $ getCurrentTimeZone
             liftIO $ mapM_ (putStrLn . formatMessage tzone) $ reverse $ take 50 $ threadToList thread
@@ -313,7 +313,7 @@ cmdContacts :: Command
 cmdContacts = do
     args <- words <$> asks ciLine
     ehead <- asks ciHead
-    let contacts = contactView $ lookupSharedValue $ lsShared $ headObject ehead
+    let contacts = toContactList $ lookupSharedValue $ lsShared $ headObject ehead
         verbose = "-v" `elem` args
     forM_ (zip [1..] contacts) $ \(i :: Int, c) -> do
         liftIO $ putStrLn $ show i ++ ": " ++ T.unpack (displayIdentity $ contactIdentity c) ++

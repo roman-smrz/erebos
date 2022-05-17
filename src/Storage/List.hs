@@ -44,9 +44,6 @@ instance Storable a => Storable (List a) where
 instance Storable a => ZeroStorable (List a) where
     fromZero _ = ListNil
 
-instance Storable a => Mergeable (List a) where
-    mergeSorted xs = ListItem xs Nothing Nothing
-
 
 emptySList :: Storable a => Storage -> IO (StoredList a)
 emptySList st = wrappedStore st ListNil
@@ -78,10 +75,10 @@ groupsFromSLists = helperSelect S.empty . (:[])
     filterRemoved :: S.Set (StoredList a) -> [StoredList a] -> [StoredList a]
     filterRemoved rs = filter (S.null . S.intersection rs . ancestors . (:[]))
 
-fromSList :: Mergeable a => StoredList a -> [a]
+fromSList :: Mergeable a => StoredList (Component a) -> [a]
 fromSList = map merge . groupsFromSLists
 
-storedFromSList :: Mergeable a => StoredList a -> IO [Stored a]
+storedFromSList :: (Mergeable a, Storable a) => StoredList (Component a) -> IO [Stored a]
 storedFromSList = mapM storeMerge . groupsFromSLists
 
 slistAdd :: Storable a => a -> StoredList a -> IO (StoredList a)
