@@ -45,6 +45,7 @@ data Storage' c = Storage
     { stBacking :: StorageBacking c
     , stParent :: Maybe (Storage' Identity)
     , stRefGeneration :: MVar (HT.BasicHashTable RefDigest Generation)
+    , stRefRoots :: MVar (HT.BasicHashTable RefDigest [RefDigest])
     }
 
 instance Eq (Storage' c) where

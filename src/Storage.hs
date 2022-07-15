@@ -115,13 +115,25 @@ openStorage path = do
     createDirectoryIfMissing True $ path ++ "/heads"
     watchers <- newMVar ([], WatchList 1 [])
     refgen <- newMVar =<< HT.new
-    return $ Storage { stBacking = StorageDir path watchers, stParent = Nothing, stRefGeneration = refgen }
+    refroots <- newMVar =<< HT.new
+    return $ Storage
+        { stBacking = StorageDir path watchers
+        , stParent = Nothing
+        , stRefGeneration = refgen
+        , stRefRoots = refroots
+        }
 
 memoryStorage' :: IO (Storage' c')
 memoryStorage' = do
     backing <- StorageMemory <$> newMVar [] <*> newMVar M.empty <*> newMVar M.empty <*> newMVar (WatchList 1 [])
     refgen <- newMVar =<< HT.new
-    return $ Storage { stBacking = backing, stParent = Nothing, stRefGeneration = refgen }
+    refroots <- newMVar =<< HT.new
+    return $ Storage
+        { stBacking = backing
+        , stParent = Nothing
+        , stRefGeneration = refgen
+        , stRefRoots = refroots
+        }
 
 memoryStorage :: IO Storage
 memoryStorage = memoryStorage'

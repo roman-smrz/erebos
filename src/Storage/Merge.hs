@@ -10,19 +10,20 @@ module Storage.Merge (
     ancestors,
     precedes,
     filterAncestors,
+    storedRoots,
 
     findProperty,
 ) where
 
 import Control.Concurrent.MVar
 
-import qualified Data.ByteString.Char8 as BC
-import qualified Data.HashTable.IO as HT
+import Data.ByteString.Char8 qualified as BC
+import Data.HashTable.IO qualified as HT
 import Data.Kind
 import Data.List
 import Data.Maybe
 import Data.Set (Set)
-import qualified Data.Set as S
+import Data.Set qualified as S
 
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -106,6 +107,20 @@ filterAncestors xs = let xs' = uniq $ sort xs
                                                    remains' = filter (\r -> all (/=r) px) remains
                                                 in helper remains' $ uniq $ sort (px ++ filter (/=x) walk)
                                      Nothing -> remains
+
+storedRoots :: Storable a => Stored a -> [Stored a]
+storedRoots x = do
+    let st = refStorage $ storedRef x
+    unsafePerformIO $ withMVar (stRefRoots st) $ \ht -> do
+        let doLookup y = HT.lookup ht (refDigest $ storedRef y) >>= \case
+                Just roots -> return roots
+                Nothing -> do
+                    roots <- case previous y of
+                        [] -> return [refDigest $ storedRef y]
+                        ps -> map (refDigest . storedRef) . filterAncestors . map (wrappedLoad @Object . Ref st) . concat <$> mapM doLookup ps
+                    HT.insert ht (refDigest $ storedRef y) roots
+                    return roots
+        map (wrappedLoad . Ref st) <$> doLookup x
 
 findProperty :: forall a b. Storable a => (a -> Maybe b) -> [Stored a] -> [b]
 findProperty sel = map (fromJust . sel . fromStored) . filterAncestors . (findPropHeads =<<)
