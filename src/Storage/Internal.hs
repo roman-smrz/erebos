@@ -193,6 +193,16 @@ instance StorageCompleteness Partial where
     returnLoadResult = id
     ioLoadBytes (Ref st dgst) = maybe (Left dgst) Right <$> ioLoadBytesFromStorage st dgst
 
+unsafeStoreRawBytes :: Storage' c -> BL.ByteString -> IO (Ref' c)
+unsafeStoreRawBytes st raw = do
+    let dgst = hashToRefDigest raw
+    case stBacking st of
+         StorageDir { dirPath = sdir } -> writeFileOnce (refPath sdir dgst) $ compress raw
+         StorageMemory { memObjs = tobjs } ->
+             dgst `deepseq` -- the TVar may be accessed when evaluating the data to be written
+                 modifyMVar_ tobjs (return . M.insert dgst raw)
+    return $ Ref st dgst
+
 ioLoadBytesFromStorage :: Storage' c -> RefDigest -> IO (Maybe BL.ByteString)
 ioLoadBytesFromStorage st dgst = loadCurrent st >>=
     \case Just bytes -> return $ Just bytes

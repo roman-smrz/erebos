@@ -52,14 +52,12 @@ module Storage (
     beginHistory, modifyHistory,
 ) where
 
-import Codec.Compression.Zlib
 import qualified Codec.MIME.Type as MIME
 import qualified Codec.MIME.Parse as MIME
 
 import Control.Applicative
 import Control.Arrow
 import Control.Concurrent
-import Control.DeepSeq
 import Control.Exception
 import Control.Monad
 import Control.Monad.Except
@@ -246,16 +244,6 @@ storeObject = unsafeStoreObject
 
 storeRawBytes :: PartialStorage -> BL.ByteString -> IO PartialRef
 storeRawBytes = unsafeStoreRawBytes
-
-unsafeStoreRawBytes :: Storage' c -> BL.ByteString -> IO (Ref' c)
-unsafeStoreRawBytes st raw = do
-    let dgst = hashToRefDigest raw
-    case stBacking st of
-         StorageDir { dirPath = sdir } -> writeFileOnce (refPath sdir dgst) $ compress raw
-         StorageMemory { memObjs = tobjs } ->
-             dgst `deepseq` -- the TVar may be accessed when evaluating the data to be written
-                 modifyMVar_ tobjs (return . M.insert dgst raw)
-    return $ Ref st dgst
 
 serializeRecItem :: ByteString -> RecItem' c -> [ByteString]
 serializeRecItem name (RecInt x) = [name, BC.pack ":i", BC.singleton ' ', BC.pack (show x), BC.singleton '\n']

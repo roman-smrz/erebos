@@ -10,10 +10,14 @@ import Control.Monad.State
 
 import Crypto.Random
 
+import Data.ByteString qualified as B
+import Data.ByteString.Char8 qualified as BC
+import Data.ByteString.Lazy qualified as BL
 import Data.Foldable
 import Data.IP (fromSockAddr)
 import Data.Text (Text)
 import Data.Text qualified as T
+import Data.Text.Encoding
 import Data.Text.IO qualified as T
 import Data.Typeable
 
@@ -28,6 +32,7 @@ import PubKey
 import Service
 import State
 import Storage
+import Storage.Internal (unsafeStoreRawBytes)
 import Sync
 
 
@@ -58,8 +63,7 @@ data TestInput = TestInput
 runTestTool :: Storage -> IO ()
 runTestTool st = do
     out <- newMVar ()
-    let getLineMb = catchIOError (Just <$> T.getLine) (\e -> if isEOFError e then return Nothing else ioError e)
-    let testLoop = liftIO getLineMb >>= \case
+    let testLoop = getLineMb >>= \case
             Just line -> do
                 case T.words line of
                     (cname:params)
@@ -75,6 +79,14 @@ runTestTool st = do
         Left x -> hPutStrLn stderr x
         Right () -> return ()
 
+getLineMb :: MonadIO m => m (Maybe Text)
+getLineMb = liftIO $ catchIOError (Just <$> T.getLine) (\e -> if isEOFError e then return Nothing else ioError e)
+
+getLines :: MonadIO m => m [Text]
+getLines = getLineMb >>= \case
+    Just line | not (T.null line) -> (line:) <$> getLines
+    _ -> return []
+
 
 type Output = MVar ()
 
@@ -82,6 +94,11 @@ outLine :: Output -> String -> IO ()
 outLine mvar line = withMVar mvar $ \() -> do
     putStrLn line
     hFlush stdout
+
+cmdOut :: String -> Command
+cmdOut line = do
+    out <- asks tiOutput
+    liftIO $ outLine out line
 
 
 getPeer :: Text -> CommandM Peer
@@ -159,7 +176,8 @@ type Command = CommandM ()
 
 commands :: [(Text, Command)]
 commands = map (T.pack *** id)
-    [ ("create-identity", cmdCreateIdentity)
+    [ ("store", cmdStore)
+    , ("create-identity", cmdCreateIdentity)
     , ("start-server", cmdStartServer)
     , ("watch-local-identity", cmdWatchLocalIdentity)
     , ("watch-shared-identity", cmdWatchSharedIdentity)
@@ -169,6 +187,16 @@ commands = map (T.pack *** id)
     , ("attach-accept", cmdAttachAccept)
     , ("attach-reject", cmdAttachReject)
     ]
+
+cmdStore :: Command
+cmdStore = do
+    st <- asks tiStorage
+    [otype] <- asks tiParams
+    ls <- getLines
+
+    let cnt = encodeUtf8 $ T.unlines ls
+    ref <- liftIO $ unsafeStoreRawBytes st $ BL.fromChunks [encodeUtf8 otype, BC.singleton ' ', BC.pack (show $ B.length cnt), BC.singleton '\n', cnt]
+    cmdOut $ "store-done " ++ show (refDigest ref)
 
 cmdCreateIdentity :: Command
 cmdCreateIdentity = do
