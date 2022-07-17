@@ -15,6 +15,7 @@ import qualified Data.ByteString.Lazy as BL
 import Data.Char
 import Data.List
 import Data.Maybe
+import Data.Ord
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import Data.Time.LocalTime
@@ -35,6 +36,7 @@ import Message
 import Network
 import PubKey
 import Service
+import Set
 import State
 import Storage
 import Storage.Merge
@@ -313,11 +315,14 @@ cmdContacts :: Command
 cmdContacts = do
     args <- words <$> asks ciLine
     ehead <- asks ciHead
-    let contacts = toContactList $ lookupSharedValue $ lsShared $ headObject ehead
+    let contacts = fromSetBy (comparing contactName) $ lookupSharedValue $ lsShared $ headObject ehead
         verbose = "-v" `elem` args
     forM_ (zip [1..] contacts) $ \(i :: Int, c) -> do
-        liftIO $ putStrLn $ show i ++ ": " ++ T.unpack (displayIdentity $ contactIdentity c) ++
-            (if verbose then " " ++ (unwords $ map (BC.unpack . showRef . storedRef) $ idDataF $ contactIdentity c) else "")
+        liftIO $ putStrLn $ concat
+            [ show i, ": ", T.unpack $ contactName c
+            , case contactIdentity c of Nothing -> ""; Just idt -> " (" ++ T.unpack (displayIdentity idt) ++ ")"
+            , if verbose then " " ++ (unwords $ map (BC.unpack . showRef . storedRef) $ maybe [] idDataF $ contactIdentity c) else ""
+            ]
 
 cmdContactAdd :: Command
 cmdContactAdd = join $ contactRequest

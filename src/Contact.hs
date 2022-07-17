@@ -1,9 +1,8 @@
 module Contact (
-    Contact(..),
-    contactView,
-
-    Contacts,
-    toContactList,
+    Contact,
+    contactIdentity,
+    contactCustomName,
+    contactName,
 
     ContactService,
     contactRequest,
@@ -11,7 +10,6 @@ module Contact (
     contactReject,
 ) where
 
-import Control.Arrow
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
@@ -26,13 +24,15 @@ import Network
 import Pairing
 import PubKey
 import Service
+import Set
 import State
 import Storage
 import Storage.Merge
 
 data Contact = Contact
-    { contactIdentity :: ComposedIdentity
-    , contactName :: Maybe Text
+    { contactData :: [Stored ContactData]
+    , contactIdentity_ :: Maybe ComposedIdentity
+    , contactCustomName_ :: Maybe Text
     }
 
 data ContactData = ContactData
@@ -40,11 +40,6 @@ data ContactData = ContactData
     , cdIdentity :: [Stored (Signed IdentityData)]
     , cdName :: Maybe Text
     }
-
-data Contacts = Contacts [Stored ContactData] [Contact]
-
-toContactList :: Contacts -> [Contact]
-toContactList (Contacts _ list) = list
 
 instance Storable ContactData where
     store' x = storeRec $ do
@@ -57,33 +52,32 @@ instance Storable ContactData where
         <*> loadRefs "identity"
         <*> loadMbText "name"
 
-instance Mergeable Contacts where
-    type Component Contacts = ContactData
-    mergeSorted cdata = Contacts cdata $ contactView cdata
-    toComponents (Contacts cdata _) = cdata
+instance Mergeable Contact where
+    type Component Contact = ContactData
 
-instance SharedType Contacts where
+    mergeSorted cdata = Contact
+        { contactData = cdata
+        , contactIdentity_ = validateIdentityF $ concat $ findProperty ((\case [] -> Nothing; xs -> Just xs) . cdIdentity) cdata
+        , contactCustomName_ = findPropertyFirst cdName cdata
+        }
+
+    toComponents = contactData
+
+instance SharedType (Set Contact) where
     sharedTypeID _ = mkSharedTypeID "34fbb61e-6022-405f-b1b3-a5a1abecd25e"
 
-contactView :: [Stored ContactData] -> [Contact]
-contactView = helper []
-    where helper used = filterAncestors >>> \case
-              x:xs | Just cid <- validateIdentityF (cdIdentity (fromStored x))
-                   , not $ any (sameIdentity cid) used
-                   -> Contact { contactIdentity = cid
-                              , contactName = lookupProperty cid cdName (x:xs)
-                              } : helper (cid:used) (cdPrev (fromStored x) ++ xs)
-                   | otherwise -> helper used (cdPrev (fromStored x) ++ xs)
-              [] -> []
+contactIdentity :: Contact -> Maybe ComposedIdentity
+contactIdentity = contactIdentity_
 
-lookupProperty :: forall a. ComposedIdentity -> (ContactData -> Maybe a) -> [Stored ContactData] -> Maybe a
-lookupProperty idt sel = join . fmap (sel . fromStored) . listToMaybe . filterAncestors . helper
-    where helper (x:xs) | Just cid <- validateIdentityF (cdIdentity (fromStored x))
-                        , cid `sameIdentity` idt
-                        , Just _ <- sel $ fromStored x
-                        = x : helper xs
-                        | otherwise = helper $ cdPrev (fromStored x) ++ xs
-          helper [] = []
+contactCustomName :: Contact -> Maybe Text
+contactCustomName = contactCustomName_
+
+contactName :: Contact -> Text
+contactName c = fromJust $ msum
+    [ contactCustomName c
+    , idName =<< contactIdentity c
+    , Just T.empty
+    ]
 
 
 type ContactService = PairingService ContactAccepted
@@ -159,11 +153,12 @@ contactReject :: (MonadIO m, MonadError String m) => Peer -> m ()
 contactReject = pairingReject @ContactAccepted Proxy
 
 finalizeContact :: MonadHead LocalState m => UnifiedIdentity -> m ()
-finalizeContact identity = updateSharedState_ $ \(Contacts prev _) -> do
-    let st = storedStorage $ idData identity
-    contact <- wrappedStore st ContactData
-            { cdPrev = prev
+finalizeContact identity = do
+    st <- getStorage
+    updateSharedState_ $ \contacts -> do
+        cdata <- wrappedStore st ContactData
+            { cdPrev = []
             , cdIdentity = idDataF $ finalOwner identity
             , cdName = Nothing
             }
-    return $ Contacts [contact] (contactView [contact])
+        storeSetAdd st (mergeSorted @Contact [cdata]) contacts

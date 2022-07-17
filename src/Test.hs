@@ -15,6 +15,7 @@ import Data.ByteString.Char8 qualified as BC
 import Data.ByteString.Lazy qualified as BL
 import Data.Foldable
 import Data.IP (fromSockAddr)
+import Data.Ord
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Encoding
@@ -25,6 +26,7 @@ import System.IO
 import System.IO.Error
 
 import Attach
+import Contact
 import Identity
 import Network
 import Pairing
@@ -194,6 +196,10 @@ commands = map (T.pack *** id)
     , ("attach-to", cmdAttachTo)
     , ("attach-accept", cmdAttachAccept)
     , ("attach-reject", cmdAttachReject)
+    , ("contact-request", cmdContactRequest)
+    , ("contact-accept", cmdContactAccept)
+    , ("contact-reject", cmdContactReject)
+    , ("contact-list", cmdContactList)
     ]
 
 cmdStore :: Command
@@ -262,6 +268,7 @@ cmdStartServer = do
     peers <- liftIO $ newMVar (1, [])
     server <- liftIO $ startServer defaultServerOptions h (hPutStrLn stderr)
         [ someServiceAttr $ pairingAttributes (Proxy @AttachService) out peers "attach"
+        , someServiceAttr $ pairingAttributes (Proxy @ContactService) out peers "contact"
         , someService @SyncService Proxy
         ]
 
@@ -353,3 +360,30 @@ cmdAttachReject :: Command
 cmdAttachReject = do
     [spidx] <- asks tiParams
     attachReject =<< getPeer spidx
+
+cmdContactRequest :: Command
+cmdContactRequest = do
+    [spidx] <- asks tiParams
+    contactRequest =<< getPeer spidx
+
+cmdContactAccept :: Command
+cmdContactAccept = do
+    [spidx] <- asks tiParams
+    contactAccept =<< getPeer spidx
+
+cmdContactReject :: Command
+cmdContactReject = do
+    [spidx] <- asks tiParams
+    contactReject =<< getPeer spidx
+
+cmdContactList :: Command
+cmdContactList = do
+    h <- maybe (fail "failed to reload head") return =<< maybe (fail "no current head") (liftIO . reloadHead) =<< gets tsHead
+    let contacts = fromSetBy (comparing contactName) . lookupSharedValue . lsShared . headObject $ h
+    forM_ contacts $ \c -> do
+        cmdOut $ concat
+            [ "contact-list-item "
+            , T.unpack $ contactName c
+            , case contactIdentity c of Nothing -> ""; Just idt -> " " ++ T.unpack (displayIdentity idt)
+            ]
+    cmdOut "contact-list-done"

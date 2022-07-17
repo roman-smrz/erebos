@@ -14,6 +14,7 @@ module Storage.Merge (
     walkAncestors,
 
     findProperty,
+    findPropertyFirst,
 ) where
 
 import Control.Concurrent.MVar
@@ -141,7 +142,11 @@ walkAncestors f = helper . sortBy cmp
                    _ -> compare x y
 
 findProperty :: forall a b. Storable a => (a -> Maybe b) -> [Stored a] -> [b]
-findProperty sel = map (fromJust . sel . fromStored) . filterAncestors . (findPropHeads =<<)
-    where findPropHeads :: Stored a -> [Stored a]
-          findPropHeads sobj | Just _ <- sel $ fromStored sobj = [sobj]
-                             | otherwise = findPropHeads =<< previous sobj
+findProperty sel = map (fromJust . sel . fromStored) . filterAncestors . (findPropHeads sel =<<)
+
+findPropertyFirst :: forall a b. Storable a => (a -> Maybe b) -> [Stored a] -> Maybe b
+findPropertyFirst sel = fmap (fromJust . sel . fromStored) . listToMaybe . filterAncestors . (findPropHeads sel =<<)
+
+findPropHeads :: forall a b. Storable a => (a -> Maybe b) -> Stored a -> [Stored a]
+findPropHeads sel sobj | Just _ <- sel $ fromStored sobj = [sobj]
+                       | otherwise = findPropHeads sel =<< previous sobj
