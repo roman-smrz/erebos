@@ -29,6 +29,7 @@ executable erebos
                        Pairing
                        PubKey,
                        Service
+                       Set
                        State,
                        Storage,
                        Storage.Internal

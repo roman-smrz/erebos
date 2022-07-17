@@ -11,6 +11,7 @@ module Storage.Merge (
     precedes,
     filterAncestors,
     storedRoots,
+    walkAncestors,
 
     findProperty,
 ) where
@@ -35,6 +36,11 @@ class Storable (Component a) => Mergeable a where
     type Component a :: Type
     mergeSorted :: [Stored (Component a)] -> a
     toComponents :: a -> [Stored (Component a)]
+
+instance Mergeable [Stored Object] where
+    type Component [Stored Object] = Object
+    mergeSorted = id
+    toComponents = id
 
 merge :: Mergeable a => [Stored (Component a)] -> a
 merge [] = error "merge: empty list"
@@ -121,6 +127,18 @@ storedRoots x = do
                     HT.insert ht (refDigest $ storedRef y) roots
                     return roots
         map (wrappedLoad . Ref st) <$> doLookup x
+
+walkAncestors :: (Storable a, Monoid m) => (Stored a -> m) -> [Stored a] -> m
+walkAncestors f = helper . sortBy cmp
+  where
+    helper (x : y : xs) | x == y = helper (x : xs)
+    helper (x : xs) = f x <> helper (mergeBy cmp (sortBy cmp (previous x)) xs)
+    helper [] = mempty
+
+    cmp x y = case compareGeneration (storedGeneration x) (storedGeneration y) of
+                   Just LT -> GT
+                   Just GT -> LT
+                   _ -> compare x y
 
 findProperty :: forall a b. Storable a => (a -> Maybe b) -> [Stored a] -> [b]
 findProperty sel = map (fromJust . sel . fromStored) . filterAncestors . (findPropHeads =<<)

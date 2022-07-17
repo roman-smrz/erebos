@@ -30,6 +30,7 @@ import Network
 import Pairing
 import PubKey
 import Service
+import Set
 import State
 import Storage
 import Storage.Internal (unsafeStoreRawBytes)
@@ -179,6 +180,8 @@ commands :: [(Text, Command)]
 commands = map (T.pack *** id)
     [ ("store", cmdStore)
     , ("stored-roots", cmdStoredRoots)
+    , ("stored-set-add", cmdStoredSetAdd)
+    , ("stored-set-list", cmdStoredSetList)
     , ("create-identity", cmdCreateIdentity)
     , ("start-server", cmdStartServer)
     , ("watch-local-identity", cmdWatchLocalIdentity)
@@ -206,6 +209,26 @@ cmdStoredRoots = do
     [tref] <- asks tiParams
     Just ref <- liftIO $ readRef st (encodeUtf8 tref)
     cmdOut $ "stored-roots" ++ concatMap ((' ':) . show . refDigest . storedRef) (storedRoots $ wrappedLoad @Object ref)
+
+cmdStoredSetAdd :: Command
+cmdStoredSetAdd = do
+    st <- asks tiStorage
+    (item, set) <- asks tiParams >>= liftIO . mapM (readRef st . encodeUtf8) >>= \case
+        [Just iref, Just sref] -> return (wrappedLoad iref, loadSet @[Stored Object] sref)
+        [Just iref] -> return (wrappedLoad iref, emptySet)
+        _ -> fail "unexpected parameters"
+    set' <- storeSetAdd st [item] set
+    cmdOut $ "stored-set-add" ++ concatMap ((' ':) . show . refDigest . storedRef) (toComponents set')
+
+cmdStoredSetList :: Command
+cmdStoredSetList = do
+    st <- asks tiStorage
+    [tref] <- asks tiParams
+    Just ref <- liftIO $ readRef st (encodeUtf8 tref)
+    let items = fromSetBy compare $ loadSet @[Stored Object] ref
+    forM_ items $ \item -> do
+        cmdOut $ "stored-set-item" ++ concatMap ((' ':) . show . refDigest . storedRef) item
+    cmdOut $ "stored-set-done"
 
 cmdCreateIdentity :: Command
 cmdCreateIdentity = do
