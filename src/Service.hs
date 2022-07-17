@@ -116,7 +116,7 @@ instance MonadStorage (ServiceHandler s) where
 
 instance MonadHead LocalState (ServiceHandler s) where
     updateLocalHead f = do
-        (ls, x) <- liftIO . f =<< gets svcLocal
+        (ls, x) <- f =<< gets svcLocal
         modify $ \s -> s { svcLocal = ls }
         return x
 

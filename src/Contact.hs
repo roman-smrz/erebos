@@ -153,12 +153,11 @@ contactReject :: (MonadIO m, MonadError String m) => Peer -> m ()
 contactReject = pairingReject @ContactAccepted Proxy
 
 finalizeContact :: MonadHead LocalState m => UnifiedIdentity -> m ()
-finalizeContact identity = do
+finalizeContact identity = updateSharedState_ $ \contacts -> do
     st <- getStorage
-    updateSharedState_ $ \contacts -> do
-        cdata <- wrappedStore st ContactData
-            { cdPrev = []
-            , cdIdentity = idDataF $ finalOwner identity
-            , cdName = Nothing
-            }
-        storeSetAdd st (mergeSorted @Contact [cdata]) contacts
+    cdata <- wrappedStore st ContactData
+        { cdPrev = []
+        , cdIdentity = idDataF $ finalOwner identity
+        , cdName = Nothing
+        }
+    storeSetAdd st (mergeSorted @Contact [cdata]) contacts

@@ -379,8 +379,8 @@ headTypePath spath (HeadTypeID tid) = spath </> "heads" </> U.toString tid
 headPath :: FilePath -> HeadTypeID -> HeadID -> FilePath
 headPath spath tid (HeadID hid) = headTypePath spath tid </> U.toString hid
 
-loadHeads :: forall a. HeadType a => Storage -> IO [Head a]
-loadHeads s@(Storage { stBacking = StorageDir { dirPath = spath }}) = do
+loadHeads :: forall a m. MonadIO m => HeadType a => Storage -> m [Head a]
+loadHeads s@(Storage { stBacking = StorageDir { dirPath = spath }}) = liftIO $ do
     let hpath = headTypePath spath $ headTypeID @a Proxy
 
     files <- filterM (doesFileExist . (hpath </>)) =<<
@@ -393,25 +393,25 @@ loadHeads s@(Storage { stBacking = StorageDir { dirPath = spath }}) = do
                  Just ref <- readRef s h
                  return $ Just $ Head (HeadID hid) $ wrappedLoad ref
              Nothing -> return Nothing
-loadHeads Storage { stBacking = StorageMemory { memHeads = theads } } = do
+loadHeads Storage { stBacking = StorageMemory { memHeads = theads } } = liftIO $ do
     let toHead ((tid, hid), ref) | tid == headTypeID @a Proxy = Just $ Head hid $ wrappedLoad ref
                                  | otherwise                  = Nothing
     catMaybes . map toHead <$> readMVar theads
 
-loadHead :: forall a. HeadType a => Storage -> HeadID -> IO (Maybe (Head a))
-loadHead s@(Storage { stBacking = StorageDir { dirPath = spath }}) hid = do
+loadHead :: forall a m. (HeadType a, MonadIO m) => Storage -> HeadID -> m (Maybe (Head a))
+loadHead s@(Storage { stBacking = StorageDir { dirPath = spath }}) hid = liftIO $ do
     handleJust (guard . isDoesNotExistError) (const $ return Nothing) $ do
         (h:_) <- BC.lines <$> B.readFile (headPath spath (headTypeID @a Proxy) hid)
         Just ref <- readRef s h
         return $ Just $ Head hid $ wrappedLoad ref
-loadHead Storage { stBacking = StorageMemory { memHeads = theads } } hid = do
+loadHead Storage { stBacking = StorageMemory { memHeads = theads } } hid = liftIO $ do
     fmap (Head hid . wrappedLoad) . lookup (headTypeID @a Proxy, hid) <$> readMVar theads
 
-reloadHead :: HeadType a => Head a -> IO (Maybe (Head a))
+reloadHead :: (HeadType a, MonadIO m) => Head a -> m (Maybe (Head a))
 reloadHead (Head hid (Stored (Ref st _) _)) = loadHead st hid
 
-storeHead :: forall a. HeadType a => Storage -> a -> IO (Head a)
-storeHead st obj = do
+storeHead :: forall a m. MonadIO m => HeadType a => Storage -> a -> m (Head a)
+storeHead st obj = liftIO $ do
     let tid = headTypeID @a Proxy
     hid <- HeadID <$> U.nextRandom
     stored <- wrappedStore st obj
@@ -424,8 +424,8 @@ storeHead st obj = do
              modifyMVar_ theads $ return . (((tid, hid), storedRef stored) :)
     return $ Head hid stored
 
-replaceHead :: forall a. HeadType a => Head a -> Stored a -> IO (Either (Maybe (Head a)) (Head a))
-replaceHead prev@(Head hid pobj) stored = do
+replaceHead :: forall a m. (HeadType a, MonadIO m) => Head a -> Stored a -> m (Either (Maybe (Head a)) (Head a))
+replaceHead prev@(Head hid pobj) stored = liftIO $ do
     let st = storedStorage pobj
         tid = headTypeID @a Proxy
     case stBacking st of
@@ -451,7 +451,7 @@ replaceHead prev@(Head hid pobj) stored = do
                   Right (h, ws) -> mapM_ ($ headRef h) ws >> return (Right h)
                   Left x -> return $ Left x
 
-updateHead :: HeadType a => Head a -> (Stored a -> IO (Stored a, b)) -> IO (Maybe (Head a), b)
+updateHead :: (HeadType a, MonadIO m) => Head a -> (Stored a -> m (Stored a, b)) -> m (Maybe (Head a), b)
 updateHead h f = do
     (o, x) <- f $ headStoredObject h
     replaceHead h o >>= \case
@@ -459,7 +459,7 @@ updateHead h f = do
         Left Nothing -> return (Nothing, x)
         Left (Just h') -> updateHead h' f
 
-updateHead_ :: HeadType a => Head a -> (Stored a -> IO (Stored a)) -> IO (Maybe (Head a))
+updateHead_ :: (HeadType a, MonadIO m) => Head a -> (Stored a -> m (Stored a)) -> m (Maybe (Head a))
 updateHead_ h = fmap fst . updateHead h . (fmap (,()) .)
 
 

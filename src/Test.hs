@@ -175,7 +175,7 @@ instance MonadStorage CommandM where
 instance MonadHead LocalState CommandM where
     updateLocalHead f = do
         Just h <- gets tsHead
-        (Just h', x) <- liftIO $ maybe (fail "failed to reload head") (flip updateHead f) =<< reloadHead h
+        (Just h', x) <- maybe (fail "failed to reload head") (flip updateHead f) =<< reloadHead h
         modify $ \s -> s { tsHead = Just h' }
         return x
 
@@ -319,7 +319,7 @@ cmdWatchSharedIdentity = do
 cmdUpdateLocalIdentity :: Command
 cmdUpdateLocalIdentity = do
     [name] <- asks tiParams
-    updateLocalState_ $ \ls -> do
+    updateLocalState_ $ \ls -> liftIO $ do
         let Just identity = validateIdentity $ lsIdentity $ fromStored ls
             st = storedStorage ls
             public = idKeyIdentity identity
@@ -335,7 +335,7 @@ cmdUpdateLocalIdentity = do
 cmdUpdateSharedIdentity :: Command
 cmdUpdateSharedIdentity = do
     [name] <- asks tiParams
-    updateSharedState_ $ \(Just identity) -> do
+    updateSharedState_ $ \(Just identity) -> liftIO $ do
         let st = storedStorage $ head $ idDataF identity
             public = idKeyIdentity identity
 
@@ -378,7 +378,7 @@ cmdContactReject = do
 
 cmdContactList :: Command
 cmdContactList = do
-    h <- maybe (fail "failed to reload head") return =<< maybe (fail "no current head") (liftIO . reloadHead) =<< gets tsHead
+    h <- maybe (fail "failed to reload head") return =<< maybe (fail "no current head") reloadHead =<< gets tsHead
     let contacts = fromSetBy (comparing contactName) . lookupSharedValue . lsShared . headObject $ h
     forM_ contacts $ \c -> do
         cmdOut $ concat

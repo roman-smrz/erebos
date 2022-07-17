@@ -135,7 +135,7 @@ sendDirectMessage h peer text = do
         self = headLocalIdentity h
         powner = finalOwner pid
 
-    smsg <- flip runReaderT h $ updateSharedState $ \(DirectMessageThreads prev _) -> do
+    smsg <- flip runReaderT h $ updateSharedState $ \(DirectMessageThreads prev _) -> liftIO $ do
         let sent = findMsgProperty powner msSent prev
             received = findMsgProperty powner msReceived prev
 

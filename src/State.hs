@@ -84,8 +84,8 @@ instance SharedType (Maybe ComposedIdentity) where
 class Monad m => MonadStorage m where
     getStorage :: m Storage
 
-class MonadStorage m => MonadHead a m where
-    updateLocalHead :: (Stored a -> IO (Stored a, b)) -> m b
+class (MonadIO m, MonadStorage m) => MonadHead a m where
+    updateLocalHead :: (Stored a -> m (Stored a, b)) -> m b
 
 instance Monad m => MonadStorage (ReaderT (Head a) m) where
     getStorage = asks $ refStorage . headRef
@@ -93,7 +93,7 @@ instance Monad m => MonadStorage (ReaderT (Head a) m) where
 instance (HeadType a, MonadIO m) => MonadHead a (ReaderT (Head a) m) where
     updateLocalHead f = do
         h <- ask
-        liftIO $ snd <$> updateHead h f
+        snd <$> updateHead h f
 
 
 loadLocalStateHead :: Storage -> IO (Head LocalState)
@@ -132,16 +132,16 @@ headLocalIdentity h =
             (validateIdentity $ lsIdentity ls)
 
 
-updateLocalState_ :: MonadHead LocalState m => (Stored LocalState -> IO (Stored LocalState)) -> m ()
+updateLocalState_ :: MonadHead LocalState m => (Stored LocalState -> m (Stored LocalState)) -> m ()
 updateLocalState_ f = updateLocalState (fmap (,()) . f)
 
-updateLocalState :: MonadHead LocalState m => (Stored LocalState -> IO (Stored LocalState, a)) -> m a
+updateLocalState :: MonadHead LocalState m => (Stored LocalState -> m (Stored LocalState, a)) -> m a
 updateLocalState = updateLocalHead
 
-updateSharedState_ :: (SharedType a, MonadHead LocalState m) => (a -> IO a) -> m ()
+updateSharedState_ :: (SharedType a, MonadHead LocalState m) => (a -> m a) -> m ()
 updateSharedState_ f = updateSharedState (fmap (,()) . f)
 
-updateSharedState :: forall a b m. (SharedType a, MonadHead LocalState m) => (a -> IO (a, b)) -> m b
+updateSharedState :: forall a b m. (SharedType a, MonadHead LocalState m) => (a -> m (a, b)) -> m b
 updateSharedState f = updateLocalHead $ \ls -> do
     let shared = lsShared $ fromStored ls
         val = lookupSharedValue shared
@@ -158,8 +158,8 @@ lookupSharedValue = mergeSorted . filterAncestors . map wrappedLoad . concatMap 
                         | otherwise = helper $ ssPrev (fromStored x) ++ xs
           helper [] = []
 
-makeSharedStateUpdate :: forall a. SharedType a => Storage -> a -> [Stored SharedState] -> IO (Stored SharedState)
-makeSharedStateUpdate st val prev = wrappedStore st SharedState
+makeSharedStateUpdate :: forall a m. MonadIO m => SharedType a => Storage -> a -> [Stored SharedState] -> m (Stored SharedState)
+makeSharedStateUpdate st val prev = liftIO $ wrappedStore st SharedState
     { ssPrev = prev
     , ssType = Just $ sharedTypeID @a Proxy
     , ssValue = storedRef <$> toComponents val
@@ -168,12 +168,12 @@ makeSharedStateUpdate st val prev = wrappedStore st SharedState
 
 mergeSharedIdentity :: MonadHead LocalState m => m UnifiedIdentity
 mergeSharedIdentity = updateSharedState $ \(Just cidentity) -> do
-    identity <- mergeIdentity cidentity
+    identity <- liftIO $ mergeIdentity cidentity
     return (Just $ toComposedIdentity identity, identity)
 
 updateSharedIdentity :: MonadHead LocalState m => m ()
 updateSharedIdentity = updateSharedState_ $ \(Just identity) -> do
-    Just . toComposedIdentity <$> interactiveIdentityUpdate identity
+    Just . toComposedIdentity <$> liftIO (interactiveIdentityUpdate identity)
 
 interactiveIdentityUpdate :: Foldable m => Identity m -> IO UnifiedIdentity
 interactiveIdentityUpdate identity = do
