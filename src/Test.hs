@@ -167,6 +167,9 @@ instance MonadFail CommandM where
 instance MonadRandom CommandM where
     getRandomBytes = liftIO . getRandomBytes
 
+instance MonadStorage CommandM where
+    getStorage = asks tiStorage
+
 instance MonadHead LocalState CommandM where
     updateLocalHead f = do
         Just h <- gets tsHead

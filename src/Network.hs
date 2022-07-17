@@ -4,7 +4,7 @@ module Network (
     getNextPeerChange,
     ServerOptions(..), serverIdentity, defaultServerOptions,
 
-    Peer, peerServer,
+    Peer, peerServer, peerStorage,
     PeerAddress(..), peerAddress,
     PeerIdentity(..), peerIdentity,
     PeerChannel(..),
@@ -101,7 +101,7 @@ data Peer = Peer
     , peerServer_ :: Server
     , peerIdentityVar :: TVar PeerIdentity
     , peerChannel :: TVar PeerChannel
-    , peerStorage :: Storage
+    , peerStorage_ :: Storage
     , peerInStorage :: PartialStorage
     , peerOutQueue :: TQueue (Bool, [TransportHeaderItem], TransportPacket)
     , peerSentPackets :: TVar [SentPacket]
@@ -119,6 +119,9 @@ data SentPacket = SentPacket
 
 peerServer :: Peer -> Server
 peerServer = peerServer_
+
+peerStorage :: Peer -> Storage
+peerStorage = peerStorage_
 
 instance Eq Peer where
     (==) = (==) `on` peerIdentityVar

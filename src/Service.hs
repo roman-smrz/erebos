@@ -111,6 +111,9 @@ data ServiceHandlerState s = ServiceHandlerState
 newtype ServiceHandler s a = ServiceHandler (ReaderT (ServiceInput s) (WriterT [ServiceReply s] (StateT (ServiceHandlerState s) (ExceptT String IO))) a)
     deriving (Functor, Applicative, Monad, MonadReader (ServiceInput s), MonadWriter [ServiceReply s], MonadState (ServiceHandlerState s), MonadError String, MonadIO)
 
+instance MonadStorage (ServiceHandler s) where
+    getStorage = asks $ peerStorage . svcPeer
+
 instance MonadHead LocalState (ServiceHandler s) where
     updateLocalHead f = do
         (ls, x) <- liftIO . f =<< gets svcLocal

@@ -2,7 +2,7 @@ module State (
     LocalState(..),
     SharedState, SharedType(..),
     SharedTypeID, mkSharedTypeID,
-    MonadHead(..),
+    MonadStorage(..), MonadHead(..),
 
     loadLocalStateHead,
     updateLocalState, updateLocalState_,
@@ -81,8 +81,14 @@ instance SharedType (Maybe ComposedIdentity) where
     sharedTypeID _ = mkSharedTypeID "0c6c1fe0-f2d7-4891-926b-c332449f7871"
 
 
-class MonadHead a m where
+class Monad m => MonadStorage m where
+    getStorage :: m Storage
+
+class MonadStorage m => MonadHead a m where
     updateLocalHead :: (Stored a -> IO (Stored a, b)) -> m b
+
+instance Monad m => MonadStorage (ReaderT (Head a) m) where
+    getStorage = asks $ refStorage . headRef
 
 instance (HeadType a, MonadIO m) => MonadHead a (ReaderT (Head a) m) where
     updateLocalHead f = do
