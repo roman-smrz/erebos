@@ -109,7 +109,7 @@ instance PairingResult AttachIdentity where
         , pairingHookRejected = do
             svcPrint $ "Attachment rejected by peer"
 
-        , pairingHookFailed = do
+        , pairingHookFailed = \_ -> do
             svcPrint $ "Attachement failed"
         }
 

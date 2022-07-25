@@ -139,7 +139,7 @@ instance PairingResult ContactAccepted where
         , pairingHookRejected = do
             svcPrint $ "Contact rejected by peer"
 
-        , pairingHookFailed = do
+        , pairingHookFailed = \_ -> do
             svcPrint $ "Contact failed"
         }
 

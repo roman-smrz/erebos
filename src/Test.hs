@@ -128,7 +128,7 @@ pairingAttributes _ out peers prefix = PairingAttributes
         index <- show <$> getPeerIndex peers
         liftIO $ outLine out $ unwords [prefix ++ "-request", index, confirm]
 
-    , pairingHookRequestNonceFailed = failed
+    , pairingHookRequestNonceFailed = failed "nonce"
 
     , pairingHookConfirmedResponse = return ()
     , pairingHookConfirmedRequest = return ()
@@ -141,13 +141,16 @@ pairingAttributes _ out peers prefix = PairingAttributes
         index <- show <$> getPeerIndex peers
         liftIO $ outLine out $ unwords [prefix ++ "-request-done", index]
 
-    , pairingHookFailed = failed
-    , pairingHookVerifyFailed = failed
-    , pairingHookRejected = failed
+    , pairingHookFailed = \case
+        PairingUserRejected -> failed "user"
+        PairingUnexpectedMessage pstate packet -> failed $ "unexpected " ++ strState pstate ++ " " ++ strPacket packet
+        PairingFailedOther str -> failed $ "other " ++ str
+    , pairingHookVerifyFailed = failed "verify"
+    , pairingHookRejected = failed "rejected"
     }
     where
-        failed :: PairingResult a => ServiceHandler (PairingService a) ()
-        failed = do
+        failed :: PairingResult a => String -> ServiceHandler (PairingService a) ()
+        failed detail = do
             ptype <- svcGet >>= return . \case
                 OurRequest {} -> "response"
                 OurRequestConfirm {} -> "response"
@@ -157,7 +160,25 @@ pairingAttributes _ out peers prefix = PairingAttributes
                 _ -> fail "unexpected pairing state"
 
             index <- show <$> getPeerIndex peers
-            liftIO $ outLine out $ prefix ++ "-" ++ ptype ++ "-failed " ++ index
+            liftIO $ outLine out $ prefix ++ "-" ++ ptype ++ "-failed " ++ index ++ " " ++ detail
+
+        strState :: PairingState a -> String
+        strState = \case
+            NoPairing -> "none"
+            OurRequest {} -> "our-request"
+            OurRequestConfirm {} -> "our-request-confirm"
+            OurRequestReady -> "our-request-ready"
+            PeerRequest {} -> "peer-request"
+            PeerRequestConfirm -> "peer-request-confirm"
+            PairingDone -> "done"
+
+        strPacket :: PairingService a -> String
+        strPacket = \case
+            PairingRequest {} -> "request"
+            PairingResponse {} -> "response"
+            PairingRequestNonce {} -> "nonce"
+            PairingAccept {} -> "accept"
+            PairingReject -> "reject"
 
 
 newtype CommandM a = CommandM (ReaderT TestInput (StateT TestState (ExceptT String IO)) a)

@@ -3,6 +3,7 @@ module Pairing (
     PairingState(..),
     PairingAttributes(..),
     PairingResult(..),
+    PairingFailureReason(..),
 
     pairingRequest,
     pairingAccept,
@@ -44,6 +45,10 @@ data PairingState a = NoPairing
                     | PeerRequestConfirm
                     | PairingDone
 
+data PairingFailureReason a = PairingUserRejected
+                            | PairingUnexpectedMessage (PairingState a) (PairingService a)
+                            | PairingFailedOther String
+
 data PairingAttributes a = PairingAttributes
     { pairingHookRequest :: ServiceHandler (PairingService a) ()
     , pairingHookResponse :: String -> ServiceHandler (PairingService a) ()
@@ -55,7 +60,7 @@ data PairingAttributes a = PairingAttributes
     , pairingHookAcceptedRequest :: ServiceHandler (PairingService a) ()
     , pairingHookVerifyFailed :: ServiceHandler (PairingService a) ()
     , pairingHookRejected :: ServiceHandler (PairingService a) ()
-    , pairingHookFailed :: ServiceHandler (PairingService a) ()
+    , pairingHookFailed :: PairingFailureReason a -> ServiceHandler (PairingService a) ()
     }
 
 class (Typeable a, Storable a) => PairingResult a where
@@ -123,10 +128,10 @@ instance PairingResult a => Service (PairingService a) where
             hook $ confirmationNumber $ nonceDigest self peer nonce pnonce
             svcSet $ OurRequestConfirm Nothing
             replyPacket $ PairingRequestNonce nonce
-        (OurRequest _, _) -> reject
+        x@(OurRequest _, _) -> reject $ uncurry PairingUnexpectedMessage x
 
         (OurRequestConfirm _, PairingAccept x) -> do
-            flip catchError (const reject) $ do
+            flip catchError (reject . PairingFailedOther) $ do
                 pairingVerifyResult x >>= \case
                     Just x' -> do
                         join $ asks $ pairingHookConfirmedRequest . svcAttributes
@@ -136,10 +141,10 @@ instance PairingResult a => Service (PairingService a) where
                         svcSet NoPairing
                         replyPacket PairingReject
 
-        (OurRequestConfirm _, _) -> reject
+        x@(OurRequestConfirm _, _) -> reject $ uncurry PairingUnexpectedMessage x
 
         (OurRequestReady, PairingAccept x) -> do
-            flip catchError (const reject) $ do
+            flip catchError (reject . PairingFailedOther) $ do
                 pairingVerifyResult x >>= \case
                     Just x' -> do
                         pairingFinalizeRequest x'
@@ -148,7 +153,7 @@ instance PairingResult a => Service (PairingService a) where
                     Nothing -> do
                         join $ asks $ pairingHookVerifyFailed . svcAttributes
                         throwError ""
-        (OurRequestReady, _) -> reject
+        x@(OurRequestReady, _) -> reject $ uncurry PairingUnexpectedMessage x
 
         (PeerRequest nonce dgst, PairingRequestNonce pnonce) -> do
             peer <- asks $ svcPeerIdentity
@@ -161,12 +166,12 @@ instance PairingResult a => Service (PairingService a) where
                else do join $ asks $ pairingHookRequestNonceFailed . svcAttributes
                        svcSet NoPairing
                        replyPacket PairingReject
-        (PeerRequest _ _, _) -> reject
-        (PeerRequestConfirm, _) -> reject
+        x@(PeerRequest _ _, _) -> reject $ uncurry PairingUnexpectedMessage x
+        x@(PeerRequestConfirm, _) -> reject $ uncurry PairingUnexpectedMessage x
 
-reject :: PairingResult a => ServiceHandler (PairingService a) ()
-reject = do
-    join $ asks $ pairingHookFailed . svcAttributes
+reject :: PairingResult a => PairingFailureReason a -> ServiceHandler (PairingService a) ()
+reject reason = do
+    join $ asks $ flip pairingHookFailed reason . svcAttributes
     svcSet NoPairing
     replyPacket PairingReject
 
@@ -221,4 +226,4 @@ pairingReject _ peer = runPeerService @(PairingService a) peer $ do
     svcGet >>= \case
         NoPairing -> throwError $ "none in progress"
         PairingDone -> throwError $ "already done"
-        _ -> reject
+        _ -> reject PairingUserRejected
