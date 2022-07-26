@@ -27,21 +27,22 @@ import Data.Word
 
 import Identity
 import Network
+import PubKey
 import Service
 import State
 import Storage
 
-data PairingService a = PairingRequest RefDigest
+data PairingService a = PairingRequest (Stored (Signed IdentityData)) (Stored (Signed IdentityData)) RefDigest
                       | PairingResponse Bytes
                       | PairingRequestNonce Bytes
                       | PairingAccept a
                       | PairingReject
 
 data PairingState a = NoPairing
-                    | OurRequest Bytes
+                    | OurRequest UnifiedIdentity UnifiedIdentity Bytes
                     | OurRequestConfirm (Maybe (PairingVerifiedResult a))
                     | OurRequestReady
-                    | PeerRequest Bytes RefDigest
+                    | PeerRequest UnifiedIdentity UnifiedIdentity Bytes RefDigest
                     | PeerRequestConfirm
                     | PairingDone
 
@@ -75,7 +76,10 @@ class (Typeable a, Storable a) => PairingResult a where
 
 
 instance Storable a => Storable (PairingService a) where
-    store' (PairingRequest x) = storeRec $ storeBinary "request" x
+    store' (PairingRequest idReq idRsp x) = storeRec $ do
+        storeRef "id-req" idReq
+        storeRef "id-rsp" idRsp
+        storeBinary "request" x
     store' (PairingResponse x) = storeRec $ storeBinary "response" x
     store' (PairingRequestNonce x) = storeRec $ storeBinary "reqnonce" x
     store' (PairingAccept x) = store' x
@@ -84,11 +88,13 @@ instance Storable a => Storable (PairingService a) where
     load' = do
         res <- loadRec $ do
             (req :: Maybe Bytes) <- loadMbBinary "request"
+            idReq <- loadMbRef "id-req"
+            idRsp <- loadMbRef "id-rsp"
             rsp <- loadMbBinary "response"
             rnonce <- loadMbBinary "reqnonce"
             (rej :: Maybe T.Text) <- loadMbText "reject"
             return $ catMaybes
-                    [ PairingRequest <$> (refDigestFromByteString =<< req)
+                    [ PairingRequest <$> idReq <*> idRsp <*> (refDigestFromByteString =<< req)
                     , PairingResponse <$> rsp
                     , PairingRequestNonce <$> rnonce
                     , const PairingReject <$> rej
@@ -108,10 +114,21 @@ instance PairingResult a => Service (PairingService a) where
     emptyServiceState _ = NoPairing
 
     serviceHandler spacket = ((,fromStored spacket) <$> svcGet) >>= \case
-        (NoPairing, PairingRequest confirm) -> do
+        (NoPairing, PairingRequest pdata sdata confirm) -> do
+            self <- maybe (throwError "failed to validate received identity") return $ validateIdentity sdata
+            self' <- maybe (throwError "failed to validate own identity") return .
+                validateIdentity . lsIdentity . fromStored =<< svcGetLocal
+            when (not $ self `sameIdentity` self') $ do
+                throwError "pairing request to different identity"
+
+            peer <- maybe (throwError "failed to validate received peer identity") return $ validateIdentity pdata
+            peer' <- asks $ svcPeerIdentity
+            when (not $ peer `sameIdentity` peer') $ do
+                throwError "pairing request from different identity"
+
             join $ asks $ pairingHookRequest . svcAttributes
             nonce <- liftIO $ getRandomBytes 32
-            svcSet $ PeerRequest nonce confirm
+            svcSet $ PeerRequest peer self nonce confirm
             replyPacket $ PairingResponse nonce
         (NoPairing, _) -> return ()
 
@@ -120,15 +137,12 @@ instance PairingResult a => Service (PairingService a) where
             join $ asks $ pairingHookRejected . svcAttributes
             svcSet NoPairing
 
-        (OurRequest nonce, PairingResponse pnonce) -> do
-            peer <- asks $ svcPeerIdentity
-            self <- maybe (throwError "failed to validate own identity") return .
-                validateIdentity . lsIdentity . fromStored =<< svcGetLocal
+        (OurRequest self peer nonce, PairingResponse pnonce) -> do
             hook <- asks $ pairingHookResponse . svcAttributes
             hook $ confirmationNumber $ nonceDigest self peer nonce pnonce
             svcSet $ OurRequestConfirm Nothing
             replyPacket $ PairingRequestNonce nonce
-        x@(OurRequest _, _) -> reject $ uncurry PairingUnexpectedMessage x
+        x@(OurRequest {}, _) -> reject $ uncurry PairingUnexpectedMessage x
 
         (OurRequestConfirm _, PairingAccept x) -> do
             flip catchError (reject . PairingFailedOther) $ do
@@ -155,10 +169,7 @@ instance PairingResult a => Service (PairingService a) where
                         throwError ""
         x@(OurRequestReady, _) -> reject $ uncurry PairingUnexpectedMessage x
 
-        (PeerRequest nonce dgst, PairingRequestNonce pnonce) -> do
-            peer <- asks $ svcPeerIdentity
-            self <- maybe (throwError "failed to verify own identity") return .
-                validateIdentity . lsIdentity . fromStored =<< svcGetLocal
+        (PeerRequest peer self nonce dgst, PairingRequestNonce pnonce) -> do
             if dgst == nonceDigest peer self pnonce BA.empty
                then do hook <- asks $ pairingHookRequestNonce . svcAttributes
                        hook $ confirmationNumber $ nonceDigest peer self pnonce nonce
@@ -166,7 +177,7 @@ instance PairingResult a => Service (PairingService a) where
                else do join $ asks $ pairingHookRequestNonceFailed . svcAttributes
                        svcSet NoPairing
                        replyPacket PairingReject
-        x@(PeerRequest _ _, _) -> reject $ uncurry PairingUnexpectedMessage x
+        x@(PeerRequest {}, _) -> reject $ uncurry PairingUnexpectedMessage x
         x@(PeerRequestConfirm, _) -> reject $ uncurry PairingUnexpectedMessage x
 
 reject :: PairingResult a => PairingFailureReason a -> ServiceHandler (PairingService a) ()
@@ -177,11 +188,11 @@ reject reason = do
 
 
 nonceDigest :: UnifiedIdentity -> UnifiedIdentity -> Bytes -> Bytes -> RefDigest
-nonceDigest id1 id2 nonce1 nonce2 = hashToRefDigest $ serializeObject $ Rec
-        [ (BC.pack "id", RecRef $ storedRef $ idData id1)
-        , (BC.pack "id", RecRef $ storedRef $ idData id2)
-        , (BC.pack "nonce", RecBinary $ convert nonce1)
-        , (BC.pack "nonce", RecBinary $ convert nonce2)
+nonceDigest idReq idRsp nonceReq nonceRsp = hashToRefDigest $ serializeObject $ Rec
+        [ (BC.pack "id-req", RecRef $ storedRef $ idData idReq)
+        , (BC.pack "id-rsp", RecRef $ storedRef $ idData idRsp)
+        , (BC.pack "nonce-req", RecBinary $ convert nonceReq)
+        , (BC.pack "nonce-rsp", RecBinary $ convert nonceRsp)
         ]
 
 confirmationNumber :: RefDigest -> String
@@ -198,7 +209,7 @@ pairingRequest _ peer = do
         PeerIdentityFull pid -> return pid
         _ -> throwError "incomplete peer identity"
     sendToPeerWith @(PairingService a) peer $ \case
-        NoPairing -> return (Just $ PairingRequest (nonceDigest self pid nonce BA.empty), OurRequest nonce)
+        NoPairing -> return (Just $ PairingRequest (idData self) (idData pid) (nonceDigest self pid nonce BA.empty), OurRequest self pid nonce)
         _ -> throwError "already in progress"
 
 pairingAccept :: forall a m proxy. (PairingResult a, MonadIO m, MonadError String m) => proxy a -> Peer -> m ()
