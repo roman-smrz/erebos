@@ -230,6 +230,7 @@ writeFileOnce file content = bracket
         fileExist file >>= \case
             True  -> removeLink locked
             False -> do BL.hPut h content
+                        hFlush h
                         rename locked file
     where locked = file ++ ".lock"
 
@@ -243,11 +244,13 @@ writeFileChecked file prev content = bracket
                 removeLink locked
                 return $ Left $ Just current
             (Nothing, False) -> do B.hPut h content
+                                   hFlush h
                                    rename locked file
                                    return $ Right ()
             (Just expected, True) -> do
                 current <- B.readFile file
                 if current == expected then do B.hPut h content
+                                               hFlush h
                                                rename locked file
                                                return $ return ()
                                        else do removeLink locked
