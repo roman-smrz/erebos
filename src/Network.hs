@@ -835,10 +835,12 @@ sendToPeerList :: (Service s, MonadIO m) => Peer -> [ServiceReply s] -> m ()
 sendToPeerList peer parts = do
     let st = peerStorage peer
         pst = peerInStorage peer
-    srefs <- liftIO $ forM parts $ \case ServiceReply (Left x) _ -> store st x
-                                         ServiceReply (Right sx) _ -> return $ storedRef sx
-    prefs <- mapM (copyRef pst) srefs
-    let content = map snd $ filter (\(ServiceReply _ use, _) -> use) (zip parts srefs)
+    srefs <- liftIO $ fmap catMaybes $ forM parts $ \case
+        ServiceReply (Left x) use -> Just . (,use) <$> store st x
+        ServiceReply (Right sx) use -> return $ Just (storedRef sx, use)
+        ServiceFinally act -> act >> return Nothing
+    prefs <- mapM (copyRef pst . fst) srefs
+    let content = map fst $ filter snd srefs
         header = TransportHeader (ServiceType (serviceID $ head parts) : map ServiceRef prefs)
         packet = TransportPacket header content
         ackedBy = concat [[ Acknowledged r, Rejected r, DataRequest r ] | r <- prefs ]

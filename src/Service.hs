@@ -18,6 +18,7 @@ module Service (
     svcPrint,
 
     replyPacket, replyStored, replyStoredRef,
+    afterCommit,
 ) where
 
 import Control.Monad.Except
@@ -101,6 +102,7 @@ data ServiceInput s = ServiceInput
     }
 
 data ServiceReply s = ServiceReply (Either s (Stored s)) Bool
+                    | ServiceFinally (IO ())
 
 data ServiceHandlerState s = ServiceHandlerState
     { svcValue :: ServiceState s
@@ -163,7 +165,7 @@ svcSelf = maybe (throwError "failed to validate own identity") return .
         validateIdentity . lsIdentity . fromStored =<< svcGetLocal
 
 svcPrint :: String -> ServiceHandler s ()
-svcPrint str = liftIO . ($str) =<< asks svcPrintOp
+svcPrint str = afterCommit . ($str) =<< asks svcPrintOp
 
 replyPacket :: Service s => s -> ServiceHandler s ()
 replyPacket x = tell [ServiceReply (Left x) True]
@@ -173,3 +175,6 @@ replyStored x = tell [ServiceReply (Right x) True]
 
 replyStoredRef :: Service s => Stored s -> ServiceHandler s ()
 replyStoredRef x = tell [ServiceReply (Right x) False]
+
+afterCommit :: IO () -> ServiceHandler s ()
+afterCommit x = tell [ServiceFinally x]

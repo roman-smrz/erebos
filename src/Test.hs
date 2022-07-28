@@ -122,11 +122,11 @@ pairingAttributes _ out peers prefix = PairingAttributes
 
     , pairingHookResponse = \confirm -> do
         index <- show <$> getPeerIndex peers
-        liftIO $ outLine out $ unwords [prefix ++ "-response", index, confirm]
+        afterCommit $ outLine out $ unwords [prefix ++ "-response", index, confirm]
 
     , pairingHookRequestNonce = \confirm -> do
         index <- show <$> getPeerIndex peers
-        liftIO $ outLine out $ unwords [prefix ++ "-request", index, confirm]
+        afterCommit $ outLine out $ unwords [prefix ++ "-request", index, confirm]
 
     , pairingHookRequestNonceFailed = failed "nonce"
 
@@ -135,11 +135,11 @@ pairingAttributes _ out peers prefix = PairingAttributes
 
     , pairingHookAcceptedResponse = do
         index <- show <$> getPeerIndex peers
-        liftIO $ outLine out $ unwords [prefix ++ "-response-done", index]
+        afterCommit $ outLine out $ unwords [prefix ++ "-response-done", index]
 
     , pairingHookAcceptedRequest = do
         index <- show <$> getPeerIndex peers
-        liftIO $ outLine out $ unwords [prefix ++ "-request-done", index]
+        afterCommit $ outLine out $ unwords [prefix ++ "-request-done", index]
 
     , pairingHookFailed = \case
         PairingUserRejected -> failed "user"
@@ -160,7 +160,7 @@ pairingAttributes _ out peers prefix = PairingAttributes
                 _ -> fail "unexpected pairing state"
 
             index <- show <$> getPeerIndex peers
-            liftIO $ outLine out $ prefix ++ "-" ++ ptype ++ "-failed " ++ index ++ " " ++ detail
+            afterCommit $ outLine out $ prefix ++ "-" ++ ptype ++ "-failed " ++ index ++ " " ++ detail
 
         strState :: PairingState a -> String
         strState = \case
