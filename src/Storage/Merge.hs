@@ -3,6 +3,7 @@ module Storage.Merge (
     merge, storeMerge,
 
     Generation,
+    showGeneration,
     compareGeneration, generationMax,
     storedGeneration,
 
@@ -68,6 +69,9 @@ nextGeneration :: [Generation] -> Generation
 nextGeneration = foldl' helper (Generation 0)
     where helper (Generation c) (Generation n) | c <= n    = Generation (n + 1)
                                                | otherwise = Generation c
+
+showGeneration :: Generation -> String
+showGeneration (Generation x) = show x
 
 compareGeneration :: Generation -> Generation -> Maybe Ordering
 compareGeneration (Generation x) (Generation y) = Just $ compare x y

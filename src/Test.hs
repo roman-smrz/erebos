@@ -205,6 +205,7 @@ type Command = CommandM ()
 commands :: [(Text, Command)]
 commands = map (T.pack *** id)
     [ ("store", cmdStore)
+    , ("stored-generation", cmdStoredGeneration)
     , ("stored-roots", cmdStoredRoots)
     , ("stored-set-add", cmdStoredSetAdd)
     , ("stored-set-list", cmdStoredSetList)
@@ -233,12 +234,19 @@ cmdStore = do
     ref <- liftIO $ unsafeStoreRawBytes st $ BL.fromChunks [encodeUtf8 otype, BC.singleton ' ', BC.pack (show $ B.length cnt), BC.singleton '\n', cnt]
     cmdOut $ "store-done " ++ show (refDigest ref)
 
+cmdStoredGeneration :: Command
+cmdStoredGeneration = do
+    st <- asks tiStorage
+    [tref] <- asks tiParams
+    Just ref <- liftIO $ readRef st (encodeUtf8 tref)
+    cmdOut $ "stored-generation " ++ T.unpack tref ++ " " ++ showGeneration (storedGeneration $ wrappedLoad @Object ref)
+
 cmdStoredRoots :: Command
 cmdStoredRoots = do
     st <- asks tiStorage
     [tref] <- asks tiParams
     Just ref <- liftIO $ readRef st (encodeUtf8 tref)
-    cmdOut $ "stored-roots" ++ concatMap ((' ':) . show . refDigest . storedRef) (storedRoots $ wrappedLoad @Object ref)
+    cmdOut $ "stored-roots " ++ T.unpack tref ++ concatMap ((' ':) . show . refDigest . storedRef) (storedRoots $ wrappedLoad @Object ref)
 
 cmdStoredSetAdd :: Command
 cmdStoredSetAdd = do
