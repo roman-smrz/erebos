@@ -38,7 +38,6 @@ import System.IO.Error
 import System.IO.Unsafe (unsafePerformIO)
 import System.Posix.Files
 import System.Posix.IO
-import System.Posix.Types
 
 
 data Storage' c = Storage
@@ -218,14 +217,20 @@ refPath spath rdgst = intercalate "/" [spath, "objects", BC.unpack alg, pref, re
           (pref, rest) = splitAt 2 $ BC.unpack dgst
 
 
-openFdParents :: FilePath -> OpenMode -> Maybe FileMode -> OpenFileFlags -> IO Fd
-openFdParents path omode fmode flags = do
+openLockFile :: FilePath -> IO Handle
+openLockFile path = do
     createDirectoryIfMissing True (takeDirectory path)
-    openFd path omode fmode flags
+    fd <- retry 10 $
+        openFd path WriteOnly (Just $ unionFileModes ownerReadMode ownerWriteMode) (defaultFileFlags { exclusive = True })
+    fdToHandle fd
+  where
+    retry :: Int -> IO a -> IO a
+    retry 0 act = act
+    retry n act = catchJust (\e -> if isAlreadyExistsError e then Just () else Nothing)
+                      act (\_ -> threadDelay (100 * 1000) >> retry (n - 1) act)
 
 writeFileOnce :: FilePath -> BL.ByteString -> IO ()
-writeFileOnce file content = bracket
-    (fdToHandle =<< openFdParents locked WriteOnly (Just $ unionFileModes ownerReadMode ownerWriteMode) (defaultFileFlags { exclusive = True }))
+writeFileOnce file content = bracket (openLockFile locked)
     hClose $ \h -> do
         fileExist file >>= \case
             True  -> removeLink locked
@@ -235,8 +240,7 @@ writeFileOnce file content = bracket
     where locked = file ++ ".lock"
 
 writeFileChecked :: FilePath -> Maybe ByteString -> ByteString -> IO (Either (Maybe ByteString) ())
-writeFileChecked file prev content = bracket
-    (fdToHandle =<< openFdParents locked WriteOnly (Just $ unionFileModes ownerReadMode ownerWriteMode) (defaultFileFlags { exclusive = True }))
+writeFileChecked file prev content = bracket (openLockFile locked)
     hClose $ \h -> do
         (prev,) <$> fileExist file >>= \case
             (Nothing, True) -> do
