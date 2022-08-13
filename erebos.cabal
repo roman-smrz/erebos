@@ -58,7 +58,10 @@ executable erebos
                        TypeFamilies
                        TypeFamilyDependencies
 
-  -- other-extensions:
+  other-extensions:    ForeignFunctionInterface
+                       RecursiveDo
+                       UndecidableInstances
+
   build-depends:       aeson >=1.4 && <2.1,
                        base >=4.13 && <4.17,
                        binary >=0.8 && <0.11,
