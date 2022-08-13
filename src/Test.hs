@@ -211,6 +211,8 @@ commands = map (T.pack *** id)
     , ("stored-set-list", cmdStoredSetList)
     , ("create-identity", cmdCreateIdentity)
     , ("start-server", cmdStartServer)
+    , ("shared-state-get", cmdSharedStateGet)
+    , ("shared-state-wait", cmdSharedStateWait)
     , ("watch-local-identity", cmdWatchLocalIdentity)
     , ("watch-shared-identity", cmdWatchSharedIdentity)
     , ("update-local-identity", cmdUpdateLocalIdentity)
@@ -321,6 +323,29 @@ cmdStartServer = do
         modifyMVar_ peers update
 
     modify $ \s -> s { tsServer = Just server, tsPeers = Just peers }
+
+cmdSharedStateGet :: Command
+cmdSharedStateGet = do
+    h <- maybe (fail "failed to reload head") return =<< maybe (fail "no current head") reloadHead =<< gets tsHead
+    cmdOut $ unwords $ "shared-state-get" : map (show . refDigest . storedRef) (lsShared $ headObject h)
+
+cmdSharedStateWait :: Command
+cmdSharedStateWait = do
+    st <- asks tiStorage
+    out <- asks tiOutput
+    Just h <- gets tsHead
+    trefs <- asks tiParams
+
+    liftIO $ do
+        mvar <- newEmptyMVar
+        w <- watchHeadWith h (lsShared . headObject) $ \cur -> do
+            mbobjs <- mapM (readRef st . encodeUtf8) trefs
+            case map wrappedLoad <$> sequence mbobjs of
+                Just objs | filterAncestors (cur ++ objs) == cur -> do
+                    outLine out $ unwords $ "shared-state-wait" : map T.unpack trefs
+                    void $ forkIO $ unwatchHead =<< takeMVar mvar
+                _ -> return ()
+        putMVar mvar w
 
 cmdWatchLocalIdentity :: Command
 cmdWatchLocalIdentity = do
