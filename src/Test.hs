@@ -224,6 +224,7 @@ commands = map (T.pack *** id)
     , ("contact-accept", cmdContactAccept)
     , ("contact-reject", cmdContactReject)
     , ("contact-list", cmdContactList)
+    , ("contact-set-name", cmdContactSetName)
     ]
 
 cmdStore :: Command
@@ -435,9 +436,23 @@ cmdContactList = do
     h <- maybe (fail "failed to reload head") return =<< maybe (fail "no current head") reloadHead =<< gets tsHead
     let contacts = fromSetBy (comparing contactName) . lookupSharedValue . lsShared . headObject $ h
     forM_ contacts $ \c -> do
+        r:_ <- return $ filterAncestors $ concatMap storedRoots $ toComponents c
         cmdOut $ concat
             [ "contact-list-item "
+            , show $ refDigest $ storedRef r
+            , " "
             , T.unpack $ contactName c
             , case contactIdentity c of Nothing -> ""; Just idt -> " " ++ T.unpack (displayIdentity idt)
             ]
     cmdOut "contact-list-done"
+
+cmdContactSetName :: Command
+cmdContactSetName = do
+    [cid, name] <- asks tiParams
+    h <- maybe (fail "failed to reload head") return =<< maybe (fail "no current head") reloadHead =<< gets tsHead
+    let contacts = fromSetBy (comparing contactName) . lookupSharedValue . lsShared . headObject $ h
+    [contact] <- flip filterM contacts $ \c -> do
+        r:_ <- return $ filterAncestors $ concatMap storedRoots $ toComponents c
+        return $ T.pack (show $ refDigest $ storedRef r) == cid
+    updateSharedState_ $ contactSetName contact name
+    cmdOut "contact-set-name-done"

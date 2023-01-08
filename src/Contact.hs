@@ -4,6 +4,8 @@ module Contact (
     contactCustomName,
     contactName,
 
+    contactSetName,
+
     ContactService,
     contactRequest,
     contactAccept,
@@ -78,6 +80,16 @@ contactName c = fromJust $ msum
     , idName =<< contactIdentity c
     , Just T.empty
     ]
+
+contactSetName :: MonadHead LocalState m => Contact -> Text -> Set Contact -> m (Set Contact)
+contactSetName contact name set = do
+    st <- getStorage
+    cdata <- wrappedStore st ContactData
+        { cdPrev = toComponents contact
+        , cdIdentity = []
+        , cdName = Just name
+        }
+    storeSetAdd st (mergeSorted @Contact [cdata]) set
 
 
 type ContactService = PairingService ContactAccepted
