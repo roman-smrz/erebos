@@ -29,14 +29,14 @@ module Storage (
     StorableText(..), StorableDate(..), StorableUUID(..),
 
     storeBlob, storeRec, storeZero,
-    storeInt, storeNum, storeText, storeBinary, storeDate, storeUUID, storeJson, storeRef, storeRawRef,
-    storeMbInt, storeMbNum, storeMbText, storeMbBinary, storeMbDate, storeMbUUID, storeMbJson, storeMbRef, storeMbRawRef,
+    storeEmpty, storeInt, storeNum, storeText, storeBinary, storeDate, storeUUID, storeJson, storeRef, storeRawRef,
+    storeMbEmpty, storeMbInt, storeMbNum, storeMbText, storeMbBinary, storeMbDate, storeMbUUID, storeMbJson, storeMbRef, storeMbRawRef,
     storeZRef,
 
     LoadRec,
     loadBlob, loadRec, loadZero,
-    loadInt, loadNum, loadText, loadBinary, loadDate, loadUUID, loadJson, loadRef, loadRawRef,
-    loadMbInt, loadMbNum, loadMbText, loadMbBinary, loadMbDate, loadMbUUID, loadMbJson, loadMbRef, loadMbRawRef,
+    loadEmpty, loadInt, loadNum, loadText, loadBinary, loadDate, loadUUID, loadJson, loadRef, loadRawRef,
+    loadMbEmpty, loadMbInt, loadMbNum, loadMbText, loadMbBinary, loadMbDate, loadMbUUID, loadMbJson, loadMbRef, loadMbRawRef,
     loadTexts, loadBinaries, loadRefs, loadRawRefs,
     loadZRef,
 
@@ -182,6 +182,7 @@ copyObject' _ (Blob bs) = return $ return $ Blob bs
 copyObject' st (Rec rs) = fmap Rec . sequence <$> mapM copyItem rs
     where copyItem :: (ByteString, RecItem' c) -> IO (c (ByteString, RecItem' c'))
           copyItem (n, item) = fmap (n,) <$> case item of
+              RecEmpty -> return $ return $ RecEmpty
               RecInt x -> return $ return $ RecInt x
               RecNum x -> return $ return $ RecNum x
               RecText x -> return $ return $ RecText x
@@ -215,7 +216,8 @@ type Object = Object' Complete
 type PartialObject = Object' Partial
 
 data RecItem' c
-    = RecInt Integer
+    = RecEmpty
+    | RecInt Integer
     | RecNum Rational
     | RecText Text
     | RecBinary ByteString
@@ -246,6 +248,7 @@ storeRawBytes :: PartialStorage -> BL.ByteString -> IO PartialRef
 storeRawBytes = unsafeStoreRawBytes
 
 serializeRecItem :: ByteString -> RecItem' c -> [ByteString]
+serializeRecItem name (RecEmpty) = [name, BC.pack ":e", BC.singleton ' ', BC.singleton '\n']
 serializeRecItem name (RecInt x) = [name, BC.pack ":i", BC.singleton ' ', BC.pack (show x), BC.singleton '\n']
 serializeRecItem name (RecNum x) = [name, BC.pack ":n", BC.singleton ' ', BC.pack (showRatio x), BC.singleton '\n']
 serializeRecItem name (RecText x) = [name, BC.pack ":t", BC.singleton ' ', escaped, BC.singleton '\n']
@@ -310,6 +313,8 @@ unsafeDeserializeObject st bytes =
                   content = B.drop (space+1) line
 
               val <- case BC.unpack itype of
+                          "e" -> do guard $ B.null content
+                                    return RecEmpty
                           "i" -> do (num, rest) <- BC.readInteger content
                                     guard $ B.null rest
                                     return $ RecInt num
@@ -627,6 +632,12 @@ instance StorableUUID UUID where
     toUUID = id; fromUUID = id
 
 
+storeEmpty :: String -> StoreRec c
+storeEmpty name = tell [return [(BC.pack name, RecEmpty)]]
+
+storeMbEmpty :: String -> Maybe () -> StoreRec c
+storeMbEmpty name = maybe (return ()) (const $ storeEmpty name)
+
 storeInt :: Integral a => String -> a -> StoreRec c
 storeInt name x = tell [return [(BC.pack name, RecInt $ toInteger x)]]
 
@@ -713,6 +724,15 @@ loadZero x = asks snd >>= \case
     ZeroObject -> return x
     _          -> throwError "Expecting zero"
 
+
+loadEmpty :: String -> LoadRec ()
+loadEmpty name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbEmpty name
+
+loadMbEmpty :: String -> LoadRec (Maybe ())
+loadMbEmpty name = asks (lookup (BC.pack name) . snd) >>= \case
+    Nothing -> return Nothing
+    Just (RecEmpty) -> return (Just ())
+    Just _ -> throwError $ "Expecting type int of record item '"++name++"'"
 
 loadInt :: Num a => String -> LoadRec a
 loadInt name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbInt name
