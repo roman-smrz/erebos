@@ -21,7 +21,6 @@ import qualified Data.ByteArray as BA
 import qualified Data.ByteString.Char8 as BC
 import Data.Kind
 import Data.Maybe
-import qualified Data.Text as T
 import Data.Typeable
 import Data.Word
 
@@ -83,7 +82,7 @@ instance Storable a => Storable (PairingService a) where
     store' (PairingResponse x) = storeRec $ storeBinary "response" x
     store' (PairingRequestNonce x) = storeRec $ storeBinary "reqnonce" x
     store' (PairingAccept x) = store' x
-    store' (PairingReject) = storeRec $ storeText "reject" ""
+    store' (PairingReject) = storeRec $ storeEmpty "reject"
 
     load' = do
         res <- loadRec $ do
@@ -92,7 +91,7 @@ instance Storable a => Storable (PairingService a) where
             idRsp <- loadMbRef "id-rsp"
             rsp <- loadMbBinary "response"
             rnonce <- loadMbBinary "reqnonce"
-            (rej :: Maybe T.Text) <- loadMbText "reject"
+            rej <- loadMbEmpty "reject"
             return $ catMaybes
                     [ PairingRequest <$> idReq <*> idRsp <*> (refDigestFromByteString =<< req)
                     , PairingResponse <$> rsp
