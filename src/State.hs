@@ -17,6 +17,7 @@ module State (
     interactiveIdentityUpdate,
 ) where
 
+import Control.Monad.Except
 import Control.Monad.Reader
 
 import Data.Foldable
@@ -96,10 +97,10 @@ instance (HeadType a, MonadIO m) => MonadHead a (ReaderT (Head a) m) where
         snd <$> updateHead h f
 
 
-loadLocalStateHead :: Storage -> IO (Head LocalState)
+loadLocalStateHead :: MonadIO m => Storage -> m (Head LocalState)
 loadLocalStateHead st = loadHeads st >>= \case
     (h:_) -> return h
-    [] -> do
+    [] -> liftIO $ do
         putStr "Name: "
         hFlush stdout
         name <- T.getLine
@@ -166,14 +167,18 @@ makeSharedStateUpdate st val prev = liftIO $ wrappedStore st SharedState
     }
 
 
-mergeSharedIdentity :: MonadHead LocalState m => m UnifiedIdentity
-mergeSharedIdentity = updateSharedState $ \(Just cidentity) -> do
-    identity <- liftIO $ mergeIdentity cidentity
-    return (Just $ toComposedIdentity identity, identity)
+mergeSharedIdentity :: (MonadHead LocalState m, MonadError String m) => m UnifiedIdentity
+mergeSharedIdentity = updateSharedState $ \case
+    Just cidentity -> do
+        identity <- liftIO $ mergeIdentity cidentity
+        return (Just $ toComposedIdentity identity, identity)
+    Nothing -> throwError "no existing shared identity"
 
-updateSharedIdentity :: MonadHead LocalState m => m ()
-updateSharedIdentity = updateSharedState_ $ \(Just identity) -> do
-    Just . toComposedIdentity <$> liftIO (interactiveIdentityUpdate identity)
+updateSharedIdentity :: (MonadHead LocalState m, MonadError String m) => m ()
+updateSharedIdentity = updateSharedState_ $ \case
+    Just identity -> do
+        Just . toComposedIdentity <$> liftIO (interactiveIdentityUpdate identity)
+    Nothing -> throwError "no existing shared identity"
 
 interactiveIdentityUpdate :: Foldable m => Identity m -> IO UnifiedIdentity
 interactiveIdentityUpdate identity = do

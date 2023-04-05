@@ -195,9 +195,11 @@ nonceDigest idReq idRsp nonceReq nonceRsp = hashToRefDigest $ serializeObject $ 
         ]
 
 confirmationNumber :: RefDigest -> String
-confirmationNumber dgst = let (a:b:c:d:_) = map fromIntegral $ BA.unpack dgst :: [Word32]
-                              str = show $ ((a `shift` 24) .|. (b `shift` 16) .|. (c `shift` 8) .|. d) `mod` (10 ^ len)
-                           in replicate (len - length str) '0' ++ str
+confirmationNumber dgst =
+    case map fromIntegral $ BA.unpack dgst :: [Word32] of
+         (a:b:c:d:_) -> let str = show $ ((a `shift` 24) .|. (b `shift` 16) .|. (c `shift` 8) .|. d) `mod` (10 ^ len)
+                         in replicate (len - length str) '0' ++ str
+         _ -> ""
     where len = 6
 
 pairingRequest :: forall a m proxy. (PairingResult a, MonadIO m, MonadError String m) => proxy a -> Peer -> m ()

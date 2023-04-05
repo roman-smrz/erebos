@@ -131,13 +131,19 @@ iceCreate role cb = do
 {#fun ice_destroy as ^ { isStrans `IceSession' } -> `()' #}
 
 iceRemoteInfo :: IceSession -> IO IceRemoteInfo
-iceRemoteInfo sess =
-    allocaBytes (32*128) $ \bytes ->
-    allocaArray 29 $ \carr -> do
-        let (ufrag : pass : def : cptrs) = take 32 $ iterate (`plusPtr` 128) bytes
-        pokeArray carr cptrs
+iceRemoteInfo sess = do
+    let maxlen = 128
+        maxcand = 29
 
-        ncand <- {#call ice_encode_session #} (isStrans sess) ufrag pass def carr 128 29
+    allocaBytes maxlen $ \ufrag ->
+        allocaBytes maxlen $ \pass ->
+        allocaBytes maxlen $ \def ->
+        allocaBytes (maxcand*maxlen) $ \bytes ->
+        allocaArray maxcand $ \carr -> do
+        let cptrs = take maxcand $ iterate (`plusPtr` maxlen) bytes
+        pokeArray carr $ take maxcand cptrs
+
+        ncand <- {#call ice_encode_session #} (isStrans sess) ufrag pass def carr (fromIntegral maxlen) (fromIntegral maxcand)
         if ncand < 0 then fail "failed to generate ICE remote info"
                      else IceRemoteInfo
                               <$> (T.pack <$> peekCString ufrag)

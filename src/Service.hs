@@ -165,7 +165,7 @@ svcSelf = maybe (throwError "failed to validate own identity") return .
         validateIdentity . lsIdentity . fromStored =<< svcGetLocal
 
 svcPrint :: String -> ServiceHandler s ()
-svcPrint str = afterCommit . ($str) =<< asks svcPrintOp
+svcPrint str = afterCommit . ($ str) =<< asks svcPrintOp
 
 replyPacket :: Service s => s -> ServiceHandler s ()
 replyPacket x = tell [ServiceReply (Left x) True]

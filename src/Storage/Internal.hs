@@ -115,8 +115,11 @@ refDigest (Ref _ dgst) = dgst
 showRef :: Ref' c -> ByteString
 showRef = showRefDigest . refDigest
 
+showRefDigestParts :: RefDigest -> (ByteString, ByteString)
+showRefDigestParts x = (BC.pack "blake2", showHex x)
+
 showRefDigest :: RefDigest -> ByteString
-showRefDigest x = BC.pack "blake2#" `BC.append` showHex x
+showRefDigest = showRefDigestParts >>> \(alg, hex) -> alg <> BC.pack "#" <> hex
 
 readRefDigest :: ByteString -> Maybe RefDigest
 readRefDigest x = case BC.split '#' x of
@@ -213,7 +216,7 @@ ioLoadBytesFromStorage st dgst = loadCurrent st >>=
 
 refPath :: FilePath -> RefDigest -> FilePath
 refPath spath rdgst = intercalate "/" [spath, "objects", BC.unpack alg, pref, rest]
-    where [alg, dgst] = BC.split '#' $ showRefDigest rdgst
+    where (alg, dgst) = showRefDigestParts rdgst
           (pref, rest) = splitAt 2 $ BC.unpack dgst
 
 

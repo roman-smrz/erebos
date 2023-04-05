@@ -101,7 +101,9 @@ acceptChannelRequest self peer req = do
         throwError $ "channel requent not signed by peer"
 
     let st = storedStorage req
-        KeySizeFixed ksize = cipherKeySize (undefined :: AES128)
+    ksize <- case cipherKeySize (undefined :: AES128) of
+                  KeySizeFixed s -> return s
+                  _ -> throwError "expecting fixed key size"
     liftIO $ do
         (xsecret, xpublic) <- generateKeys st
         Just skey <- loadKey $ idKeyMessage self
@@ -119,7 +121,9 @@ acceptChannelRequest self peer req = do
 acceptedChannel :: (MonadIO m, MonadError String m) => UnifiedIdentity -> UnifiedIdentity -> Stored ChannelAccept -> m Channel
 acceptedChannel self peer acc = do
     let req = caRequest $ fromStored $ signedData $ fromStored acc
-        KeySizeFixed ksize = cipherKeySize (undefined :: AES128)
+    ksize <- case cipherKeySize (undefined :: AES128) of
+                  KeySizeFixed s -> return s
+                  _ -> throwError "expecting fixed key size"
 
     case sequence $ map validateIdentity $ crPeers $ fromStored $ signedData $ fromStored req of
         Nothing -> throwError $ "invalid peers in channel accept"

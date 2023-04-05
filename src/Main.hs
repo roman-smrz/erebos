@@ -102,7 +102,8 @@ main = do
             Nothing -> error "ref does not exist"
             Just ref -> print $ storedGeneration (wrappedLoad ref :: Stored Object)
 
-        ["update-identity"] -> runReaderT updateSharedIdentity =<< loadLocalStateHead st
+        ["update-identity"] -> either fail return <=< runExceptT $ do
+            runReaderT updateSharedIdentity =<< loadLocalStateHead st
 
         ("update-identity" : srefs) -> do
             sequence <$> mapM (readRef st . BC.pack) srefs >>= \case

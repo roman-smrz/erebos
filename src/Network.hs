@@ -757,7 +757,7 @@ handleIdentityAnnounce self peer ref = liftIO $ atomically $ do
         PeerIdentityRef wref wact
             | wrDigest wref == refDigest ref
             -> validateAndUpdate [] $ \pid -> do
-                mapM_ (writeTQueue (serverIOActions $ peerServer peer) . ($pid)) .
+                mapM_ (writeTQueue (serverIOActions $ peerServer peer) . ($ pid)) .
                     reverse =<< readTVar wact
 
         PeerIdentityFull pid
