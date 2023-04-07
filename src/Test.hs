@@ -28,6 +28,7 @@ import System.IO.Error
 import Attach
 import Contact
 import Identity
+import Message
 import Network
 import Pairing
 import PubKey
@@ -90,6 +91,12 @@ getLines :: MonadIO m => m [Text]
 getLines = getLineMb >>= \case
     Just line | not (T.null line) -> (line:) <$> getLines
     _ -> return []
+
+getHead :: CommandM (Head LocalState)
+getHead = do
+    h <- maybe (fail "failed to reload head") return =<< maybe (fail "no current head") reloadHead =<< gets tsHead
+    modify $ \s -> s { tsHead = Just h }
+    return h
 
 
 type Output = MVar ()
@@ -180,6 +187,19 @@ pairingAttributes _ out peers prefix = PairingAttributes
             PairingAccept {} -> "accept"
             PairingReject -> "reject"
 
+directMessageAttributes :: Output -> DirectMessageAttributes
+directMessageAttributes out = DirectMessageAttributes
+    { dmReceived = \smsg -> do
+        let msg = fromStored smsg
+        afterCommit $ outLine out $ unwords
+            [ "dm-received"
+            , "from", maybe "<unnamed>" T.unpack $ idName $ msgFrom msg
+            , "text", T.unpack $ msgText msg
+            ]
+
+    , dmOwnerMismatch = afterCommit $ outLine out "dm-owner-mismatch"
+    }
+
 
 newtype CommandM a = CommandM (ReaderT TestInput (StateT TestState (ExceptT String IO)) a)
     deriving (Functor, Applicative, Monad, MonadIO, MonadReader TestInput, MonadState TestState, MonadError String)
@@ -225,6 +245,7 @@ commands = map (T.pack *** id)
     , ("contact-reject", cmdContactReject)
     , ("contact-list", cmdContactList)
     , ("contact-set-name", cmdContactSetName)
+    , ("dm-send-peer", cmdDmSendPeer)
     ]
 
 cmdStore :: Command
@@ -301,6 +322,7 @@ cmdStartServer = do
     server <- liftIO $ startServer defaultServerOptions h (hPutStrLn stderr)
         [ someServiceAttr $ pairingAttributes (Proxy @AttachService) out peers "attach"
         , someServiceAttr $ pairingAttributes (Proxy @ContactService) out peers "contact"
+        , someServiceAttr $ directMessageAttributes out
         , someService @SyncService Proxy
         ]
 
@@ -327,7 +349,7 @@ cmdStartServer = do
 
 cmdSharedStateGet :: Command
 cmdSharedStateGet = do
-    h <- maybe (fail "failed to reload head") return =<< maybe (fail "no current head") reloadHead =<< gets tsHead
+    h <- getHead
     cmdOut $ unwords $ "shared-state-get" : map (show . refDigest . storedRef) (lsShared $ headObject h)
 
 cmdSharedStateWait :: Command
@@ -435,7 +457,7 @@ cmdContactReject = do
 
 cmdContactList :: Command
 cmdContactList = do
-    h <- maybe (fail "failed to reload head") return =<< maybe (fail "no current head") reloadHead =<< gets tsHead
+    h <- getHead
     let contacts = fromSetBy (comparing contactName) . lookupSharedValue . lsShared . headObject $ h
     forM_ contacts $ \c -> do
         r:_ <- return $ filterAncestors $ concatMap storedRoots $ toComponents c
@@ -451,10 +473,17 @@ cmdContactList = do
 cmdContactSetName :: Command
 cmdContactSetName = do
     [cid, name] <- asks tiParams
-    h <- maybe (fail "failed to reload head") return =<< maybe (fail "no current head") reloadHead =<< gets tsHead
+    h <- getHead
     let contacts = fromSetBy (comparing contactName) . lookupSharedValue . lsShared . headObject $ h
     [contact] <- flip filterM contacts $ \c -> do
         r:_ <- return $ filterAncestors $ concatMap storedRoots $ toComponents c
         return $ T.pack (show $ refDigest $ storedRef r) == cid
     updateSharedState_ $ contactSetName contact name
     cmdOut "contact-set-name-done"
+
+cmdDmSendPeer :: Command
+cmdDmSendPeer = do
+    [spidx, msg] <- asks tiParams
+    h <- getHead
+    peer <- getPeer spidx
+    void $ sendDirectMessage h peer msg

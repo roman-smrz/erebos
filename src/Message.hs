@@ -2,6 +2,9 @@ module Message (
     DirectMessage(..),
     sendDirectMessage,
 
+    DirectMessageAttributes(..),
+    defaultDirectMessageAttributes,
+
     DirectMessageThreads,
     toThreadList,
 
@@ -50,13 +53,29 @@ instance Storable DirectMessage where
         <*> loadDate "time"
         <*> loadText "text"
 
+data DirectMessageAttributes = DirectMessageAttributes
+    { dmReceived :: Stored DirectMessage -> ServiceHandler DirectMessage ()
+    , dmOwnerMismatch :: ServiceHandler DirectMessage ()
+    }
+
+defaultDirectMessageAttributes :: DirectMessageAttributes
+defaultDirectMessageAttributes = DirectMessageAttributes
+    { dmReceived = \msg -> do
+        tzone <- liftIO $ getCurrentTimeZone
+        svcPrint $ formatMessage tzone $ fromStored msg
+
+    , dmOwnerMismatch = svcPrint "Owner mismatch"
+    }
+
 instance Service DirectMessage where
     serviceID _ = mkServiceID "c702076c-4928-4415-8b6b-3e839eafcb0d"
+
+    type ServiceAttributes DirectMessage = DirectMessageAttributes
+    defaultServiceAttributes _ = defaultDirectMessageAttributes
 
     serviceHandler smsg = do
         let msg = fromStored smsg
         powner <- asks $ finalOwner . svcPeerIdentity
-        tzone <- liftIO $ getCurrentTimeZone
         erb <- svcGetLocal
         let st = storedStorage erb
             DirectMessageThreads prev _ = lookupSharedValue $ lsShared $ fromStored erb
@@ -78,10 +97,11 @@ instance Service DirectMessage where
                    wrappedStore st (fromStored erb) { lsShared = [shared] }
                svcSetLocal erb'
                when (powner `sameIdentity` msgFrom msg) $ do
-                   svcPrint $ formatMessage tzone msg
+                   hook <- asks $ dmReceived . svcAttributes
+                   hook smsg
                    replyStoredRef smsg
 
-           else svcPrint "Owner mismatch"
+           else join $ asks $ dmOwnerMismatch . svcAttributes
 
 
 data MessageState = MessageState
