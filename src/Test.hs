@@ -14,7 +14,6 @@ import Data.ByteString qualified as B
 import Data.ByteString.Char8 qualified as BC
 import Data.ByteString.Lazy qualified as BL
 import Data.Foldable
-import Data.IP (fromSockAddr)
 import Data.Ord
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -332,11 +331,7 @@ cmdStartServer = do
         let printPeer (idx, p) = do
                 params <- peerIdentity p >>= return . \case
                     PeerIdentityFull pid -> ("id":) $ map (maybe "<unnamed>" T.unpack . idName) (unfoldOwners pid)
-                    _ -> ("addr":) $ case peerAddress p of
-                        DatagramAddress _ saddr
-                            | Just (addr, port) <- fromSockAddr saddr -> [show addr, show port]
-                            | otherwise -> []
-                        PeerIceSession ice -> [show ice]
+                    _ -> [ "addr", show (peerAddress p) ]
                 outLine out $ unwords $ [ "peer", show idx ] ++ params
 
             update (nid, []) = printPeer (nid, peer) >> return (nid + 1, [(nid, peer)])

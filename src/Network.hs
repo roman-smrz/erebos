@@ -28,6 +28,7 @@ import Control.Monad.State
 import qualified Data.ByteString.Char8 as BC
 import qualified Data.ByteString.Lazy as BL
 import Data.Function
+import Data.IP qualified as IP
 import Data.List
 import Data.Map (Map)
 import qualified Data.Map as M
@@ -130,7 +131,13 @@ data PeerAddress = DatagramAddress Socket SockAddr
                  | PeerIceSession IceSession
 
 instance Show PeerAddress where
-    show (DatagramAddress _ addr) = show addr
+    show (DatagramAddress _ saddr) = unwords $ case IP.fromSockAddr saddr of
+        Just (IP.IPv6 ipv6, port)
+            | (0, 0, 0xffff, ipv4) <- IP.fromIPv6w ipv6
+            -> [show (IP.toIPv4w ipv4), show port]
+        Just (addr, port)
+            -> [show addr, show port]
+        _ -> [show saddr]
     show (PeerIceSession ice) = show ice
 
 instance Eq PeerAddress where
@@ -374,6 +381,7 @@ startServer opt origHead logd' services = do
     void $ forkIO $ withSocketsDo $ do
         let hints = defaultHints
               { addrFlags = [AI_PASSIVE]
+              , addrFamily = AF_INET6
               , addrSocketType = Datagram
               }
         addr:_ <- getAddrInfo (Just hints) Nothing (Just $ show $ serverPort opt)
