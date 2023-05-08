@@ -21,6 +21,8 @@ import Data.Text.Encoding
 import Data.Text.IO qualified as T
 import Data.Typeable
 
+import Network.Socket
+
 import System.IO
 import System.IO.Error
 
@@ -230,6 +232,7 @@ commands = map (T.pack *** id)
     , ("stored-set-list", cmdStoredSetList)
     , ("create-identity", cmdCreateIdentity)
     , ("start-server", cmdStartServer)
+    , ("peer-add", cmdPeerAdd)
     , ("shared-state-get", cmdSharedStateGet)
     , ("shared-state-wait", cmdSharedStateWait)
     , ("watch-local-identity", cmdWatchLocalIdentity)
@@ -341,6 +344,16 @@ cmdStartServer = do
         modifyMVar_ peers update
 
     modify $ \s -> s { tsServer = Just server, tsPeers = Just peers }
+
+cmdPeerAdd :: Command
+cmdPeerAdd = do
+    Just server <- gets tsServer
+    host:rest <- map T.unpack <$> asks tiParams
+
+    let port = case rest of [] -> show discoveryPort
+                            (p:_) -> p
+    addr:_ <- liftIO $ getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just host) (Just port)
+    void $ liftIO $ serverPeer server (addrAddress addr)
 
 cmdSharedStateGet :: Command
 cmdSharedStateGet = do

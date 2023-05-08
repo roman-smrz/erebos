@@ -232,6 +232,7 @@ commands :: [(String, Command)]
 commands =
     [ ("history", cmdHistory)
     , ("peers", cmdPeers)
+    , ("peer-add", cmdPeerAdd)
     , ("send", cmdSend)
     , ("update-identity", cmdUpdateIdentity)
     , ("attach", cmdAttach)
@@ -258,6 +259,16 @@ cmdPeers = do
     peers <- join $ asks ciPeers
     forM_ (zip [1..] peers) $ \(i :: Int, (_, name)) -> do
         liftIO $ putStrLn $ show i ++ ": " ++ name
+
+cmdPeerAdd :: Command
+cmdPeerAdd = void $ do
+    server <- asks ciServer
+    (hostname, port) <- (words <$> asks ciLine) >>= \case
+        hostname:p:_ -> return (hostname, p)
+        [hostname] -> return (hostname, show discoveryPort)
+        [] -> throwError "missing peer address"
+    addr:_ <- liftIO $ getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just hostname) (Just port)
+    liftIO $ serverPeer server (addrAddress addr)
 
 showPeer :: PeerIdentity -> PeerAddress -> String
 showPeer pidentity paddr =
