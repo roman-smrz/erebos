@@ -3,13 +3,14 @@ module State (
     SharedState, SharedType(..),
     SharedTypeID, mkSharedTypeID,
     MonadStorage(..), MonadHead(..),
+    updateLocalHead_,
 
     loadLocalStateHead,
-    updateLocalState, updateLocalState_,
 
     updateSharedState, updateSharedState_,
     lookupSharedValue, makeSharedStateUpdate,
 
+    localIdentity,
     headLocalIdentity,
 
     mergeSharedIdentity,
@@ -88,6 +89,10 @@ class Monad m => MonadStorage m where
 class (MonadIO m, MonadStorage m) => MonadHead a m where
     updateLocalHead :: (Stored a -> m (Stored a, b)) -> m b
 
+updateLocalHead_ :: MonadHead a m => (Stored a -> m (Stored a)) -> m ()
+updateLocalHead_ f = updateLocalHead (fmap (,()) . f)
+
+
 instance Monad m => MonadStorage (ReaderT (Head a) m) where
     getStorage = asks $ refStorage . headRef
 
@@ -125,25 +130,20 @@ loadLocalStateHead st = loadHeads st >>= \case
             , lsShared = [shared]
             }
 
+localIdentity :: LocalState -> UnifiedIdentity
+localIdentity ls = maybe (error "failed to verify local identity")
+    (updateOwners $ maybe [] idDataF $ lookupSharedValue $ lsShared ls)
+    (validateIdentity $ lsIdentity ls)
+
 headLocalIdentity :: Head LocalState -> UnifiedIdentity
-headLocalIdentity h =
-    let ls = headObject h
-     in maybe (error "failed to verify local identity")
-            (updateOwners $ maybe [] idDataF $ lookupSharedValue $ lsShared ls)
-            (validateIdentity $ lsIdentity ls)
+headLocalIdentity = localIdentity . headObject
 
 
-updateLocalState_ :: MonadHead LocalState m => (Stored LocalState -> m (Stored LocalState)) -> m ()
-updateLocalState_ f = updateLocalState (fmap (,()) . f)
+updateSharedState_ :: forall a m. (SharedType a, MonadHead LocalState m) => (a -> m a) -> Stored LocalState -> m (Stored LocalState)
+updateSharedState_ f = fmap fst <$> updateSharedState (fmap (,()) . f)
 
-updateLocalState :: MonadHead LocalState m => (Stored LocalState -> m (Stored LocalState, a)) -> m a
-updateLocalState = updateLocalHead
-
-updateSharedState_ :: (SharedType a, MonadHead LocalState m) => (a -> m a) -> m ()
-updateSharedState_ f = updateSharedState (fmap (,()) . f)
-
-updateSharedState :: forall a b m. (SharedType a, MonadHead LocalState m) => (a -> m (a, b)) -> m b
-updateSharedState f = updateLocalHead $ \ls -> do
+updateSharedState :: forall a b m. (SharedType a, MonadHead LocalState m) => (a -> m (a, b)) -> Stored LocalState -> m (Stored LocalState, b)
+updateSharedState f = \ls -> do
     let shared = lsShared $ fromStored ls
         val = lookupSharedValue shared
         st = storedStorage ls
@@ -168,14 +168,14 @@ makeSharedStateUpdate st val prev = liftIO $ wrappedStore st SharedState
 
 
 mergeSharedIdentity :: (MonadHead LocalState m, MonadError String m) => m UnifiedIdentity
-mergeSharedIdentity = updateSharedState $ \case
+mergeSharedIdentity = updateLocalHead $ updateSharedState $ \case
     Just cidentity -> do
         identity <- liftIO $ mergeIdentity cidentity
         return (Just $ toComposedIdentity identity, identity)
     Nothing -> throwError "no existing shared identity"
 
 updateSharedIdentity :: (MonadHead LocalState m, MonadError String m) => m ()
-updateSharedIdentity = updateSharedState_ $ \case
+updateSharedIdentity = updateLocalHead_ $ updateSharedState_ $ \case
     Just identity -> do
         Just . toComposedIdentity <$> liftIO (interactiveIdentityUpdate identity)
     Nothing -> throwError "no existing shared identity"
