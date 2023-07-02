@@ -178,13 +178,12 @@ interactiveLoop st opts = runInputT defaultSettings $ do
                                        then (cmdSetPeer $ read scmd, args)
                                        else (fromMaybe (cmdUnknown scmd) $ lookup scmd commands, args)
                     _        -> (cmdSend, input)
-            h <- liftIO (reloadHead erebosHead) >>= \case
+            h <- liftIO (reloadHead $ csHead cstate) >>= \case
                 Just h  -> return h
                 Nothing -> do lift $ lift $ extPrint "current head deleted"
                               mzero
-            res <- liftIO $ runExceptT $ flip execStateT cstate $ runReaderT cmd CommandInput
-                { ciHead = h
-                , ciServer = server
+            res <- liftIO $ runExceptT $ flip execStateT cstate { csHead = h } $ runReaderT cmd CommandInput
+                { ciServer = server
                 , ciLine = line
                 , ciPrint = extPrintLn
                 , ciPeers = liftIO $ readMVar peers
@@ -197,22 +196,23 @@ interactiveLoop st opts = runInputT defaultSettings $ do
     let loop (Just cstate) = runMaybeT (process cstate) >>= loop
         loop Nothing = return ()
     loop $ Just $ CommandState
-        { csPeer = Nothing
+        { csHead = erebosHead
+        , csPeer = Nothing
         , csIceSessions = []
         , csIcePeer = Nothing
         }
 
 
 data CommandInput = CommandInput
-    { ciHead :: Head LocalState
-    , ciServer :: Server
+    { ciServer :: Server
     , ciLine :: String
     , ciPrint :: String -> IO ()
     , ciPeers :: CommandM [(Peer, String)]
     }
 
 data CommandState = CommandState
-    { csPeer :: Maybe Peer
+    { csHead :: Head LocalState
+    , csPeer :: Maybe Peer
     , csIceSessions :: [IceSession]
     , csIcePeer :: Maybe Peer
     }
@@ -225,6 +225,16 @@ instance MonadFail CommandM where
 
 instance MonadRandom CommandM where
     getRandomBytes = liftIO . getRandomBytes
+
+instance MonadStorage CommandM where
+    getStorage = gets $ refStorage . headRef . csHead
+
+instance MonadHead LocalState CommandM where
+    updateLocalHead f = do
+        h <- gets csHead
+        (Just h', x) <- maybe (fail "failed to reload head") (flip updateHead f) =<< reloadHead h
+        modify $ \s -> s { csHead = h' }
+        return x
 
 type Command = CommandM ()
 
@@ -285,16 +295,15 @@ cmdSetPeer n | n < 1     = liftIO $ putStrLn "Invalid peer index"
 
 cmdSend :: Command
 cmdSend = void $ do
-    ehead <- asks ciHead
     Just peer <- gets csPeer
     text <- asks ciLine
-    smsg <- flip runReaderT ehead $ sendDirectMessage peer $ T.pack text
+    smsg <- sendDirectMessage peer $ T.pack text
     tzone <- liftIO $ getCurrentTimeZone
     liftIO $ putStrLn $ formatMessage tzone $ fromStored smsg
 
 cmdHistory :: Command
 cmdHistory = void $ do
-    ehead <- asks ciHead
+    ehead <- gets csHead
     Just peer <- gets csPeer
     PeerIdentityFull pid <- peerIdentity peer
     let powner = finalOwner pid
@@ -309,7 +318,7 @@ cmdHistory = void $ do
 
 cmdUpdateIdentity :: Command
 cmdUpdateIdentity = void $ do
-    runReaderT updateSharedIdentity =<< asks ciHead
+    runReaderT updateSharedIdentity =<< gets csHead
 
 cmdAttach :: Command
 cmdAttach = join $ attachToOwner
@@ -326,7 +335,7 @@ cmdAttachReject = join $ attachReject
 cmdContacts :: Command
 cmdContacts = do
     args <- words <$> asks ciLine
-    ehead <- asks ciHead
+    ehead <- gets csHead
     let contacts = fromSetBy (comparing contactName) $ lookupSharedValue $ lsShared $ headObject ehead
         verbose = "-v" `elem` args
     forM_ (zip [1..] contacts) $ \(i :: Int, c) -> do
@@ -364,7 +373,7 @@ cmdDiscoveryInit = void $ do
 cmdDiscovery :: Command
 cmdDiscovery = void $ do
     Just peer <- gets csIcePeer
-    st <- asks (storedStorage . headStoredObject . ciHead)
+    st <- gets (storedStorage . headStoredObject . csHead)
     sref <- asks ciLine
     eprint <- asks ciPrint
     liftIO $ readRef st (BC.pack sref) >>= \case
