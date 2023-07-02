@@ -288,7 +288,7 @@ cmdSend = void $ do
     ehead <- asks ciHead
     Just peer <- gets csPeer
     text <- asks ciLine
-    smsg <- sendDirectMessage ehead peer $ T.pack text
+    smsg <- flip runReaderT ehead $ sendDirectMessage peer $ T.pack text
     tzone <- liftIO $ getCurrentTimeZone
     liftIO $ putStrLn $ formatMessage tzone $ fromStored smsg
 

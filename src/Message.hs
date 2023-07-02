@@ -147,33 +147,34 @@ findMsgProperty pid sel mss = concat $ flip findProperty mss $ \x -> do
     return $ sel x
 
 
-sendDirectMessage :: (MonadIO m, MonadError String m) => Head LocalState -> Peer -> Text -> m (Stored DirectMessage)
-sendDirectMessage h peer text = do
+sendDirectMessage :: (MonadHead LocalState m, MonadError String m) => Peer -> Text -> m (Stored DirectMessage)
+sendDirectMessage peer text = do
     pid <- peerIdentity peer >>= \case PeerIdentityFull pid -> return pid
                                        _ -> throwError "incomplete peer identity"
-    let st = refStorage $ headRef h
-        self = headLocalIdentity h
-        powner = finalOwner pid
+    let powner = finalOwner pid
 
-    smsg <- flip runReaderT h $ updateLocalHead $ updateSharedState $ \(DirectMessageThreads prev _) -> liftIO $ do
-        let sent = findMsgProperty powner msSent prev
-            received = findMsgProperty powner msReceived prev
+    smsg <- updateLocalHead $ \ls -> do
+        let st = storedStorage ls
+            self = localIdentity $ fromStored ls
+        flip updateSharedState ls $ \(DirectMessageThreads prev _) -> liftIO $ do
+            let sent = findMsgProperty powner msSent prev
+                received = findMsgProperty powner msReceived prev
 
-        time <- getZonedTime
-        smsg <- wrappedStore st DirectMessage
-            { msgFrom = toComposedIdentity $ finalOwner self
-            , msgPrev = filterAncestors $ sent ++ received
-            , msgTime = time
-            , msgText = text
-            }
-        next <- wrappedStore st $ MessageState
-            { msPrev = prev
-            , msPeer = powner
-            , msSent = [smsg]
-            , msReceived = []
-            , msSeen = []
-            }
-        return (DirectMessageThreads [next] (messageThreadView [next]), smsg)
+            time <- getZonedTime
+            smsg <- wrappedStore st DirectMessage
+                { msgFrom = toComposedIdentity $ finalOwner self
+                , msgPrev = filterAncestors $ sent ++ received
+                , msgTime = time
+                , msgText = text
+                }
+            next <- wrappedStore st $ MessageState
+                { msPrev = prev
+                , msPeer = powner
+                , msSent = [smsg]
+                , msReceived = []
+                , msSeen = []
+                }
+            return (DirectMessageThreads [next] (messageThreadView [next]), smsg)
 
     sendToPeerStored peer smsg
     return smsg

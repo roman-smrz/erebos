@@ -492,6 +492,5 @@ cmdContactSetName = do
 cmdDmSendPeer :: Command
 cmdDmSendPeer = do
     [spidx, msg] <- asks tiParams
-    h <- getHead
     peer <- getPeer spidx
-    void $ sendDirectMessage h peer msg
+    void $ sendDirectMessage peer msg
