@@ -3,9 +3,11 @@ module Sync (
 ) where
 
 import Control.Monad
+import Control.Monad.Reader
 
 import Data.List
 
+import Identity
 import Service
 import State
 import Storage
@@ -18,13 +20,27 @@ instance Service SyncService where
 
     serviceHandler packet = do
         let SyncPacket added = fromStored packet
-        ls <- svcGetLocal
-        let st = storedStorage ls
-            current = sort $ lsShared $ fromStored ls
-            updated = filterAncestors (added : current)
-        when (current /= updated) $ do
-            svcSetLocal =<< wrappedStore st (fromStored ls) { lsShared = updated }
+        pid <- asks svcPeerIdentity
+        self <- svcSelf
+        when (finalOwner pid `sameIdentity` finalOwner self) $ do
+            updateLocalHead_ $ \ls -> do
+                let current = sort $ lsShared $ fromStored ls
+                    updated = filterAncestors (added : current)
+                if current /= updated
+                   then wrappedStore (storedStorage ls) (fromStored ls) { lsShared = updated }
+                   else return ls
+
+    serviceNewPeer = notifyPeer . lsShared . fromStored =<< svcGetLocal
+    serviceStorageWatchers _ = (:[]) $ SomeStorageWatcher (lsShared . fromStored) notifyPeer
 
 instance Storable SyncService where
     store' (SyncPacket smsg) = store' smsg
     load' = SyncPacket <$> load'
+
+notifyPeer :: [Stored SharedState] -> ServiceHandler SyncService ()
+notifyPeer shared = do
+    pid <- asks svcPeerIdentity
+    self <- svcSelf
+    when (finalOwner pid `sameIdentity` finalOwner self) $ do
+        forM_ shared $ \sh ->
+            replyStoredRef =<< (wrappedStore (storedStorage sh) . SyncPacket) sh

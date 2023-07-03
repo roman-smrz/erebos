@@ -3,6 +3,7 @@ module Service (
     SomeService(..), someService, someServiceAttr, someServiceID,
     SomeServiceState(..), fromServiceState, someServiceEmptyState,
     SomeServiceGlobalState(..), fromServiceGlobalState, someServiceEmptyGlobalState,
+    SomeStorageWatcher(..),
     ServiceID, mkServiceID,
 
     ServiceHandler,
@@ -40,6 +41,9 @@ class (Typeable s, Storable s, Typeable (ServiceState s), Typeable (ServiceGloba
     serviceID :: proxy s -> ServiceID
     serviceHandler :: Stored s -> ServiceHandler s ()
 
+    serviceNewPeer :: ServiceHandler s ()
+    serviceNewPeer = return ()
+
     type ServiceAttributes s = attr | attr -> s
     type ServiceAttributes s = Proxy s
     defaultServiceAttributes :: proxy s -> ServiceAttributes s
@@ -57,6 +61,9 @@ class (Typeable s, Storable s, Typeable (ServiceState s), Typeable (ServiceGloba
     emptyServiceGlobalState :: proxy s -> ServiceGlobalState s
     default emptyServiceGlobalState :: ServiceGlobalState s ~ () => proxy s -> ServiceGlobalState s
     emptyServiceGlobalState _ = ()
+
+    serviceStorageWatchers :: proxy s -> [SomeStorageWatcher s]
+    serviceStorageWatchers _ = []
 
 
 data SomeService = forall s. Service s => SomeService (Proxy s) (ServiceAttributes s)
@@ -85,6 +92,9 @@ fromServiceGlobalState _ (SomeServiceGlobalState _ s) = cast s
 
 someServiceEmptyGlobalState :: SomeService -> SomeServiceGlobalState
 someServiceEmptyGlobalState (SomeService p _) = SomeServiceGlobalState p (emptyServiceGlobalState p)
+
+
+data SomeStorageWatcher s = forall a. Eq a => SomeStorageWatcher (Stored LocalState -> a) (a -> ServiceHandler s ())
 
 
 newtype ServiceID = ServiceID UUID
