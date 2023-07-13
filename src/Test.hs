@@ -190,16 +190,17 @@ pairingAttributes _ out peers prefix = PairingAttributes
 
 directMessageAttributes :: Output -> DirectMessageAttributes
 directMessageAttributes out = DirectMessageAttributes
-    { dmReceived = \smsg -> do
-        let msg = fromStored smsg
-        afterCommit $ outLine out $ unwords
-            [ "dm-received"
-            , "from", maybe "<unnamed>" T.unpack $ idName $ msgFrom msg
-            , "text", T.unpack $ msgText msg
-            ]
-
-    , dmOwnerMismatch = afterCommit $ outLine out "dm-owner-mismatch"
+    { dmOwnerMismatch = afterCommit $ outLine out "dm-owner-mismatch"
     }
+
+dmReceivedWatcher :: Output -> Stored DirectMessage -> IO ()
+dmReceivedWatcher out smsg = do
+    let msg = fromStored smsg
+    outLine out $ unwords
+        [ "dm-received"
+        , "from", maybe "<unnamed>" T.unpack $ idName $ msgFrom msg
+        , "text", T.unpack $ msgText msg
+        ]
 
 
 newtype CommandM a = CommandM (ReaderT TestInput (StateT TestState (ExceptT String IO)) a)
@@ -313,6 +314,7 @@ cmdCreateIdentity = do
             , lsShared = shared
             }
 
+    _ <- liftIO . watchReceivedMessages h . dmReceivedWatcher =<< asks tiOutput
     modify $ \s -> s { tsHead = Just h }
 
 cmdStartServer :: Command

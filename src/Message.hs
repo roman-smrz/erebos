@@ -12,6 +12,7 @@ module Message (
     threadToList,
     messageThreadView,
 
+    watchReceivedMessages,
     formatMessage,
 ) where
 
@@ -54,17 +55,12 @@ instance Storable DirectMessage where
         <*> loadText "text"
 
 data DirectMessageAttributes = DirectMessageAttributes
-    { dmReceived :: Stored DirectMessage -> ServiceHandler DirectMessage ()
-    , dmOwnerMismatch :: ServiceHandler DirectMessage ()
+    { dmOwnerMismatch :: ServiceHandler DirectMessage ()
     }
 
 defaultDirectMessageAttributes :: DirectMessageAttributes
 defaultDirectMessageAttributes = DirectMessageAttributes
-    { dmReceived = \msg -> do
-        tzone <- liftIO $ getCurrentTimeZone
-        svcPrint $ formatMessage tzone $ fromStored msg
-
-    , dmOwnerMismatch = svcPrint "Owner mismatch"
+    { dmOwnerMismatch = svcPrint "Owner mismatch"
     }
 
 instance Service DirectMessage where
@@ -81,27 +77,31 @@ instance Service DirectMessage where
             DirectMessageThreads prev _ = lookupSharedValue $ lsShared $ fromStored erb
             sent = findMsgProperty powner msSent prev
             received = findMsgProperty powner msReceived prev
+            received' = filterAncestors $ smsg : received
         if powner `sameIdentity` msgFrom msg ||
                filterAncestors sent == filterAncestors (smsg : sent)
            then do
-               erb' <- liftIO $ do
+               when (received' /= received) $ do
                    next <- wrappedStore st $ MessageState
                        { msPrev = prev
                        , msPeer = powner
                        , msSent = []
-                       , msReceived = filterAncestors $ smsg : received
+                       , msReceived = received'
                        , msSeen = []
                        }
                    let threads = DirectMessageThreads [next] (messageThreadView [next])
                    shared <- makeSharedStateUpdate st threads (lsShared $ fromStored erb)
-                   wrappedStore st (fromStored erb) { lsShared = [shared] }
-               svcSetLocal erb'
+                   svcSetLocal =<< wrappedStore st (fromStored erb) { lsShared = [shared] }
+
                when (powner `sameIdentity` msgFrom msg) $ do
-                   hook <- asks $ dmReceived . svcAttributes
-                   hook smsg
                    replyStoredRef smsg
 
            else join $ asks $ dmOwnerMismatch . svcAttributes
+
+    serviceNewPeer = syncDirectMessageToPeer . lookupSharedValue . lsShared . fromStored =<< svcGetLocal
+
+    serviceStorageWatchers _ = (:[]) $
+        SomeStorageWatcher (lookupSharedValue . lsShared . fromStored) syncDirectMessageToPeer
 
 
 data MessageState = MessageState
@@ -113,6 +113,9 @@ data MessageState = MessageState
     }
 
 data DirectMessageThreads = DirectMessageThreads [Stored MessageState] [DirectMessageThread]
+
+instance Eq DirectMessageThreads where
+    DirectMessageThreads mss _ == DirectMessageThreads mss' _ = mss == mss'
 
 toThreadList :: DirectMessageThreads -> [DirectMessageThread]
 toThreadList (DirectMessageThreads _ threads) = threads
@@ -152,8 +155,7 @@ sendDirectMessage peer text = do
     pid <- peerIdentity peer >>= \case PeerIdentityFull pid -> return pid
                                        _ -> throwError "incomplete peer identity"
     let powner = finalOwner pid
-
-    smsg <- updateLocalHead $ \ls -> do
+    updateLocalHead $ \ls -> do
         let st = storedStorage ls
             self = localIdentity $ fromStored ls
         flip updateSharedState ls $ \(DirectMessageThreads prev _) -> liftIO $ do
@@ -176,9 +178,12 @@ sendDirectMessage peer text = do
                 }
             return (DirectMessageThreads [next] (messageThreadView [next]), smsg)
 
-    sendToPeerStored peer smsg
-    return smsg
-
+syncDirectMessageToPeer :: DirectMessageThreads -> ServiceHandler DirectMessage ()
+syncDirectMessageToPeer (DirectMessageThreads mss _) = do
+    pid <- finalOwner <$> asks svcPeerIdentity
+    peer <- asks svcPeer
+    let thread = messageThreadFor pid mss
+    mapM_ (sendToPeerStored peer) $ msgHead thread
 
 data DirectMessageThread = DirectMessageThread
     { msgPeer :: ComposedIdentity
@@ -202,17 +207,28 @@ messageThreadView = helper []
                       helper used $ msPrev (fromStored sms) ++ rest
                   | otherwise ->
                       let peer = msPeer $ fromStored sms
-                          sent = findMsgProperty peer msSent mss
-                          received = findMsgProperty peer msReceived mss
-                          seen = findMsgProperty peer msSeen mss
-
-                       in DirectMessageThread
-                              { msgPeer = peer
-                              , msgHead = filterAncestors $ sent ++ received
-                              , msgSeen = filterAncestors $ sent ++ seen
-                              } : helper (peer : used) (msPrev (fromStored sms) ++ rest)
+                       in messageThreadFor peer mss : helper (peer : used) (msPrev (fromStored sms) ++ rest)
               _ -> []
 
+messageThreadFor :: ComposedIdentity -> [Stored MessageState] -> DirectMessageThread
+messageThreadFor peer mss =
+    let sent = findMsgProperty peer msSent mss
+        received = findMsgProperty peer msReceived mss
+        seen = findMsgProperty peer msSeen mss
+
+     in DirectMessageThread
+         { msgPeer = peer
+         , msgHead = filterAncestors $ sent ++ received
+         , msgSeen = filterAncestors $ sent ++ seen
+         }
+
+
+watchReceivedMessages :: Head LocalState -> (Stored DirectMessage -> IO ()) -> IO WatchedHead
+watchReceivedMessages h f = do
+    let self = finalOwner $ localIdentity $ headObject h
+    watchHeadWith h (lookupSharedValue . lsShared . headObject) $ \(DirectMessageThreads sms _) -> do
+        forM_ (map fromStored sms) $ \ms -> do
+            mapM_ f $ filter (not . sameIdentity self . msgFrom . fromStored) $ msReceived ms
 
 formatMessage :: TimeZone -> DirectMessage -> String
 formatMessage tzone msg = concat

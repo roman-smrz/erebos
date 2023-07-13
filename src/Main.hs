@@ -133,6 +133,12 @@ interactiveLoop st opts = runInputT defaultSettings $ do
     extPrint <- getExternalPrint
     let extPrintLn str = extPrint $ case reverse str of ('\n':_) -> str
                                                         _ -> str ++ "\n";
+
+    _ <- liftIO $ do
+        tzone <- getCurrentTimeZone
+        watchReceivedMessages erebosHead $
+            extPrintLn . formatMessage tzone . fromStored
+
     server <- liftIO $ do
         startServer (optServer opts) erebosHead extPrintLn
             [ someService @AttachService Proxy
