@@ -150,33 +150,31 @@ findMsgProperty pid sel mss = concat $ flip findProperty mss $ \x -> do
     return $ sel x
 
 
-sendDirectMessage :: (MonadHead LocalState m, MonadError String m) => Peer -> Text -> m (Stored DirectMessage)
-sendDirectMessage peer text = do
-    pid <- peerIdentity peer >>= \case PeerIdentityFull pid -> return pid
-                                       _ -> throwError "incomplete peer identity"
-    let powner = finalOwner pid
-    updateLocalHead $ \ls -> do
-        let st = storedStorage ls
-            self = localIdentity $ fromStored ls
-        flip updateSharedState ls $ \(DirectMessageThreads prev _) -> liftIO $ do
-            let sent = findMsgProperty powner msSent prev
-                received = findMsgProperty powner msReceived prev
+sendDirectMessage :: (Foldable f, Applicative f, MonadHead LocalState m, MonadError String m)
+                  => Identity f -> Text -> m (Stored DirectMessage)
+sendDirectMessage pid text = updateLocalHead $ \ls -> do
+    let st = storedStorage ls
+        self = localIdentity $ fromStored ls
+        powner = finalOwner pid
+    flip updateSharedState ls $ \(DirectMessageThreads prev _) -> liftIO $ do
+        let sent = findMsgProperty powner msSent prev
+            received = findMsgProperty powner msReceived prev
 
-            time <- getZonedTime
-            smsg <- wrappedStore st DirectMessage
-                { msgFrom = toComposedIdentity $ finalOwner self
-                , msgPrev = filterAncestors $ sent ++ received
-                , msgTime = time
-                , msgText = text
-                }
-            next <- wrappedStore st $ MessageState
-                { msPrev = prev
-                , msPeer = powner
-                , msSent = [smsg]
-                , msReceived = []
-                , msSeen = []
-                }
-            return (DirectMessageThreads [next] (messageThreadView [next]), smsg)
+        time <- getZonedTime
+        smsg <- wrappedStore st DirectMessage
+            { msgFrom = toComposedIdentity $ finalOwner self
+            , msgPrev = filterAncestors $ sent ++ received
+            , msgTime = time
+            , msgText = text
+            }
+        next <- wrappedStore st $ MessageState
+            { msPrev = prev
+            , msPeer = powner
+            , msSent = [smsg]
+            , msReceived = []
+            , msSeen = []
+            }
+        return (DirectMessageThreads [next] (messageThreadView [next]), smsg)
 
 syncDirectMessageToPeer :: DirectMessageThreads -> ServiceHandler DirectMessage ()
 syncDirectMessageToPeer (DirectMessageThreads mss _) = do

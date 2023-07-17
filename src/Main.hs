@@ -303,7 +303,10 @@ cmdSend :: Command
 cmdSend = void $ do
     Just peer <- gets csPeer
     text <- asks ciLine
-    smsg <- sendDirectMessage peer $ T.pack text
+    powner <- peerIdentity peer >>= \case
+        PeerIdentityFull pid -> return $ finalOwner pid
+        _ -> throwError "incomplete peer identity"
+    smsg <- sendDirectMessage powner $ T.pack text
     tzone <- liftIO $ getCurrentTimeZone
     liftIO $ putStrLn $ formatMessage tzone $ fromStored smsg
 

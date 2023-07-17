@@ -249,6 +249,7 @@ commands = map (T.pack *** id)
     , ("contact-list", cmdContactList)
     , ("contact-set-name", cmdContactSetName)
     , ("dm-send-peer", cmdDmSendPeer)
+    , ("dm-send-contact", cmdDmSendContact)
     ]
 
 cmdStore :: Command
@@ -480,19 +481,30 @@ cmdContactList = do
             ]
     cmdOut "contact-list-done"
 
-cmdContactSetName :: Command
-cmdContactSetName = do
-    [cid, name] <- asks tiParams
+getContact :: Text -> CommandM Contact
+getContact cid = do
     h <- getHead
     let contacts = fromSetBy (comparing contactName) . lookupSharedValue . lsShared . headObject $ h
     [contact] <- flip filterM contacts $ \c -> do
         r:_ <- return $ filterAncestors $ concatMap storedRoots $ toComponents c
         return $ T.pack (show $ refDigest $ storedRef r) == cid
+    return contact
+
+cmdContactSetName :: Command
+cmdContactSetName = do
+    [cid, name] <- asks tiParams
+    contact <- getContact cid
     updateLocalHead_ $ updateSharedState_ $ contactSetName contact name
     cmdOut "contact-set-name-done"
 
 cmdDmSendPeer :: Command
 cmdDmSendPeer = do
     [spidx, msg] <- asks tiParams
-    peer <- getPeer spidx
-    void $ sendDirectMessage peer msg
+    PeerIdentityFull to <- peerIdentity =<< getPeer spidx
+    void $ sendDirectMessage to msg
+
+cmdDmSendContact :: Command
+cmdDmSendContact = do
+    [cid, msg] <- asks tiParams
+    Just to <- contactIdentity <$> getContact cid
+    void $ sendDirectMessage to msg
