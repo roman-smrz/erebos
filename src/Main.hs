@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Main (main) where
 
 import Control.Arrow (first)
@@ -17,6 +19,7 @@ import Data.List
 import Data.Maybe
 import Data.Ord
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 import qualified Data.Text.IO as T
 import Data.Time.LocalTime
 import Data.Typeable
@@ -149,6 +152,7 @@ interactiveLoop st opts = runInputT defaultSettings $ do
             ]
 
     peers <- liftIO $ newMVar []
+    contextOptions <- liftIO $ newMVar []
 
     void $ liftIO $ forkIO $ void $ forever $ do
         peer <- getNextPeerChange server
@@ -158,8 +162,13 @@ interactiveLoop st opts = runInputT defaultSettings $ do
                 let update [] = ([(peer, shown)], Nothing)
                     update ((p,s):ps) | p == peer = ((peer, shown) : ps, Just s)
                                       | otherwise = first ((p,s):) $ update ps
+                let ctxUpdate n [] = ([SelectedPeer peer], n)
+                    ctxUpdate n (ctx:ctxs)
+                        | SelectedPeer p <- ctx, p == peer = (ctx:ctxs, n)
+                        | otherwise = first (ctx:) $ ctxUpdate (n + 1) ctxs
                 op <- modifyMVar peers (return . update)
-                when (Just shown /= op) $ extPrint shown
+                idx <- modifyMVar contextOptions (return . ctxUpdate (1 :: Int))
+                when (Just shown /= op) $ extPrint $ "[" <> show idx <> "] PEER " <> shown
             _ -> return ()
 
     let getInputLines prompt = do
@@ -171,17 +180,18 @@ interactiveLoop st opts = runInputT defaultSettings $ do
 
     let process :: CommandState -> MaybeT (InputT IO) CommandState
         process cstate = do
-            pname <- case csPeer cstate of
-                        Nothing -> return ""
-                        Just peer -> peerIdentity peer >>= return . \case
+            pname <- case csContext cstate of
+                        NoContext -> return ""
+                        SelectedPeer peer -> peerIdentity peer >>= return . \case
                             PeerIdentityFull pid -> maybe "<unnamed>" T.unpack $ idName $ finalOwner pid
                             PeerIdentityRef wref _ -> "<" ++ BC.unpack (showRefDigest $ wrDigest wref) ++ ">"
                             PeerIdentityUnknown _  -> "<unknown>"
+                        SelectedContact contact -> return $ T.unpack $ contactName contact
             input <- getInputLines $ pname ++ "> "
             let (CommandM cmd, line) = case input of
                     '/':rest -> let (scmd, args) = dropWhile isSpace <$> span (\c -> isAlphaNum c || c == '-') rest
-                                 in if all isDigit scmd
-                                       then (cmdSetPeer $ read scmd, args)
+                                 in if not (null scmd) && all isDigit scmd
+                                       then (cmdSelectContext $ read scmd, args)
                                        else (fromMaybe (cmdUnknown scmd) $ lookup scmd commands, args)
                     _        -> (cmdSend, input)
             h <- liftIO (reloadHead $ csHead cstate) >>= \case
@@ -193,6 +203,8 @@ interactiveLoop st opts = runInputT defaultSettings $ do
                 , ciLine = line
                 , ciPrint = extPrintLn
                 , ciPeers = liftIO $ readMVar peers
+                , ciContextOptions = liftIO $ readMVar contextOptions
+                , ciSetContextOptions = \ctxs -> liftIO $ modifyMVar_ contextOptions $ const $ return ctxs
                 }
             case res of
                  Right cstate' -> return cstate'
@@ -203,7 +215,7 @@ interactiveLoop st opts = runInputT defaultSettings $ do
         loop Nothing = return ()
     loop $ Just $ CommandState
         { csHead = erebosHead
-        , csPeer = Nothing
+        , csContext = NoContext
         , csIceSessions = []
         , csIcePeer = Nothing
         }
@@ -214,14 +226,20 @@ data CommandInput = CommandInput
     , ciLine :: String
     , ciPrint :: String -> IO ()
     , ciPeers :: CommandM [(Peer, String)]
+    , ciContextOptions :: CommandM [CommandContext]
+    , ciSetContextOptions :: [CommandContext] -> Command
     }
 
 data CommandState = CommandState
     { csHead :: Head LocalState
-    , csPeer :: Maybe Peer
+    , csContext :: CommandContext
     , csIceSessions :: [IceSession]
     , csIcePeer :: Maybe Peer
     }
+
+data CommandContext = NoContext
+                    | SelectedPeer Peer
+                    | SelectedContact Contact
 
 newtype CommandM a = CommandM (ReaderT CommandInput (StateT CommandState (ExceptT String IO)) a)
     deriving (Functor, Applicative, Monad, MonadIO, MonadReader CommandInput, MonadState CommandState, MonadError String)
@@ -243,6 +261,21 @@ instance MonadHead LocalState CommandM where
         return x
 
 type Command = CommandM ()
+
+getSelectedPeer :: CommandM Peer
+getSelectedPeer = gets csContext >>= \case
+    SelectedPeer peer -> return peer
+    _ -> throwError "no peer selected"
+
+getSelectedIdentity :: CommandM ComposedIdentity
+getSelectedIdentity = gets csContext >>= \case
+    SelectedPeer peer -> peerIdentity peer >>= \case
+        PeerIdentityFull pid -> return $ toComposedIdentity pid
+        _ -> throwError "incomplete peer identity"
+    SelectedContact contact -> case contactIdentity contact of
+        Just cid -> return cid
+        Nothing -> throwError "contact without erebos identity"
+    _ -> throwError "no contact or peer selected"
 
 commands :: [(String, Command)]
 commands =
@@ -273,8 +306,10 @@ cmdUnknown cmd = liftIO $ putStrLn $ "Unknown command: " ++ cmd
 cmdPeers :: Command
 cmdPeers = do
     peers <- join $ asks ciPeers
+    set <- asks ciSetContextOptions
+    set $ map (SelectedPeer . fst) peers
     forM_ (zip [1..] peers) $ \(i :: Int, (_, name)) -> do
-        liftIO $ putStrLn $ show i ++ ": " ++ name
+        liftIO $ putStrLn $ "[" ++ show i ++ "] " ++ name
 
 cmdPeerAdd :: Command
 cmdPeerAdd = void $ do
@@ -294,18 +329,15 @@ showPeer pidentity paddr =
                     PeerIdentityFull pid   -> T.unpack $ displayIdentity pid
      in name ++ " [" ++ show paddr ++ "]"
 
-cmdSetPeer :: Int -> Command
-cmdSetPeer n | n < 1     = liftIO $ putStrLn "Invalid peer index"
-             | otherwise = do peers <- join $ asks ciPeers
-                              modify $ \s -> s { csPeer = fmap fst $ listToMaybe $ drop (n - 1) peers }
+cmdSelectContext :: Int -> Command
+cmdSelectContext n = join (asks ciContextOptions) >>= \ctxs -> if
+    | n > 0, (ctx : _) <- drop (n - 1) ctxs -> modify $ \s -> s { csContext = ctx }
+    | otherwise -> throwError "invalid index"
 
 cmdSend :: Command
 cmdSend = void $ do
-    Just peer <- gets csPeer
     text <- asks ciLine
-    powner <- peerIdentity peer >>= \case
-        PeerIdentityFull pid -> return $ finalOwner pid
-        _ -> throwError "incomplete peer identity"
+    powner <- finalOwner <$> getSelectedIdentity
     smsg <- sendDirectMessage powner $ T.pack text
     tzone <- liftIO $ getCurrentTimeZone
     liftIO $ putStrLn $ formatMessage tzone $ fromStored smsg
@@ -313,9 +345,7 @@ cmdSend = void $ do
 cmdHistory :: Command
 cmdHistory = void $ do
     ehead <- gets csHead
-    Just peer <- gets csPeer
-    PeerIdentityFull pid <- peerIdentity peer
-    let powner = finalOwner pid
+    powner <- finalOwner <$> getSelectedIdentity
 
     case find (sameIdentity powner . msgPeer) $
             toThreadList $ lookupSharedValue $ lsShared $ headObject ehead of
@@ -330,16 +360,13 @@ cmdUpdateIdentity = void $ do
     runReaderT updateSharedIdentity =<< gets csHead
 
 cmdAttach :: Command
-cmdAttach = join $ attachToOwner
-    <$> (maybe (throwError "no peer selected") return =<< gets csPeer)
+cmdAttach = attachToOwner =<< getSelectedPeer
 
 cmdAttachAccept :: Command
-cmdAttachAccept = join $ attachAccept
-    <$> (maybe (throwError "no peer selected") return =<< gets csPeer)
+cmdAttachAccept = attachAccept =<< getSelectedPeer
 
 cmdAttachReject :: Command
-cmdAttachReject = join $ attachReject
-    <$> (maybe (throwError "no peer selected") return =<< gets csPeer)
+cmdAttachReject = attachReject =<< getSelectedPeer
 
 cmdContacts :: Command
 cmdContacts = do
@@ -347,24 +374,28 @@ cmdContacts = do
     ehead <- gets csHead
     let contacts = fromSetBy (comparing contactName) $ lookupSharedValue $ lsShared $ headObject ehead
         verbose = "-v" `elem` args
-    forM_ (zip [1..] contacts) $ \(i :: Int, c) -> do
-        liftIO $ putStrLn $ concat
-            [ show i, ": ", T.unpack $ contactName c
-            , case contactIdentity c of Nothing -> ""; Just idt -> " (" ++ T.unpack (displayIdentity idt) ++ ")"
-            , if verbose then " " ++ (unwords $ map (BC.unpack . showRef . storedRef) $ maybe [] idDataF $ contactIdentity c) else ""
+    set <- asks ciSetContextOptions
+    set $ map SelectedContact contacts
+    forM_ (zip [1..] contacts) $ \(i :: Int, c) -> liftIO $ do
+        T.putStrLn $ T.concat
+            [ "[", T.pack (show i), "] ", contactName c
+            , case contactIdentity c of
+                   Just idt | cname <- displayIdentity idt
+                            , cname /= contactName c
+                            -> " (" <> cname <> ")"
+                   _ -> ""
+            , if verbose then " " <> (T.unwords $ map (T.decodeUtf8 . showRef . storedRef) $ maybe [] idDataF $ contactIdentity c)
+                         else ""
             ]
 
 cmdContactAdd :: Command
-cmdContactAdd = join $ contactRequest
-    <$> (maybe (throwError "no peer selected") return =<< gets csPeer)
+cmdContactAdd = contactRequest =<< getSelectedPeer
 
 cmdContactAccept :: Command
-cmdContactAccept = join $ contactAccept
-    <$> (maybe (throwError "no peer selected") return =<< gets csPeer)
+cmdContactAccept = contactAccept =<< getSelectedPeer
 
 cmdContactReject :: Command
-cmdContactReject = join $ contactReject
-    <$> (maybe (throwError "no peer selected") return =<< gets csPeer)
+cmdContactReject = contactReject =<< getSelectedPeer
 
 cmdDiscoveryInit :: Command
 cmdDiscoveryInit = void $ do

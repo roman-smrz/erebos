@@ -59,6 +59,7 @@ executable erebos
                        TypeFamilyDependencies
 
   other-extensions:    ForeignFunctionInterface
+                       OverloadedStrings
                        RecursiveDo
                        UndecidableInstances
 
