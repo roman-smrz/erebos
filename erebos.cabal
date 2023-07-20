@@ -50,6 +50,7 @@ executable erebos
                        LambdaCase,
                        MultiWayIf,
                        RankNTypes,
+                       RecordWildCards
                        ScopedTypeVariables,
                        StandaloneDeriving,
                        TypeOperators
