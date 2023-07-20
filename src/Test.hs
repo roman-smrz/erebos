@@ -44,17 +44,21 @@ import Sync
 
 data TestState = TestState
     { tsHead :: Maybe (Head LocalState)
-    , tsServer :: Maybe Server
-    , tsPeers :: Maybe (MVar (Int, [(Int, Peer)]))
+    , tsServer :: Maybe RunningServer
     , tsWatchedLocalIdentity :: Maybe WatchedHead
     , tsWatchedSharedIdentity :: Maybe WatchedHead
+    }
+
+data RunningServer = RunningServer
+    { rsServer :: Server
+    , rsPeers :: MVar (Int, [(Int, Peer)])
+    , rsPeerThread :: ThreadId
     }
 
 initTestState :: TestState
 initTestState = TestState
     { tsHead = Nothing
     , tsServer = Nothing
-    , tsPeers = Nothing
     , tsWatchedLocalIdentity = Nothing
     , tsWatchedSharedIdentity = Nothing
     }
@@ -115,8 +119,8 @@ cmdOut line = do
 
 getPeer :: Text -> CommandM Peer
 getPeer spidx = do
-    Just pmvar <- gets tsPeers
-    Just peer <- lookup (read $ T.unpack spidx) . snd <$> liftIO (readMVar pmvar)
+    Just RunningServer {..} <- gets tsServer
+    Just peer <- lookup (read $ T.unpack spidx) . snd <$> liftIO (readMVar rsPeers)
     return peer
 
 getPeerIndex :: MVar (Int, [(Int, Peer)]) -> ServiceHandler (PairingService a) Int
@@ -233,6 +237,7 @@ commands = map (T.pack *** id)
     , ("stored-set-list", cmdStoredSetList)
     , ("create-identity", cmdCreateIdentity)
     , ("start-server", cmdStartServer)
+    , ("stop-server", cmdStopServer)
     , ("peer-add", cmdPeerAdd)
     , ("shared-state-get", cmdSharedStateGet)
     , ("shared-state-wait", cmdSharedStateWait)
@@ -323,16 +328,16 @@ cmdStartServer = do
     out <- asks tiOutput
 
     Just h <- gets tsHead
-    peers <- liftIO $ newMVar (1, [])
-    server <- liftIO $ startServer defaultServerOptions h (hPutStrLn stderr)
-        [ someServiceAttr $ pairingAttributes (Proxy @AttachService) out peers "attach"
-        , someServiceAttr $ pairingAttributes (Proxy @ContactService) out peers "contact"
+    rsPeers <- liftIO $ newMVar (1, [])
+    rsServer <- liftIO $ startServer defaultServerOptions h (hPutStrLn stderr)
+        [ someServiceAttr $ pairingAttributes (Proxy @AttachService) out rsPeers "attach"
+        , someServiceAttr $ pairingAttributes (Proxy @ContactService) out rsPeers "contact"
         , someServiceAttr $ directMessageAttributes out
         , someService @SyncService Proxy
         ]
 
-    void $ liftIO $ forkIO $ void $ forever $ do
-        peer <- getNextPeerChange server
+    rsPeerThread <- liftIO $ forkIO $ void $ forever $ do
+        peer <- getNextPeerChange rsServer
 
         let printPeer (idx, p) = do
                 params <- peerIdentity p >>= return . \case
@@ -344,19 +349,28 @@ cmdStartServer = do
             update cur@(nid, p:ps) | snd p == peer = printPeer p >> return cur
                                    | otherwise = fmap (p:) <$> update (nid, ps)
 
-        modifyMVar_ peers update
+        modifyMVar_ rsPeers update
 
-    modify $ \s -> s { tsServer = Just server, tsPeers = Just peers }
+    modify $ \s -> s { tsServer = Just RunningServer {..} }
+
+cmdStopServer :: Command
+cmdStopServer = do
+    Just RunningServer {..} <- gets tsServer
+    liftIO $ do
+        killThread rsPeerThread
+        stopServer rsServer
+    modify $ \s -> s { tsServer = Nothing }
+    cmdOut "stop-server-done"
 
 cmdPeerAdd :: Command
 cmdPeerAdd = do
-    Just server <- gets tsServer
+    Just RunningServer {..} <- gets tsServer
     host:rest <- map T.unpack <$> asks tiParams
 
     let port = case rest of [] -> show discoveryPort
                             (p:_) -> p
     addr:_ <- liftIO $ getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just host) (Just port)
-    void $ liftIO $ serverPeer server (addrAddress addr)
+    void $ liftIO $ serverPeer rsServer (addrAddress addr)
 
 cmdSharedStateGet :: Command
 cmdSharedStateGet = do
