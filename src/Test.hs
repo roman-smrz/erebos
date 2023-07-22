@@ -255,6 +255,8 @@ commands = map (T.pack *** id)
     , ("contact-set-name", cmdContactSetName)
     , ("dm-send-peer", cmdDmSendPeer)
     , ("dm-send-contact", cmdDmSendContact)
+    , ("dm-list-peer", cmdDmListPeer)
+    , ("dm-list-contact", cmdDmListContact)
     ]
 
 cmdStore :: Command
@@ -522,3 +524,26 @@ cmdDmSendContact = do
     [cid, msg] <- asks tiParams
     Just to <- contactIdentity <$> getContact cid
     void $ sendDirectMessage to msg
+
+dmList :: Foldable f => Identity f -> Command
+dmList peer = do
+    threads <- toThreadList . lookupSharedValue . lsShared . headObject <$> getHead
+    case find (sameIdentity peer . msgPeer) threads of
+        Just thread -> do
+            forM_ (reverse $ threadToList thread) $ \DirectMessage {..} -> cmdOut $ "dm-list-item"
+                <> " from " <> (maybe "<unnamed>" T.unpack $ idName msgFrom)
+                <> " text " <> (T.unpack msgText)
+        Nothing -> return ()
+    cmdOut "dm-list-done"
+
+cmdDmListPeer :: Command
+cmdDmListPeer = do
+    [spidx] <- asks tiParams
+    PeerIdentityFull to <- peerIdentity =<< getPeer spidx
+    dmList to
+
+cmdDmListContact :: Command
+cmdDmListContact = do
+    [cid] <- asks tiParams
+    Just to <- contactIdentity <$> getContact cid
+    dmList to
