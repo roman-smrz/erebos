@@ -722,11 +722,7 @@ finalizedChannel peer self = do
 
     -- Notify services about new peer
     readTVar (peerIdentityVar peer) >>= \case
-        PeerIdentityFull _ ->
-            writeTQueue (serverIOActions $ peerServer peer) $ do
-                forM_ (serverServices $ peerServer peer) $ \case
-                    service@(SomeService _ attrs) ->
-                        runPeerServiceOn (Just (service, attrs)) peer serviceNewPeer
+        PeerIdentityFull _ -> notifyServicesOfPeer peer
         _ -> return ()
 
     -- Outstanding service packets
@@ -754,7 +750,8 @@ handleIdentityAnnounce self peer ref = liftIO $ atomically $ do
 
         PeerIdentityFull pid
             | idData pid `precedes` wrappedLoad ref
-            -> validateAndUpdate (idUpdates pid) $ \_ -> return ()
+            -> validateAndUpdate (idUpdates pid) $ \_ -> do
+                notifyServicesOfPeer peer
 
         _ -> return ()
 
@@ -766,8 +763,15 @@ handleIdentityUpdate peer ref = liftIO $ atomically $ do
         -> do
             writeTVar (peerIdentityVar peer) $ PeerIdentityFull pid'
             writeTChan (serverChanPeer $ peerServer peer) peer
+            when (idData pid /= idData pid') $ notifyServicesOfPeer peer
 
         | otherwise -> return ()
+
+notifyServicesOfPeer :: Peer -> STM ()
+notifyServicesOfPeer peer@Peer { peerServer_ = Server {..} } = do
+    writeTQueue serverIOActions $ do
+        forM_ serverServices $ \service@(SomeService _ attrs) ->
+            runPeerServiceOn (Just (service, attrs)) peer serviceNewPeer
 
 
 mkPeer :: Server -> PeerAddress -> IO Peer
