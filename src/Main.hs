@@ -75,17 +75,17 @@ main = do
                 Nothing -> error "ref does not exist"
                 Just ref -> BL.putStr $ lazyLoadBytes ref
 
-        ["cat-file", objtype, sref] -> do
-            readRef st (BC.pack sref) >>= \case
+        ("cat-file" : objtype : srefs@(_:_)) -> do
+            sequence <$> (mapM (readRef st . BC.pack) srefs) >>= \case
                 Nothing -> error "ref does not exist"
-                Just ref -> case objtype of
-                    "signed" -> do
+                Just refs -> case objtype of
+                    "signed" -> forM_ refs $ \ref -> do
                         let signed = load ref :: Signed Object
                         BL.putStr $ lazyLoadBytes $ storedRef $ signedData signed
                         forM_ (signedSignature signed) $ \sig -> do
                             putStr $ "SIG "
                             BC.putStrLn $ showRef $ storedRef $ sigKey $ fromStored sig
-                    "identity" -> case validateIdentity (wrappedLoad ref) of
+                    "identity" -> case validateIdentityF (wrappedLoad <$> refs) of
                         Just identity -> do
                             let disp :: Identity m -> IO ()
                                 disp idt = do
