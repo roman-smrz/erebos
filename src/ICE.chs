@@ -17,7 +17,6 @@ module ICE (
 ) where
 
 import Control.Arrow
-import Control.Concurrent.Chan
 import Control.Concurrent.MVar
 import Control.Monad
 import Control.Monad.Except
@@ -31,6 +30,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.Read as T
+import Data.Void
 
 import Foreign.C.String
 import Foreign.C.Types
@@ -39,16 +39,15 @@ import Foreign.Marshal.Array
 import Foreign.Ptr
 import Foreign.StablePtr
 
+import Flow
 import Storage
 
 #include "pjproject.h"
 
 data IceSession = IceSession
     { isStrans :: PjIceStrans
-    , isChan :: MVar (Either [ByteString] (MappedChan ByteString))
+    , isChan :: MVar (Either [ByteString] (Flow Void ByteString))
     }
-
-data MappedChan a = forall b. MappedChan (a -> b) (Chan b)
 
 instance Eq IceSession where
     (==) = (==) `on` isStrans
@@ -188,13 +187,13 @@ foreign export ccall ice_call_cb :: StablePtr (IO ()) -> IO ()
 ice_call_cb :: StablePtr (IO ()) -> IO ()
 ice_call_cb = join . deRefStablePtr
 
-iceSetChan :: IceSession -> (ByteString -> a) -> Chan a -> IO ()
-iceSetChan sess f chan = do
+iceSetChan :: IceSession -> Flow Void ByteString -> IO ()
+iceSetChan sess chan = do
     modifyMVar_ (isChan sess) $ \orig -> do
         case orig of
-             Left buf -> writeList2Chan chan $ map f $ reverse buf
+             Left buf -> mapM_ (writeFlowIO chan) $ reverse buf
              Right _ -> return ()
-        return $ Right $ MappedChan f chan
+        return $ Right chan
 
 foreign export ccall ice_rx_data :: StablePtr IceSession -> Ptr CChar -> Int -> IO ()
 ice_rx_data :: StablePtr IceSession -> Ptr CChar -> Int -> IO ()
@@ -202,5 +201,5 @@ ice_rx_data sptr buf len = do
     sess <- deRefStablePtr sptr
     bs <- packCStringLen (buf, len)
     modifyMVar_ (isChan sess) $ \case
-            mc@(Right (MappedChan f chan)) -> writeChan chan (f bs) >> return mc
+            mc@(Right chan) -> writeFlowIO chan bs >> return mc
             Left bss -> return $ Left (bs:bss)
