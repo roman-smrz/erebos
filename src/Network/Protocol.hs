@@ -223,7 +223,7 @@ processIncomming gs@GlobalState {..} = do
                 Just (b, enc)
                     | b .&. 0xE0 == 0x80 -> do
                         ch <- maybe (throwError "unexpected encrypted packet") return mbch
-                        dec <- channelDecrypt ch enc
+                        (dec, _) <- channelDecrypt ch enc
 
                         case B.uncons dec of
                             Just (0x00, content) -> do
@@ -297,7 +297,7 @@ processOutgoing gs@GlobalState {..} = do
                 mbs <- case mbch of
                     Just ch -> do
                         runExceptT (channelEncrypt ch $ BL.toStrict $ 0x00 `BL.cons` plain) >>= \case
-                            Right ctext -> return $ Just $ 0x80 `B.cons` ctext
+                            Right (ctext, _) -> return $ Just $ 0x80 `B.cons` ctext
                             Left err -> do atomically $ gLog $ "Failed to encrypt data: " ++ err
                                            return Nothing
                     Nothing | secure    -> return Nothing
