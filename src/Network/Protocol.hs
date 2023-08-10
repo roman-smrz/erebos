@@ -28,7 +28,9 @@ import Control.Concurrent.STM
 import Control.Monad
 import Control.Monad.Except
 
+import Data.Bits
 import Data.ByteString (ByteString)
+import Data.ByteString qualified as B
 import Data.ByteString.Char8 qualified as BC
 import Data.ByteString.Lazy qualified as BL
 import Data.List
@@ -216,26 +218,46 @@ processIncomming gs@GlobalState {..} = do
         _                     -> Nothing
 
     return $ do
-        (content, secure) <- do
-            if  | Just ch <- mbch
-                -> runExceptT (channelDecrypt ch msg) >>= \case
-                    Right plain -> return (plain, True)
-                    _ -> return (msg, False)
+        let deserialize = liftEither . runExcept . deserializeObjects gStorage . BL.fromStrict
+        let parse = case B.uncons msg of
+                Just (b, enc)
+                    | b .&. 0xE0 == 0x80 -> do
+                        ch <- maybe (throwError "unexpected encrypted packet") return mbch
+                        dec <- channelDecrypt ch enc
 
-                | otherwise
-                -> return (msg, False)
+                        case B.uncons dec of
+                            Just (0x00, content) -> do
+                                objs <- deserialize content
+                                return (True, objs)
 
-        case runExcept $ deserializeObjects gStorage $ BL.fromStrict content of
-            Right (obj:objs)
-                | Just header@(TransportHeader items) <- transportFromObject obj -> atomically $ do
+                            Just (_, _) -> do
+                                throwError "streams not implemented"
+
+                            Nothing -> do
+                                throwError "empty decrypted content"
+
+                    | b .&. 0xE0 == 0x60 -> do
+                        objs <- deserialize msg
+                        return (False, objs)
+
+                    | otherwise -> throwError "invalid packet"
+
+                Nothing -> throwError "empty packet"
+
+        runExceptT parse >>= \case
+            Right (secure, objs)
+                | hobj:content <- objs
+                , Just header@(TransportHeader items) <- transportFromObject hobj
+                -> atomically $ do
                     processAcknowledgements gs conn items
-                    writeFlow cDataInternal (secure, TransportPacket header objs)
+                    writeFlow cDataInternal (secure, TransportPacket header content)
 
                 | otherwise -> atomically $ do
                       gLog $ show cAddress ++ ": invalid objects"
                       gLog $ show objs
 
-            _ -> do atomically $ gLog $ show cAddress ++ ": invalid objects"
+            Left err -> do
+                atomically $ gLog $ show cAddress <> ": failed to parse packet: " <> err
 
 
 processOutgoing :: forall addr. GlobalState addr -> STM (IO ())
@@ -264,7 +286,7 @@ processOutgoing gs@GlobalState {..} = do
             (secure, packet@(TransportPacket header content), ackedBy) <-
                 checkOutstanding <|> readFlow cDataInternal
 
-            let plain = BL.toStrict $ BL.concat $
+            let plain = BL.concat $
                     (serializeObject $ transportToObject gStorage header)
                     : map lazyLoadBytes content
 
@@ -274,12 +296,12 @@ processOutgoing gs@GlobalState {..} = do
             return $ do
                 mbs <- case mbch of
                     Just ch -> do
-                        runExceptT (channelEncrypt ch plain) >>= \case
-                            Right ctext -> return $ Just ctext
+                        runExceptT (channelEncrypt ch $ BL.toStrict $ 0x00 `BL.cons` plain) >>= \case
+                            Right ctext -> return $ Just $ 0x80 `B.cons` ctext
                             Left err -> do atomically $ gLog $ "Failed to encrypt data: " ++ err
                                            return Nothing
                     Nothing | secure    -> return Nothing
-                            | otherwise -> return $ Just plain
+                            | otherwise -> return $ Just $ BL.toStrict plain
 
                 case mbs of
                     Just bs -> do
