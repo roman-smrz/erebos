@@ -10,6 +10,7 @@ module Network.Protocol (
 
     ChannelState(..),
 
+    ControlRequest(..),
     erebosNetworkProtocol,
 
     Connection,
@@ -40,6 +41,7 @@ import System.Clock
 
 import Channel
 import Flow
+import Identity
 import Service
 import Storage
 
@@ -95,9 +97,10 @@ transportFromObject _ = Nothing
 
 
 data GlobalState addr = (Eq addr, Show addr) => GlobalState
-    { gConnections :: TVar [Connection addr]
+    { gIdentity :: TVar UnifiedIdentity
+    , gConnections :: TVar [Connection addr]
     , gDataFlow :: SymFlow (addr, ByteString)
-    , gConnectionFlow :: Flow addr (Connection addr)
+    , gControlFlow :: Flow (ControlRequest addr) (Connection addr)
     , gLog :: String -> STM ()
     , gStorage :: PartialStorage
     , gNowVar :: TVar TimeSpec
@@ -155,12 +158,18 @@ data SentPacket = SentPacket
     }
 
 
+data ControlRequest addr = RequestConnection addr
+                         | SendAnnounce addr
+
+
 erebosNetworkProtocol :: (Eq addr, Ord addr, Show addr)
-                      => (String -> STM ())
+                      => UnifiedIdentity
+                      -> (String -> STM ())
                       -> SymFlow (addr, ByteString)
-                      -> Flow addr (Connection addr)
+                      -> Flow (ControlRequest addr) (Connection addr)
                       -> IO ()
-erebosNetworkProtocol gLog gDataFlow gConnectionFlow = do
+erebosNetworkProtocol initialIdentity gLog gDataFlow gControlFlow = do
+    gIdentity <- newTVarIO initialIdentity
     gConnections <- newTVarIO []
     gStorage <- derivePartialStorage =<< memoryStorage
 
@@ -204,7 +213,7 @@ getConnection GlobalState {..} addr = do
             let conn = Connection {..}
 
             writeTVar gConnections (conn : conns)
-            writeFlow gConnectionFlow conn
+            writeFlow gControlFlow conn
             return conn
 
 processIncomming :: GlobalState addr -> STM (IO ())
@@ -331,15 +340,29 @@ processOutgoing gs@GlobalState {..} = do
                 writeTVar cSentPackets rest
                 return $ sendBytes conn sp
 
-    let establishNewConnection = do
-            _ <- getConnection gs =<< readFlow gConnectionFlow
-            return $ return ()
+    let handleControlRequests = readFlow gControlFlow >>= \case
+            RequestConnection addr -> do
+                _ <- getConnection gs addr
+                identity <- readTVar gIdentity
+                let packet = BL.toStrict $ serializeObject $ transportToObject gStorage $ TransportHeader
+                        [ AnnounceSelf $ refDigest $ storedRef $ idData identity
+                        ]
+                writeFlow gDataFlow (addr, packet)
+                return $ return ()
+
+            SendAnnounce addr -> do
+                identity <- readTVar gIdentity
+                let packet = BL.toStrict $ serializeObject $ transportToObject gStorage $ TransportHeader
+                        [ AnnounceSelf $ refDigest $ storedRef $ idData identity
+                        ]
+                writeFlow gDataFlow (addr, packet)
+                return $ return ()
 
     conns <- readTVar gConnections
     msum $ concat $
         [ map retransmitPacket conns
         , map sendNextPacket conns
-        , [ establishNewConnection ]
+        , [ handleControlRequests ]
         ]
 
 processAcknowledgements :: GlobalState addr -> Connection addr -> [TransportHeaderItem] -> STM ()

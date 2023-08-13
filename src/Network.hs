@@ -25,7 +25,6 @@ import Control.Monad.Except
 import Control.Monad.State
 
 import qualified Data.ByteString.Char8 as BC
-import qualified Data.ByteString.Lazy as BL
 import Data.Function
 import Data.IP qualified as IP
 import Data.List
@@ -68,7 +67,7 @@ data Server = Server
     , serverThreads :: MVar [ThreadId]
     , serverSocket :: MVar Socket
     , serverRawPath :: SymFlow (PeerAddress, BC.ByteString)
-    , serverNewConnection :: Flow (Connection PeerAddress) PeerAddress
+    , serverControlFlow :: Flow (Connection PeerAddress) (ControlRequest PeerAddress)
     , serverDataResponse :: TQueue (Peer, Maybe PartialRef)
     , serverIOActions :: TQueue (ExceptT String IO ())
     , serverServices :: [SomeService]
@@ -184,7 +183,7 @@ startServer opt serverOrigHead logd' serverServices = do
     serverThreads <- newMVar []
     serverSocket <- newEmptyMVar
     (serverRawPath, protocolRawPath) <- newFlowIO
-    (serverNewConnection, protocolNewConnection) <- newFlowIO
+    (serverControlFlow, protocolControlFlow) <- newFlowIO
     serverDataResponse <- newTQueueIO
     serverIOActions <- newTQueueIO
     serverServiceStates <- newTMVarIO M.empty
@@ -217,10 +216,7 @@ startServer opt serverOrigHead logd' serverServices = do
 
         loop sock = do
             when (serverLocalDiscovery opt) $ forkServerThread server $ forever $ do
-                readMVar serverIdentity_ >>= \identity -> do
-                    st <- derivePartialStorage serverStorage
-                    let packet = BL.toStrict $ serializeObject $ transportToObject st $ TransportHeader [ AnnounceSelf $ refDigest $ storedRef $ idData identity ]
-                    mapM_ (void . S.sendTo sock packet) broadcastAddreses
+                atomically $ writeFlowBulk serverControlFlow $ map (SendAnnounce . DatagramAddress) broadcastAddreses
                 threadDelay $ announceIntervalSeconds * 1000 * 1000
 
             let announceUpdate identity = do
@@ -264,7 +260,7 @@ startServer opt serverOrigHead logd' serverServices = do
                     PeerIceSession ice   -> iceSend ice msg
 
             forkServerThread server $ forever $ do
-                conn <- readFlowIO serverNewConnection
+                conn <- readFlowIO serverControlFlow
                 let paddr = connAddress conn
                 peer <- modifyMVar serverPeers $ \pvalue -> do
                     case M.lookup paddr pvalue of
@@ -286,7 +282,7 @@ startServer opt serverOrigHead logd' serverServices = do
                     let svcs = map someServiceID serverServices
                     handlePacket identity secure peer chanSvc svcs header prefs
 
-            erebosNetworkProtocol logd protocolRawPath protocolNewConnection
+            erebosNetworkProtocol (headLocalIdentity serverOrigHead) logd protocolRawPath protocolControlFlow
 
     forkServerThread server $ withSocketsDo $ do
         let hints = defaultHints
@@ -642,13 +638,8 @@ serverPeer' server paddr = do
              Nothing -> do
                  peer <- mkPeer server paddr
                  return (M.insert paddr peer pvalue, (peer, True))
-    when hello $ do
-        identity <- serverIdentity server
-        atomically $ do
-            writeFlow (serverNewConnection server) paddr
-            sendToPeerPlain peer [] $ TransportPacket
-                (TransportHeader [ AnnounceSelf $ refDigest $ storedRef $ idData identity ])
-                []
+    when hello $ atomically $ do
+        writeFlow (serverControlFlow server) (RequestConnection paddr)
     return peer
 
 
