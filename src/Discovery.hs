@@ -107,7 +107,7 @@ instance Service DiscoveryService where
             let insertHelper new old | dpPriority new > dpPriority old = new
                                      | otherwise                       = old
             mbaddr <- case words (T.unpack addr) of
-                [ipaddr, port] | DatagramAddress _ paddr <- peerAddress peer -> do
+                [ipaddr, port] | DatagramAddress paddr <- peerAddress peer -> do
                     saddr <- liftIO $ head <$> getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just ipaddr) (Just port)
                     return $ if paddr == addrAddress saddr
                                 then Just addr

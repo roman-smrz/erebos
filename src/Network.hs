@@ -125,11 +125,11 @@ setPeerChannel Peer {..} ch = do
 instance Eq Peer where
     (==) = (==) `on` peerIdentityVar
 
-data PeerAddress = DatagramAddress Socket SockAddr
+data PeerAddress = DatagramAddress SockAddr
                  | PeerIceSession IceSession
 
 instance Show PeerAddress where
-    show (DatagramAddress _ saddr) = unwords $ case IP.fromSockAddr saddr of
+    show (DatagramAddress saddr) = unwords $ case IP.fromSockAddr saddr of
         Just (IP.IPv6 ipv6, port)
             | (0, 0, 0xffff, ipv4) <- IP.fromIPv6w ipv6
             -> [show (IP.toIPv4w ipv4), show port]
@@ -139,15 +139,15 @@ instance Show PeerAddress where
     show (PeerIceSession ice) = show ice
 
 instance Eq PeerAddress where
-    DatagramAddress _ addr == DatagramAddress _ addr' = addr == addr'
-    PeerIceSession ice     == PeerIceSession ice'     = ice == ice'
-    _                      == _                       = False
+    DatagramAddress addr == DatagramAddress addr' = addr == addr'
+    PeerIceSession ice   == PeerIceSession ice'   = ice == ice'
+    _                    == _                     = False
 
 instance Ord PeerAddress where
-    compare (DatagramAddress _ addr) (DatagramAddress _ addr') = compare addr addr'
-    compare (DatagramAddress _ _   ) _                         = LT
-    compare _                        (DatagramAddress _ _    ) = GT
-    compare (PeerIceSession ice    ) (PeerIceSession ice')     = compare ice ice'
+    compare (DatagramAddress addr) (DatagramAddress addr') = compare addr addr'
+    compare (DatagramAddress _   ) _                       = LT
+    compare _                      (DatagramAddress _    ) = GT
+    compare (PeerIceSession ice  ) (PeerIceSession ice')   = compare ice ice'
 
 
 data PeerIdentity = PeerIdentityUnknown (TVar [UnifiedIdentity -> ExceptT String IO ()])
@@ -255,13 +255,13 @@ startServer opt serverOrigHead logd' serverServices = do
 
             forkServerThread server $ forever $ do
                 (msg, saddr) <- S.recvFrom sock 4096
-                writeFlowIO serverRawPath (DatagramAddress sock saddr, msg)
+                writeFlowIO serverRawPath (DatagramAddress saddr, msg)
 
             forkServerThread server $ forever $ do
                 (paddr, msg) <- readFlowIO serverRawPath
                 case paddr of
-                    DatagramAddress _ addr -> void $ S.sendTo sock msg addr
-                    PeerIceSession ice     -> iceSend ice msg
+                    DatagramAddress addr -> void $ S.sendTo sock msg addr
+                    PeerIceSession ice   -> iceSend ice msg
 
             forkServerThread server $ forever $ do
                 conn <- readFlowIO serverNewConnection
@@ -625,8 +625,7 @@ mkPeer peerServer_ peerAddress = do
 
 serverPeer :: Server -> SockAddr -> IO Peer
 serverPeer server paddr = do
-    sock <- readMVar $ serverSocket server
-    serverPeer' server (DatagramAddress sock paddr)
+    serverPeer' server (DatagramAddress paddr)
 
 serverPeerIce :: Server -> IceSession -> IO Peer
 serverPeerIce server@Server {..} ice = do
