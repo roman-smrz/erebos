@@ -36,6 +36,8 @@ import Data.ByteString.Char8 qualified as BC
 import Data.ByteString.Lazy qualified as BL
 import Data.List
 import Data.Maybe
+import Data.Text (Text)
+import Data.Text qualified as T
 
 import System.Clock
 
@@ -46,6 +48,13 @@ import Service
 import Storage
 
 
+protocolVersion :: Text
+protocolVersion = T.pack "0.1"
+
+protocolVersions :: [Text]
+protocolVersions = [protocolVersion]
+
+
 data TransportPacket a = TransportPacket TransportHeader [a]
 
 data TransportHeader = TransportHeader [TransportHeaderItem]
@@ -53,6 +62,7 @@ data TransportHeader = TransportHeader [TransportHeaderItem]
 data TransportHeaderItem
     = Acknowledged RefDigest
     | Rejected RefDigest
+    | ProtocolVersion Text
     | DataRequest RefDigest
     | DataResponse RefDigest
     | AnnounceSelf RefDigest
@@ -68,6 +78,7 @@ transportToObject st (TransportHeader items) = Rec $ map single items
     where single = \case
               Acknowledged dgst -> (BC.pack "ACK", RecRef $ partialRefFromDigest st dgst)
               Rejected dgst -> (BC.pack "REJ", RecRef $ partialRefFromDigest st dgst)
+              ProtocolVersion ver -> (BC.pack "VER", RecText ver)
               DataRequest dgst -> (BC.pack "REQ", RecRef $ partialRefFromDigest st dgst)
               DataResponse dgst -> (BC.pack "RSP", RecRef $ partialRefFromDigest st dgst)
               AnnounceSelf dgst -> (BC.pack "ANN", RecRef $ partialRefFromDigest st dgst)
@@ -84,6 +95,7 @@ transportFromObject (Rec items) = case catMaybes $ map single items of
     where single (name, content) = if
               | name == BC.pack "ACK", RecRef ref <- content -> Just $ Acknowledged $ refDigest ref
               | name == BC.pack "REJ", RecRef ref <- content -> Just $ Rejected $ refDigest ref
+              | name == BC.pack "VER", RecText ver <- content -> Just $ ProtocolVersion ver
               | name == BC.pack "REQ", RecRef ref <- content -> Just $ DataRequest $ refDigest ref
               | name == BC.pack "RSP", RecRef ref <- content -> Just $ DataResponse $ refDigest ref
               | name == BC.pack "ANN", RecRef ref <- content -> Just $ AnnounceSelf $ refDigest ref
@@ -344,17 +356,17 @@ processOutgoing gs@GlobalState {..} = do
             RequestConnection addr -> do
                 _ <- getConnection gs addr
                 identity <- readTVar gIdentity
-                let packet = BL.toStrict $ serializeObject $ transportToObject gStorage $ TransportHeader
+                let packet = BL.toStrict $ serializeObject $ transportToObject gStorage $ TransportHeader $
                         [ AnnounceSelf $ refDigest $ storedRef $ idData identity
-                        ]
+                        ] ++ map ProtocolVersion protocolVersions
                 writeFlow gDataFlow (addr, packet)
                 return $ return ()
 
             SendAnnounce addr -> do
                 identity <- readTVar gIdentity
-                let packet = BL.toStrict $ serializeObject $ transportToObject gStorage $ TransportHeader
+                let packet = BL.toStrict $ serializeObject $ transportToObject gStorage $ TransportHeader $
                         [ AnnounceSelf $ refDigest $ storedRef $ idData identity
-                        ]
+                        ] ++ map ProtocolVersion protocolVersions
                 writeFlow gDataFlow (addr, packet)
                 return $ return ()
 

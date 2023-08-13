@@ -480,6 +480,8 @@ handlePacket identity secure peer chanSvc svcs (TransportHeader headers) prefs =
                     | otherwise -> addHeader $ Rejected dgst
                 | otherwise -> throwError $ "service ref without type"
 
+            _ -> return ()
+
     let logd = writeTQueue (serverErrorLog server)
     case res of
         Left err -> do
