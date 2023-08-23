@@ -4,6 +4,7 @@ module Test (
 
 import Control.Arrow
 import Control.Concurrent
+import Control.Exception
 import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.State
@@ -107,9 +108,11 @@ getHead = do
 type Output = MVar ()
 
 outLine :: Output -> String -> IO ()
-outLine mvar line = withMVar mvar $ \() -> do
-    putStrLn line
-    hFlush stdout
+outLine mvar line = do
+    evaluate $ foldl' (flip seq) () line
+    withMVar mvar $ \() -> do
+        putStrLn line
+        hFlush stdout
 
 cmdOut :: String -> Command
 cmdOut line = do
