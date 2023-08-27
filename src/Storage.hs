@@ -433,9 +433,10 @@ storeHead st obj = liftIO $ do
     return $ Head hid stored
 
 replaceHead :: forall a m. (HeadType a, MonadIO m) => Head a -> Stored a -> m (Either (Maybe (Head a)) (Head a))
-replaceHead prev@(Head hid pobj) stored = liftIO $ do
+replaceHead prev@(Head hid pobj) stored' = liftIO $ do
     let st = headStorage prev
         tid = headTypeID @a Proxy
+    stored <- copyStored st stored'
     case stBacking st of
          StorageDir { dirPath = spath } -> do
              let filename = headPath spath tid hid
