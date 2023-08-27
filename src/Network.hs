@@ -22,6 +22,7 @@ import Control.Concurrent.STM
 import Control.Exception
 import Control.Monad
 import Control.Monad.Except
+import Control.Monad.Reader
 import Control.Monad.State
 
 import qualified Data.ByteString.Char8 as BC
@@ -527,7 +528,7 @@ withPeerIdentity peer act = liftIO $ atomically $ readTVar (peerIdentityVar peer
 
 setupChannel :: UnifiedIdentity -> Peer -> UnifiedIdentity -> WaitingRefCallback
 setupChannel identity peer upid = do
-    req <- createChannelRequest (peerStorage peer) identity upid
+    req <- flip runReaderT (peerStorage peer) $ createChannelRequest identity upid
     let reqref = refDigest $ storedRef req
     let hitems =
             [ TrChannelRequest reqref
@@ -544,7 +545,7 @@ setupChannel identity peer upid = do
 handleChannelRequest :: Peer -> UnifiedIdentity -> Ref -> WaitingRefCallback
 handleChannelRequest peer identity req = do
     withPeerIdentity peer $ \upid -> do
-        (acc, ch) <- acceptChannelRequest identity upid (wrappedLoad req)
+        (acc, ch) <- flip runReaderT (peerStorage peer) $ acceptChannelRequest identity upid (wrappedLoad req)
         liftIO $ atomically $ do
             getPeerChannel peer >>= \case
                 ChannelPeerRequest wr | wrDigest wr == refDigest req -> do

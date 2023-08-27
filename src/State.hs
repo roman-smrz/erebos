@@ -2,7 +2,8 @@ module State (
     LocalState(..),
     SharedState, SharedType(..),
     SharedTypeID, mkSharedTypeID,
-    MonadStorage(..), MonadHead(..),
+
+    MonadHead(..),
     updateLocalHead_,
 
     loadLocalStateHead,
@@ -83,18 +84,11 @@ instance SharedType (Maybe ComposedIdentity) where
     sharedTypeID _ = mkSharedTypeID "0c6c1fe0-f2d7-4891-926b-c332449f7871"
 
 
-class Monad m => MonadStorage m where
-    getStorage :: m Storage
-
 class (MonadIO m, MonadStorage m) => MonadHead a m where
     updateLocalHead :: (Stored a -> m (Stored a, b)) -> m b
 
 updateLocalHead_ :: MonadHead a m => (Stored a -> m (Stored a)) -> m ()
 updateLocalHead_ f = updateLocalHead (fmap (,()) . f)
-
-
-instance Monad m => MonadStorage (ReaderT (Head a) m) where
-    getStorage = asks $ headStorage
 
 instance (HeadType a, MonadIO m) => MonadHead a (ReaderT (Head a) m) where
     updateLocalHead f = do
@@ -146,7 +140,7 @@ updateSharedState :: forall a b m. (SharedType a, MonadHead LocalState m) => (a 
 updateSharedState f = \ls -> do
     let shared = lsShared $ fromStored ls
         val = lookupSharedValue shared
-        st = storedStorage ls
+    st <- getStorage
     (val', x) <- f val
     (,x) <$> if toComponents val' == toComponents val
                 then return ls
@@ -170,36 +164,36 @@ makeSharedStateUpdate st val prev = liftIO $ wrappedStore st SharedState
 mergeSharedIdentity :: (MonadHead LocalState m, MonadError String m) => m UnifiedIdentity
 mergeSharedIdentity = updateLocalHead $ updateSharedState $ \case
     Just cidentity -> do
-        identity <- liftIO $ mergeIdentity cidentity
+        identity <- mergeIdentity cidentity
         return (Just $ toComposedIdentity identity, identity)
     Nothing -> throwError "no existing shared identity"
 
 updateSharedIdentity :: (MonadHead LocalState m, MonadError String m) => m ()
 updateSharedIdentity = updateLocalHead_ $ updateSharedState_ $ \case
     Just identity -> do
-        Just . toComposedIdentity <$> liftIO (interactiveIdentityUpdate identity)
+        Just . toComposedIdentity <$> interactiveIdentityUpdate identity
     Nothing -> throwError "no existing shared identity"
 
-interactiveIdentityUpdate :: Foldable m => Identity m -> IO UnifiedIdentity
+interactiveIdentityUpdate :: (Foldable f, MonadStorage m, MonadIO m, MonadError String m) => Identity f -> m UnifiedIdentity
 interactiveIdentityUpdate identity = do
-    let st = storedStorage $ head $ toList $ idDataF $ identity
-        public = idKeyIdentity identity
+    let public = idKeyIdentity identity
 
-    T.putStr $ T.concat $ concat
-        [ [ T.pack "Name" ]
-        , case idName identity of
-               Just name -> [T.pack " [", name, T.pack "]"]
-               Nothing -> []
-        , [ T.pack ": " ]
-        ]
-    hFlush stdout
-    name <- T.getLine
+    name <- liftIO $ do
+        T.putStr $ T.concat $ concat
+            [ [ T.pack "Name" ]
+            , case idName identity of
+                   Just name -> [T.pack " [", name, T.pack "]"]
+                   Nothing -> []
+            , [ T.pack ": " ]
+            ]
+        hFlush stdout
+        T.getLine
 
     if  | T.null name -> mergeIdentity identity
         | otherwise -> do
-            Just secret <- loadKey public
-            maybe (error "created invalid identity") return . validateIdentity =<<
-                wrappedStore st =<< sign secret =<< wrappedStore st (emptyIdentityData public)
+            secret <- loadKey public
+            maybe (throwError "created invalid identity") return . validateIdentity =<<
+                mstore =<< sign secret =<< mstore (emptyIdentityData public)
                 { iddPrev = toList $ idDataF identity
                 , iddName = Just name
                 }

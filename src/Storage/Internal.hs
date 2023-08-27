@@ -175,6 +175,9 @@ instance Eq (Stored' c a) where
 instance Ord (Stored' c a) where
     compare (Stored r1 _) (Stored r2 _) = compare (refDigest r1) (refDigest r2)
 
+storedStorage :: Stored' c a -> Storage' c
+storedStorage (Stored (Ref st _) _) = st
+
 
 type Complete = Identity
 type Partial = Either RefDigest

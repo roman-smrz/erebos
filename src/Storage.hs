@@ -25,6 +25,8 @@ module Storage (
     WatchedHead,
     watchHead, watchHeadWith, unwatchHead,
 
+    MonadStorage(..),
+
     Storable(..), ZeroStorable(..),
     StorableText(..), StorableDate(..), StorableUUID(..),
 
@@ -41,7 +43,7 @@ module Storage (
     loadZRef,
 
     Stored,
-    fromStored, storedRef, storedStorage,
+    fromStored, storedRef,
     wrappedStore, wrappedLoad,
     copyStored,
 
@@ -525,6 +527,22 @@ unwatchHead (WatchedHead st wid _) = do
         StorageMemory { memWatchers = mvar } -> modifyMVar_ mvar $ return . delWatcher
 
 
+class Monad m => MonadStorage m where
+    getStorage :: m Storage
+    mstore :: Storable a => a -> m (Stored a)
+
+    default mstore :: MonadIO m => Storable a => a -> m (Stored a)
+    mstore x = do
+        st <- getStorage
+        wrappedStore st x
+
+instance MonadIO m => MonadStorage (ReaderT Storage m) where
+    getStorage = ask
+
+instance MonadIO m => MonadStorage (ReaderT (Head a) m) where
+    getStorage = asks $ headStorage
+
+
 class Storable a where
     store' :: a -> Store
     load' :: Load a
@@ -861,9 +879,6 @@ fromStored (Stored _ x) = x
 
 storedRef :: Stored a -> Ref
 storedRef (Stored ref _) = ref
-
-storedStorage :: Stored a -> Storage
-storedStorage (Stored (Ref st _) _) = st
 
 wrappedStore :: MonadIO m => Storable a => Storage -> a -> m (Stored a)
 wrappedStore st x = do ref <- liftIO $ store st x

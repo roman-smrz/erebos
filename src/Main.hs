@@ -113,7 +113,8 @@ main = do
                 Nothing -> error "ref does not exist"
                 Just refs
                     | Just idt <- validateIdentityF $ map wrappedLoad refs -> do
-                        BC.putStrLn . showRefDigest . refDigest . storedRef . idData =<< interactiveIdentityUpdate idt
+                        BC.putStrLn . showRefDigest . refDigest . storedRef . idData =<<
+                            (either fail return <=< runExceptT $ runReaderT (interactiveIdentityUpdate idt) st)
                     | otherwise -> error "invalid identity"
 
         ["test"] -> runTestTool st
@@ -413,7 +414,7 @@ cmdDiscoveryInit = void $ do
 cmdDiscovery :: Command
 cmdDiscovery = void $ do
     Just peer <- gets csIcePeer
-    st <- gets (storedStorage . headStoredObject . csHead)
+    st <- getStorage
     sref <- asks ciLine
     eprint <- asks ciPrint
     liftIO $ readRef st (BC.pack sref) >>= \case

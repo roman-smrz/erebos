@@ -42,9 +42,8 @@ instance PairingResult AttachIdentity where
 
     pairingVerifyResult (AttachIdentity sdata keys) = do
         curid <- lsIdentity . fromStored <$> svcGetLocal
-        secret <- maybe (throwError "failed to load own secret key") return =<<
-            liftIO (loadKey $ iddKeyIdentity $ fromStored $ signedData $ fromStored curid)
-        sdata' <- liftIO $ wrappedStore (storedStorage sdata) =<< signAdd secret (fromStored sdata)
+        secret <- loadKey $ iddKeyIdentity $ fromStored $ signedData $ fromStored curid
+        sdata' <- mstore =<< signAdd secret (fromStored sdata)
         return $ do
             guard $ iddKeyIdentity (fromStored $ signedData $ fromStored sdata) ==
                 iddKeyIdentity (fromStored $ signedData $ fromStored curid)
@@ -52,26 +51,25 @@ instance PairingResult AttachIdentity where
             guard $ iddPrev (fromStored $ signedData $ fromStored $ idData identity) == [curid]
             return (identity, keys)
 
-    pairingFinalizeRequest (identity, keys) = updateLocalHead_ $ \slocal -> liftIO $ do
+    pairingFinalizeRequest (identity, keys) = updateLocalHead_ $ \slocal -> do
         let owner = finalOwner identity
-            st = storedStorage slocal
+        st <- getStorage
         pkeys <- mapM (copyStored st) [ idKeyIdentity owner, idKeyMessage owner ]
-        mapM_ storeKey $ catMaybes [ keyFromData sec pub | sec <- keys, pub <- pkeys ]
+        liftIO $ mapM_ storeKey $ catMaybes [ keyFromData sec pub | sec <- keys, pub <- pkeys ]
 
         shared <- makeSharedStateUpdate st (Just owner) (lsShared $ fromStored slocal)
-        wrappedStore st (fromStored slocal)
+        mstore (fromStored slocal)
             { lsIdentity = idData identity
             , lsShared = [ shared ]
             }
 
     pairingFinalizeResponse = do
-        st <- storedStorage <$> svcGetLocal
         owner <- mergeSharedIdentity
         pid <- asks svcPeerIdentity
-        secret <- maybe (throwError "failed to load secret key") return =<< liftIO (loadKey $ idKeyIdentity owner)
-        identity <- liftIO $ wrappedStore st =<< sign secret =<< wrappedStore st (emptyIdentityData $ idKeyIdentity pid)
+        secret <- loadKey $ idKeyIdentity owner
+        identity <- mstore =<< sign secret =<< mstore (emptyIdentityData $ idKeyIdentity pid)
             { iddPrev = [idData pid], iddOwner = Just (idData owner) }
-        skeys <- liftIO $ map keyGetData . catMaybes <$> mapM loadKey [ idKeyIdentity owner, idKeyMessage owner ]
+        skeys <- map keyGetData . catMaybes <$> mapM loadKeyMb [ idKeyIdentity owner, idKeyMessage owner ]
         return $ AttachIdentity identity skeys
 
     defaultPairingAttributes _ = PairingAttributes

@@ -73,8 +73,8 @@ instance Service DirectMessage where
         let msg = fromStored smsg
         powner <- asks $ finalOwner . svcPeerIdentity
         erb <- svcGetLocal
-        let st = storedStorage erb
-            DirectMessageThreads prev _ = lookupSharedValue $ lsShared $ fromStored erb
+        st <- getStorage
+        let DirectMessageThreads prev _ = lookupSharedValue $ lsShared $ fromStored erb
             sent = findMsgProperty powner msSent prev
             received = findMsgProperty powner msReceived prev
             received' = filterAncestors $ smsg : received
@@ -153,21 +153,20 @@ findMsgProperty pid sel mss = concat $ flip findProperty mss $ \x -> do
 sendDirectMessage :: (Foldable f, Applicative f, MonadHead LocalState m, MonadError String m)
                   => Identity f -> Text -> m (Stored DirectMessage)
 sendDirectMessage pid text = updateLocalHead $ \ls -> do
-    let st = storedStorage ls
-        self = localIdentity $ fromStored ls
+    let self = localIdentity $ fromStored ls
         powner = finalOwner pid
-    flip updateSharedState ls $ \(DirectMessageThreads prev _) -> liftIO $ do
+    flip updateSharedState ls $ \(DirectMessageThreads prev _) -> do
         let sent = findMsgProperty powner msSent prev
             received = findMsgProperty powner msReceived prev
 
-        time <- getZonedTime
-        smsg <- wrappedStore st DirectMessage
+        time <- liftIO getZonedTime
+        smsg <- mstore DirectMessage
             { msgFrom = toComposedIdentity $ finalOwner self
             , msgPrev = filterAncestors $ sent ++ received
             , msgTime = time
             , msgText = text
             }
-        next <- wrappedStore st $ MessageState
+        next <- mstore MessageState
             { msPrev = prev
             , msPeer = powner
             , msSent = [smsg]

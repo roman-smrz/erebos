@@ -21,7 +21,8 @@ module Identity (
 import Control.Arrow
 import Control.Monad
 import Control.Monad.Except
-import qualified Control.Monad.Identity as I
+import Control.Monad.Identity qualified as I
+import Control.Monad.Reader
 
 import Data.Either
 import Data.Foldable
@@ -122,13 +123,17 @@ createIdentity st name owner = do
 
     let signOwner idd
             | Just o <- owner = do
-                Just ownerSecret <- loadKey (iddKeyIdentity $ fromStored $ signedData $ fromStored $ idData o)
+                Just ownerSecret <- loadKeyMb (iddKeyIdentity $ fromStored $ signedData $ fromStored $ idData o)
                 signAdd ownerSecret idd
             | otherwise = return idd
 
-    Just identity <- return . validateIdentity =<< wrappedStore st =<< signOwner =<< sign secret =<<
-        wrappedStore st (emptyIdentityData public)
-        { iddName = name, iddOwner = idData <$> owner, iddKeyMessage = Just publicMsg }
+    Just identity <- flip runReaderT st $ do
+        return . validateIdentity =<< mstore =<< signOwner =<< sign secret =<<
+            mstore (emptyIdentityData public)
+                { iddName = name
+                , iddOwner = idData <$> owner
+                , iddKeyMessage = Just publicMsg
+                }
     return identity
 
 validateIdentity :: Stored (Signed IdentityData) -> Maybe UnifiedIdentity
@@ -192,7 +197,7 @@ lookupProperty sel topHeads = findResult filteredLayers
           findResult [xs] = Just $ snd $ minimumBy (comparing fst) xs
           findResult (_:rest) = findResult rest
 
-mergeIdentity :: Foldable m => Identity m -> IO UnifiedIdentity
+mergeIdentity :: (Foldable f, MonadStorage m, MonadError String m, MonadIO m) => Identity f -> m UnifiedIdentity
 mergeIdentity idt | Just idt' <- toUnifiedIdentity idt = return idt'
 mergeIdentity idt = do
     (owner, ownerData) <- case idOwner_ idt of
@@ -201,11 +206,9 @@ mergeIdentity idt = do
                     | otherwise -> do owner <- mergeIdentity cowner
                                       return (Just owner, Just $ idData owner)
 
-    (sid:_) <- return $ toList $ idDataF idt
-    let st = storedStorage sid
-        public = idKeyIdentity idt
-    Just secret <- loadKey public
-    sdata <- wrappedStore st =<< sign secret =<< wrappedStore st (emptyIdentityData public)
+    let public = idKeyIdentity idt
+    secret <- loadKey public
+    sdata <- mstore =<< sign secret =<< mstore (emptyIdentityData public)
         { iddPrev = toList $ idDataF idt, iddOwner = ownerData }
     return $ idt { idData_ = I.Identity sdata, idOwner_ = toComposedIdentity <$> owner }
 

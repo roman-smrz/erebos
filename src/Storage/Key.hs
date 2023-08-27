@@ -1,10 +1,11 @@
 module Storage.Key (
     KeyPair(..),
-    storeKey, loadKey,
+    storeKey, loadKey, loadKeyMb,
 ) where
 
 import Control.Concurrent.MVar
 import Control.Monad
+import Control.Monad.Except
 
 import Data.ByteArray
 import qualified Data.ByteString.Char8 as BC
@@ -34,8 +35,11 @@ storeKey key = do
          StorageDir { dirPath = dir } -> writeFileOnce (keyFilePath dir spub) (BL.fromStrict $ convert $ keyGetData key)
          StorageMemory { memKeys = kstore } -> modifyMVar_ kstore $ return . M.insert (refDigest $ storedRef spub) (keyGetData key)
 
-loadKey :: KeyPair sec pub => Stored pub -> IO (Maybe sec)
-loadKey spub = do
+loadKey :: (KeyPair sec pub, MonadIO m, MonadError String m) => Stored pub -> m sec
+loadKey = maybe (throwError "secret key not found") return <=< loadKeyMb
+
+loadKeyMb :: (KeyPair sec pub, MonadIO m) => Stored pub -> m (Maybe sec)
+loadKeyMb spub = liftIO $ do
     case stBacking $ storedStorage spub of
          StorageDir { dirPath = dir } -> tryIOError (BC.readFile (keyFilePath dir spub)) >>= \case
              Right kdata -> return $ keyFromData (convert kdata) spub

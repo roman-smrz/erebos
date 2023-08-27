@@ -426,31 +426,28 @@ cmdWatchSharedIdentity = do
 cmdUpdateLocalIdentity :: Command
 cmdUpdateLocalIdentity = do
     [name] <- asks tiParams
-    updateLocalHead_ $ \ls -> liftIO $ do
+    updateLocalHead_ $ \ls -> do
         Just identity <- return $ validateIdentity $ lsIdentity $ fromStored ls
-        let st = storedStorage ls
-            public = idKeyIdentity identity
+        let public = idKeyIdentity identity
 
-        Just secret <- loadKey public
+        secret <- loadKey public
         nidata <- maybe (error "created invalid identity") (return . idData) . validateIdentity =<<
-            wrappedStore st =<< sign secret =<< wrappedStore st (emptyIdentityData public)
+            mstore =<< sign secret =<< mstore (emptyIdentityData public)
             { iddPrev = toList $ idDataF identity
             , iddName = Just name
             }
-        wrappedStore st $ (fromStored ls) { lsIdentity = nidata }
+        mstore (fromStored ls) { lsIdentity = nidata }
 
 cmdUpdateSharedIdentity :: Command
 cmdUpdateSharedIdentity = do
     [name] <- asks tiParams
     updateLocalHead_ $ updateSharedState_ $ \case
         Nothing -> throwError "no existing shared identity"
-        Just identity -> liftIO $ do
-            let st = storedStorage $ head $ idDataF identity
-                public = idKeyIdentity identity
-
-            Just secret <- loadKey public
+        Just identity -> do
+            let public = idKeyIdentity identity
+            secret <- loadKey public
             maybe (error "created invalid identity") (return . Just . toComposedIdentity) . validateIdentity =<<
-                wrappedStore st =<< sign secret =<< wrappedStore st (emptyIdentityData public)
+                mstore =<< sign secret =<< mstore (emptyIdentityData public)
                 { iddPrev = toList $ idDataF identity
                 , iddName = Just name
                 }

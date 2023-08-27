@@ -77,13 +77,13 @@ instance Storable ChannelAcceptData where
 keySize :: Int
 keySize = 32
 
-createChannelRequest :: (MonadIO m) => Storage -> UnifiedIdentity -> UnifiedIdentity -> m (Stored ChannelRequest)
-createChannelRequest st self peer = liftIO $ do
-    (_, xpublic) <- generateKeys st
-    Just skey <- loadKey $ idKeyMessage self
-    wrappedStore st =<< sign skey =<< wrappedStore st ChannelRequest { crPeers = sort [idData self, idData peer], crKey = xpublic }
+createChannelRequest :: (MonadStorage m, MonadIO m, MonadError String m) => UnifiedIdentity -> UnifiedIdentity -> m (Stored ChannelRequest)
+createChannelRequest self peer = do
+    (_, xpublic) <- liftIO . generateKeys =<< getStorage
+    skey <- loadKey $ idKeyMessage self
+    mstore =<< sign skey =<< mstore ChannelRequest { crPeers = sort [idData self, idData peer], crKey = xpublic }
 
-acceptChannelRequest :: (MonadIO m, MonadError String m) => UnifiedIdentity -> UnifiedIdentity -> Stored ChannelRequest -> m (Stored ChannelAccept, Channel)
+acceptChannelRequest :: (MonadStorage m, MonadIO m, MonadError String m) => UnifiedIdentity -> UnifiedIdentity -> Stored ChannelRequest -> m (Stored ChannelAccept, Channel)
 acceptChannelRequest self peer req = do
     case sequence $ map validateIdentity $ crPeers $ fromStored $ signedData $ fromStored req of
         Nothing -> throwError $ "invalid peers in channel request"
@@ -95,11 +95,10 @@ acceptChannelRequest self peer req = do
     when (idKeyMessage peer `notElem` (map (sigKey . fromStored) $ signedSignature $ fromStored req)) $
         throwError $ "channel requent not signed by peer"
 
-    let st = storedStorage req
+    (xsecret, xpublic) <- liftIO . generateKeys =<< getStorage
+    skey <- loadKey $ idKeyMessage self
+    acc <- mstore =<< sign skey =<< mstore ChannelAccept { caRequest = req, caKey = xpublic }
     liftIO $ do
-        (xsecret, xpublic) <- generateKeys st
-        Just skey <- loadKey $ idKeyMessage self
-        acc <- wrappedStore st =<< sign skey =<< wrappedStore st ChannelAccept { caRequest = req, caKey = xpublic }
         let chPeers = crPeers $ fromStored $ signedData $ fromStored req
             chKey = BA.take keySize $ dhSecret xsecret $
                 fromStored $ crKey $ fromStored $ signedData $ fromStored req
@@ -125,9 +124,7 @@ acceptedChannel self peer acc = do
     when (idKeyMessage self `notElem` (map (sigKey . fromStored) $ signedSignature $ fromStored req)) $
         throwError $ "original channel request not signed by us"
 
-    xsecret <- liftIO (loadKey $ crKey $ fromStored $ signedData $ fromStored req) >>= \case
-        Just key -> return key
-        Nothing  -> throwError $ "secret key not found"
+    xsecret <- loadKey $ crKey $ fromStored $ signedData $ fromStored req
     let chPeers = crPeers $ fromStored $ signedData $ fromStored req
         chKey = BA.take keySize $ dhSecret xsecret $
             fromStored $ caKey $ fromStored $ signedData $ fromStored acc

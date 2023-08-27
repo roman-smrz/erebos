@@ -27,7 +27,7 @@ instance Service SyncService where
                 let current = sort $ lsShared $ fromStored ls
                     updated = filterAncestors (added : current)
                 if current /= updated
-                   then wrappedStore (storedStorage ls) (fromStored ls) { lsShared = updated }
+                   then mstore (fromStored ls) { lsShared = updated }
                    else return ls
 
     serviceNewPeer = notifyPeer . lsShared . fromStored =<< svcGetLocal
@@ -43,4 +43,4 @@ notifyPeer shared = do
     self <- svcSelf
     when (finalOwner pid `sameIdentity` finalOwner self) $ do
         forM_ shared $ \sh ->
-            replyStoredRef =<< (wrappedStore (storedStorage sh) . SyncPacket) sh
+            replyStoredRef =<< (mstore . SyncPacket) sh

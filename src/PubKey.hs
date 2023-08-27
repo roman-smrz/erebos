@@ -1,6 +1,6 @@
 module PubKey (
     PublicKey, SecretKey,
-    KeyPair(generateKeys), loadKey,
+    KeyPair(generateKeys), loadKey, loadKeyMb,
     Signature(sigKey), Signed, signedData, signedSignature,
     sign, signAdd, isSignedBy,
 
@@ -97,14 +97,14 @@ instance Storable a => Storable (Signed a) where
                 throwError "signature verification failed"
         return $ Signed sdata sigs
 
-sign :: SecretKey -> Stored a -> IO (Signed a)
+sign :: MonadStorage m => SecretKey -> Stored a -> m (Signed a)
 sign secret val = signAdd secret $ Signed val []
 
-signAdd :: SecretKey -> Signed a -> IO (Signed a)
+signAdd :: MonadStorage m => SecretKey -> Signed a -> m (Signed a)
 signAdd (SecretKey secret spublic) (Signed val sigs) = do
     let PublicKey public = fromStored spublic
         sig = ED.sign secret public $ storedRef val
-    ssig <- wrappedStore (storedStorage val) $ Signature spublic sig
+    ssig <- mstore $ Signature spublic sig
     return $ Signed val (ssig : sigs)
 
 isSignedBy :: Signed a -> Stored PublicKey -> Bool
