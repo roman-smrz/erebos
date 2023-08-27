@@ -4,7 +4,7 @@ module Storage (
     deriveEphemeralStorage, derivePartialStorage,
 
     Ref, PartialRef, RefDigest,
-    refStorage, refDigest,
+    refDigest,
     readRef, showRef, showRefDigest,
     refDigestFromByteString, hashToRefDigest,
     copyRef, partialRef, partialRefFromDigest,
@@ -18,7 +18,7 @@ module Storage (
 
     Head, HeadType(..),
     HeadTypeID, mkHeadTypeID,
-    headId, headRef, headObject, headStoredObject,
+    headId, headStorage, headRef, headObject, headStoredObject,
     loadHeads, loadHead, reloadHead,
     storeHead, replaceHead, updateHead, updateHead_,
 
@@ -359,6 +359,9 @@ type Head = Head' Complete
 headId :: Head a -> HeadID
 headId (Head uuid _) = uuid
 
+headStorage :: Head a -> Storage
+headStorage = refStorage . headRef
+
 headRef :: Head a -> Ref
 headRef (Head _ sx) = storedRef sx
 
@@ -431,7 +434,7 @@ storeHead st obj = liftIO $ do
 
 replaceHead :: forall a m. (HeadType a, MonadIO m) => Head a -> Stored a -> m (Either (Maybe (Head a)) (Head a))
 replaceHead prev@(Head hid pobj) stored = liftIO $ do
-    let st = storedStorage pobj
+    let st = headStorage prev
         tid = headTypeID @a Proxy
     case stBacking st of
          StorageDir { dirPath = spath } -> do

@@ -251,7 +251,7 @@ instance MonadRandom CommandM where
     getRandomBytes = liftIO . getRandomBytes
 
 instance MonadStorage CommandM where
-    getStorage = gets $ refStorage . headRef . csHead
+    getStorage = gets $ headStorage . csHead
 
 instance MonadHead LocalState CommandM where
     updateLocalHead f = do

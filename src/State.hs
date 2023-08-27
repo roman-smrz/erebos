@@ -94,7 +94,7 @@ updateLocalHead_ f = updateLocalHead (fmap (,()) . f)
 
 
 instance Monad m => MonadStorage (ReaderT (Head a) m) where
-    getStorage = asks $ refStorage . headRef
+    getStorage = asks $ headStorage
 
 instance (HeadType a, MonadIO m) => MonadHead a (ReaderT (Head a) m) where
     updateLocalHead f = do

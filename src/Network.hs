@@ -178,7 +178,7 @@ forkServerThread server act = modifyMVar_ (serverThreads server) $ \ts -> do
 
 startServer :: ServerOptions -> Head LocalState -> (String -> IO ()) -> [SomeService] -> IO Server
 startServer opt serverOrigHead logd' serverServices = do
-    let serverStorage = refStorage $ headRef serverOrigHead
+    let serverStorage = headStorage serverOrigHead
     serverIdentity_ <- newMVar $ headLocalIdentity serverOrigHead
     serverThreads <- newMVar []
     serverSocket <- newEmptyMVar
@@ -342,14 +342,14 @@ dataResponseWorker server = forever $ do
                               return (Nothing, [])
                           Left dgst -> do
                               atomically (writeTVar tvar $ Left [dgst])
-                              return (Just wr, [partialRefFromDigest (refStorage $ wrefPartial wr) dgst])
+                              return (Just wr, [dgst])
                 ds' -> do
                     atomically (writeTVar tvar $ Left ds')
                     return (Just wr, [])
             Right _ -> return (Nothing, [])
     atomically $ putTMVar (peerWaitingRefs peer) $ catMaybes $ map fst list
 
-    let reqs = map refDigest $ concat $ map snd list
+    let reqs = concat $ map snd list
     when (not $ null reqs) $ do
         let packet = TransportPacket (TransportHeader $ map DataRequest reqs) []
             ackedBy = concat [[ Rejected r, DataResponse r ] | r <- reqs ]
