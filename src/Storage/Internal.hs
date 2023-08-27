@@ -91,7 +91,9 @@ instance Show RefDigest where
     show = BC.unpack . showRefDigest
 
 data Ref' c = Ref (Storage' c) RefDigest
-    deriving (Eq)
+
+instance Eq (Ref' c) where
+    Ref _ d1 == Ref _ d2  =  d1 == d2
 
 instance Show (Ref' c) where
     show ref@(Ref st _) = show st ++ ":" ++ BC.unpack (showRef ref)
