@@ -1,6 +1,7 @@
 module Storage.Key (
     KeyPair(..),
     storeKey, loadKey, loadKeyMb,
+    moveKeys,
 ) where
 
 import Control.Concurrent.MVar
@@ -12,6 +13,7 @@ import qualified Data.ByteString.Char8 as BC
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Map as M
 
+import System.Directory
 import System.FilePath
 import System.IO.Error
 
@@ -45,3 +47,33 @@ loadKeyMb spub = liftIO $ do
              Right kdata -> return $ keyFromData (convert kdata) spub
              Left _ -> return Nothing
          StorageMemory { memKeys = kstore } -> (flip keyFromData spub <=< M.lookup (refDigest $ storedRef spub)) <$> readMVar kstore
+
+moveKeys :: MonadIO m => Storage -> Storage -> m ()
+moveKeys from to = liftIO $ do
+    case (stBacking from, stBacking to) of
+        (StorageDir { dirPath = fromPath }, StorageDir { dirPath = toPath }) -> do
+            files <- listDirectory (fromPath </> "keys")
+            forM_ files $ \file -> do
+                renameFile (fromPath </> "keys" </> file) (toPath </> "keys" </> file)
+
+        (StorageDir { dirPath = fromPath }, StorageMemory { memKeys = toKeys }) -> do
+            let move m file
+                    | Just dgst <- readRefDigest (BC.pack file) = do
+                        let path = fromPath </> "keys" </> file
+                        key <- convert <$> BC.readFile path
+                        removeFile path
+                        return $ M.insert dgst key m
+                    | otherwise = return m
+            files <- listDirectory (fromPath </> "keys")
+            modifyMVar_ toKeys $ \keys -> foldM move keys files
+
+        (StorageMemory { memKeys = fromKeys }, StorageDir { dirPath = toPath }) -> do
+            modifyMVar_ fromKeys $ \keys -> do
+                forM_ (M.assocs keys) $ \(dgst, key) ->
+                    writeFileOnce (toPath </> "keys" </> (BC.unpack $ showRefDigest dgst)) (BL.fromStrict $ convert key)
+                return M.empty
+
+        (StorageMemory { memKeys = fromKeys }, StorageMemory { memKeys = toKeys }) -> do
+            modifyMVar_ fromKeys $ \fkeys -> do
+                modifyMVar_ toKeys $ return . M.union fkeys
+                return M.empty

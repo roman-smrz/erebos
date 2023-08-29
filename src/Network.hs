@@ -51,6 +51,7 @@ import PubKey
 import Service
 import State
 import Storage
+import Storage.Key
 import Storage.Merge
 
 
@@ -765,6 +766,7 @@ runPeerServiceOn mbservice peer handler = liftIO $ do
                                     putTMVar (serverServiceStates server) global
                                 Just h -> do
                                     (rsp, (s', gs')) <- runServiceHandler h inp ps gs handler
+                                    moveKeys (peerStorage peer) (serverStorage server)
                                     when (not (null rsp)) $ do
                                         sendToPeerList peer rsp
                                     atomically $ do
