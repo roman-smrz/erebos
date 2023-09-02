@@ -95,8 +95,8 @@ transportToObject st (TransportHeader items) = Rec $ map single items
               AnnounceUpdate dgst -> (BC.pack "ANU", RecRef $ partialRefFromDigest st dgst)
               TrChannelRequest dgst -> (BC.pack "CRQ", RecRef $ partialRefFromDigest st dgst)
               TrChannelAccept dgst -> (BC.pack "CAC", RecRef $ partialRefFromDigest st dgst)
-              ServiceType stype -> (BC.pack "STP", RecUUID $ toUUID stype)
-              ServiceRef dgst -> (BC.pack "SRF", RecRef $ partialRefFromDigest st dgst)
+              ServiceType stype -> (BC.pack "SVT", RecUUID $ toUUID stype)
+              ServiceRef dgst -> (BC.pack "SVR", RecRef $ partialRefFromDigest st dgst)
 
 transportFromObject :: PartialObject -> Maybe TransportHeader
 transportFromObject (Rec items) = case catMaybes $ map single items of
@@ -115,8 +115,8 @@ transportFromObject (Rec items) = case catMaybes $ map single items of
               | name == BC.pack "ANU", RecRef ref <- content -> Just $ AnnounceUpdate $ refDigest ref
               | name == BC.pack "CRQ", RecRef ref <- content -> Just $ TrChannelRequest $ refDigest ref
               | name == BC.pack "CAC", RecRef ref <- content -> Just $ TrChannelAccept $ refDigest ref
-              | name == BC.pack "STP", RecUUID uuid <- content -> Just $ ServiceType $ fromUUID uuid
-              | name == BC.pack "SRF", RecRef ref <- content -> Just $ ServiceRef $ refDigest ref
+              | name == BC.pack "SVT", RecUUID uuid <- content -> Just $ ServiceType $ fromUUID uuid
+              | name == BC.pack "SVR", RecRef ref <- content -> Just $ ServiceRef $ refDigest ref
               | otherwise -> Nothing
 transportFromObject _ = Nothing
 
