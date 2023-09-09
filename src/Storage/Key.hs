@@ -38,15 +38,20 @@ storeKey key = do
          StorageMemory { memKeys = kstore } -> modifyMVar_ kstore $ return . M.insert (refDigest $ storedRef spub) (keyGetData key)
 
 loadKey :: (KeyPair sec pub, MonadIO m, MonadError String m) => Stored pub -> m sec
-loadKey = maybe (throwError "secret key not found") return <=< loadKeyMb
+loadKey pub = maybe (throwError $ "secret key not found for " <> show (storedRef pub)) return =<< loadKeyMb pub
 
 loadKeyMb :: (KeyPair sec pub, MonadIO m) => Stored pub -> m (Maybe sec)
-loadKeyMb spub = liftIO $ do
-    case stBacking $ storedStorage spub of
-         StorageDir { dirPath = dir } -> tryIOError (BC.readFile (keyFilePath dir spub)) >>= \case
-             Right kdata -> return $ keyFromData (convert kdata) spub
-             Left _ -> return Nothing
-         StorageMemory { memKeys = kstore } -> (flip keyFromData spub <=< M.lookup (refDigest $ storedRef spub)) <$> readMVar kstore
+loadKeyMb spub = liftIO $ run $ storedStorage spub
+  where
+    run st = tryOneLevel (stBacking st) >>= \case
+        key@Just {} -> return key
+        Nothing | Just parent <- stParent st -> run parent
+                | otherwise -> return Nothing
+    tryOneLevel = \case
+        StorageDir { dirPath = dir } -> tryIOError (BC.readFile (keyFilePath dir spub)) >>= \case
+            Right kdata -> return $ keyFromData (convert kdata) spub
+            Left _ -> return Nothing
+        StorageMemory { memKeys = kstore } -> (flip keyFromData spub <=< M.lookup (refDigest $ storedRef spub)) <$> readMVar kstore
 
 moveKeys :: MonadIO m => Storage -> Storage -> m ()
 moveKeys from to = liftIO $ do
