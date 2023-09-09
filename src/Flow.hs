@@ -4,7 +4,7 @@ module Flow (
     readFlow, writeFlow, writeFlowBulk,
     readFlowIO, writeFlowIO,
 
-    mapPath,
+    mapFlow,
 ) where
 
 import Control.Concurrent.STM
@@ -47,6 +47,6 @@ writeFlowIO :: Flow r w -> w -> IO ()
 writeFlowIO path = atomically . writeFlow path
 
 
-mapPath :: (r -> r') -> (w' -> w) -> Flow r w -> Flow r' w'
-mapPath rf wf (MappedFlow rf' wf' up) = MappedFlow (rf . rf') (wf' . wf) up
-mapPath rf wf up = MappedFlow rf wf up
+mapFlow :: (r -> r') -> (w' -> w) -> Flow r w -> Flow r' w'
+mapFlow rf wf (MappedFlow rf' wf' up) = MappedFlow (rf . rf') (wf' . wf) up
+mapFlow rf wf up = MappedFlow rf wf up

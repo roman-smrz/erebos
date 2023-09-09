@@ -657,7 +657,7 @@ serverPeerIce :: Server -> IceSession -> IO Peer
 serverPeerIce server@Server {..} ice = do
     let paddr = PeerIceSession ice
     peer <- serverPeer' server paddr
-    iceSetChan ice $ mapPath undefined (paddr,) serverRawPath
+    iceSetChan ice $ mapFlow undefined (paddr,) serverRawPath
     return peer
 
 serverPeer' :: Server -> PeerAddress -> IO Peer
