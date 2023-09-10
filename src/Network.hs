@@ -274,31 +274,32 @@ startServer opt serverOrigHead logd' serverServices = do
                                     peer <- mkPeer server paddr
                                     return (M.insert paddr peer pvalue, peer)
 
-                        atomically $ do
-                            readTVar (peerConnection peer) >>= \case
-                                Left packets -> writeFlowBulk (connData conn) $ reverse packets
-                                Right _ -> return ()
-                            writeTVar (peerConnection peer) (Right conn)
+                        forkServerThread server $ do
+                            atomically $ do
+                                readTVar (peerConnection peer) >>= \case
+                                    Left packets -> writeFlowBulk (connData conn) $ reverse packets
+                                    Right _ -> return ()
+                                writeTVar (peerConnection peer) (Right conn)
 
-                        forkServerThread server $ forever $ do
-                            (secure, TransportPacket header objs) <- readFlowIO $ connData conn
-                            prefs <- forM objs $ storeObject $ peerInStorage peer
-                            identity <- readMVar serverIdentity_
-                            let svcs = map someServiceID serverServices
-                            handlePacket identity secure peer chanSvc svcs header prefs
+                            case mbpid of
+                                Just dgst -> do
+                                    identity <- readMVar serverIdentity_
+                                    atomically $ runPacketHandler False peer $ do
+                                        wref <- newWaitingRef dgst $ handleIdentityAnnounce identity peer
+                                        readTVarP (peerIdentityVar peer) >>= \case
+                                            PeerIdentityUnknown idwait -> do
+                                                addHeader $ AnnounceSelf $ refDigest $ storedRef $ idData identity
+                                                writeTVarP (peerIdentityVar peer) $ PeerIdentityRef wref idwait
+                                                liftSTM $ writeTChan serverChanPeer peer
+                                            _ -> return ()
+                                Nothing -> return ()
 
-                        case mbpid of
-                            Just dgst -> do
+                            forever $ do
+                                (secure, TransportPacket header objs) <- readFlowIO $ connData conn
+                                prefs <- forM objs $ storeObject $ peerInStorage peer
                                 identity <- readMVar serverIdentity_
-                                atomically $ runPacketHandler False peer $ do
-                                    wref <- newWaitingRef dgst $ handleIdentityAnnounce identity peer
-                                    readTVarP (peerIdentityVar peer) >>= \case
-                                        PeerIdentityUnknown idwait -> do
-                                            addHeader $ AnnounceSelf $ refDigest $ storedRef $ idData identity
-                                            writeTVarP (peerIdentityVar peer) $ PeerIdentityRef wref idwait
-                                            liftSTM $ writeTChan serverChanPeer peer
-                                        _ -> return ()
-                            Nothing -> return ()
+                                let svcs = map someServiceID serverServices
+                                handlePacket identity secure peer chanSvc svcs header prefs
 
                     ReceivedAnnounce addr _ -> do
                         void $ serverPeer' server addr
