@@ -59,6 +59,7 @@ protocolVersions = [protocolVersion]
 data TransportPacket a = TransportPacket TransportHeader [a]
 
 data TransportHeader = TransportHeader [TransportHeaderItem]
+    deriving (Show)
 
 data TransportHeaderItem
     = Acknowledged RefDigest
@@ -75,10 +76,10 @@ data TransportHeaderItem
     | TrChannelAccept RefDigest
     | ServiceType ServiceID
     | ServiceRef RefDigest
-    deriving (Eq)
+    deriving (Eq, Show)
 
 newtype Cookie = Cookie ByteString
-    deriving (Eq)
+    deriving (Eq, Show)
 
 transportToObject :: PartialStorage -> TransportHeader -> PartialObject
 transportToObject st (TransportHeader items) = Rec $ map single items
@@ -171,11 +172,12 @@ wrDigest = refDigest . wrefPartial
 
 
 data ChannelState = ChannelNone
-                  | ChannelCookieWait
-                  | ChannelCookieReceived Cookie
-                  | ChannelOurRequest (Stored ChannelRequest)
-                  | ChannelPeerRequest WaitingRef
-                  | ChannelOurAccept (Stored ChannelAccept) Channel
+                  | ChannelCookieWait -- sent initiation, waiting for response
+                  | ChannelCookieReceived Cookie -- received cookie, but no cookie echo yet
+                  | ChannelCookieConfirmed Cookie -- received cookie echo, no need to send from our side
+                  | ChannelOurRequest (Maybe Cookie) (Stored ChannelRequest)
+                  | ChannelPeerRequest (Maybe Cookie) WaitingRef
+                  | ChannelOurAccept (Maybe Cookie) (Stored ChannelAccept) Channel
                   | ChannelEstablished Channel
 
 
@@ -272,9 +274,9 @@ processIncoming gs@GlobalState {..} = do
     mbch <- case mbconn of
         Nothing -> return Nothing
         Just conn -> readTVar (cChannel conn) >>= return . \case
-            ChannelEstablished ch -> Just ch
-            ChannelOurAccept _ ch -> Just ch
-            _                     -> Nothing
+            ChannelEstablished ch   -> Just ch
+            ChannelOurAccept _ _ ch -> Just ch
+            _                       -> Nothing
 
     return $ do
         let deserialize = liftEither . runExcept . deserializeObjects gStorage . BL.fromStrict
@@ -324,9 +326,43 @@ processIncoming gs@GlobalState {..} = do
 
 processPacket :: GlobalState addr -> Either addr (Connection addr) -> Bool -> TransportPacket a -> IO (Maybe (Connection addr, Maybe (TransportPacket a)))
 processPacket gs@GlobalState {..} econn secure packet@(TransportPacket (TransportHeader header) _) = if
+    -- Established secure communication
     | Right conn <- econn, secure
     -> return $ Just (conn, Just packet)
 
+    -- Plaintext communication with cookies to prove origin
+    | cookie:_ <- mapMaybe (\case CookieEcho x -> Just x; _ -> Nothing) header
+    -> verifyCookie gs addr cookie >>= \case
+        True -> do
+            atomically $ do
+                conn@Connection {..} <- getConnection gs addr
+                channel <- readTVar cChannel
+                let received = listToMaybe $ mapMaybe (\case CookieSet x -> Just x; _ -> Nothing) header
+                case received `mplus` channelCurrentCookie channel of
+                    Just current -> do
+                        cookieEchoReceived gs conn mbpid current
+                        return $ Just (conn, Just packet)
+                    Nothing -> do
+                        gLog $ show addr <> ": missing cookie set, dropping " <> show header
+                        return $ Nothing
+
+        False -> do
+            atomically $ gLog $ show addr <> ": cookie verification failed, dropping " <> show header
+            return Nothing
+
+    -- Response to initiation packet
+    | cookie:_ <- mapMaybe (\case CookieSet x -> Just x; _ -> Nothing) header
+    , Just _ <- version
+    , Right conn@Connection {..} <- econn
+    -> do
+        atomically $ readTVar cChannel >>= \case
+            ChannelCookieWait -> do
+                writeTVar cChannel $ ChannelCookieReceived cookie
+                writeFlow gControlFlow (NewConnection conn mbpid)
+                return $ Just (conn, Nothing)
+            _ -> return Nothing
+
+    -- Initiation packet
     | _:_ <- mapMaybe (\case Initiation x -> Just x; _ -> Nothing) header
     , Just ver <- version
     -> do
@@ -341,33 +377,7 @@ processPacket gs@GlobalState {..} econn secure packet@(TransportPacket (Transpor
             writeFlow gDataFlow (addr, reply)
         return Nothing
 
-    | cookie:_ <- mapMaybe (\case CookieSet x -> Just x; _ -> Nothing) header
-    , Just _ <- version
-    , Right conn@Connection {..} <- econn
-    -> do
-        atomically $ readTVar cChannel >>= \case
-            ChannelCookieWait -> do
-                writeTVar cChannel $ ChannelCookieReceived cookie
-                writeFlow gControlFlow (NewConnection conn mbpid)
-                return $ Just (conn, Nothing)
-            _ -> return Nothing
-
-    | Right conn <- econn
-    -> return $ Just (conn, Just packet)
-
-    | cookie:_ <- mapMaybe (\case CookieEcho x -> Just x; _ -> Nothing) header
-    , Just _ <- version
-    -> verifyCookie gs addr cookie >>= \case
-        True -> do
-            conn <- atomically $ findConnection gs addr >>= \case
-                Just conn -> return conn
-                Nothing -> do
-                    conn <- newConnection gs addr
-                    writeFlow gControlFlow (NewConnection conn mbpid)
-                    return conn
-            return $ Just (conn, Just packet)
-        False -> return Nothing
-
+    -- Announce packet outside any connection
     | dgst:_ <- mapMaybe (\case AnnounceSelf x -> Just x; _ -> Nothing) header
     , Just _ <- version
     -> do
@@ -377,13 +387,46 @@ processPacket gs@GlobalState {..} econn secure packet@(TransportPacket (Transpor
                 writeFlow gControlFlow $ ReceivedAnnounce addr dgst
         return Nothing
 
-    | otherwise -> return Nothing
+    | otherwise -> do
+        atomically $ gLog $ show addr <> ": dropping packet " <> show header
+        return Nothing
 
   where
     addr = either id cAddress econn
     mbpid = listToMaybe $ mapMaybe (\case AnnounceSelf dgst -> Just dgst; _ -> Nothing) header
     version = listToMaybe $ filter (\v -> ProtocolVersion v `elem` header) protocolVersions
 
+channelCurrentCookie :: ChannelState -> Maybe Cookie
+channelCurrentCookie = \case
+    ChannelCookieReceived cookie -> Just cookie
+    ChannelCookieConfirmed cookie -> Just cookie
+    ChannelOurRequest mbcookie _ -> mbcookie
+    ChannelPeerRequest mbcookie _ -> mbcookie
+    ChannelOurAccept mbcookie _ _ -> mbcookie
+    _ -> Nothing
+
+cookieEchoReceived :: GlobalState addr -> Connection addr -> Maybe RefDigest -> Cookie -> STM ()
+cookieEchoReceived GlobalState {..} conn@Connection {..} mbpid cookieSet = do
+    readTVar cChannel >>= \case
+        ChannelNone -> newConn
+        ChannelCookieWait -> newConn
+        ChannelCookieReceived {} -> update
+        _ -> return ()
+  where
+    update = do
+        writeTVar cChannel $ ChannelCookieConfirmed cookieSet
+    newConn = do
+        update
+        writeFlow gControlFlow (NewConnection conn mbpid)
+
+generateCookieHeaders :: GlobalState addr -> addr -> ChannelState -> IO [TransportHeaderItem]
+generateCookieHeaders gs addr ch = catMaybes <$> sequence [ echoHeader, setHeader ]
+  where
+    echoHeader = return $ CookieEcho <$> channelCurrentCookie ch
+    setHeader = case ch of
+        ChannelCookieWait {} -> Just . CookieSet <$> createCookie gs addr
+        ChannelCookieReceived {} -> Just . CookieSet <$> createCookie gs addr
+        _ -> return Nothing
 
 createCookie :: GlobalState addr -> addr -> IO Cookie
 createCookie GlobalState {} addr = return (Cookie $ BC.pack $ show addr)
@@ -430,15 +473,16 @@ processOutgoing gs@GlobalState {..} = do
             when (isNothing mbch && secure) $ do
                 writeTQueue cSecureOutQueue (secure, packet, ackedBy)
 
-            header <- readTVar cChannel >>= return . TransportHeader . \case
-                ChannelCookieReceived cookie -> CookieEcho cookie : ProtocolVersion protocolVersion : hitems
-                _                            -> hitems
-
-            let plain = BL.concat $
-                    (serializeObject $ transportToObject gStorage header)
-                    : map lazyLoadBytes content
+            channel <- readTVar cChannel
 
             return $ do
+                cookieHeaders <- generateCookieHeaders gs cAddress channel
+                let header = TransportHeader $ cookieHeaders ++ hitems
+
+                let plain = BL.concat $
+                        (serializeObject $ transportToObject gStorage header)
+                        : map lazyLoadBytes content
+
                 mbs <- case mbch of
                     Just ch -> do
                         runExceptT (channelEncrypt ch $ BL.toStrict $ 0x00 `BL.cons` plain) >>= \case

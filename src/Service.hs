@@ -98,7 +98,7 @@ data SomeStorageWatcher s = forall a. Eq a => SomeStorageWatcher (Stored LocalSt
 
 
 newtype ServiceID = ServiceID UUID
-    deriving (Eq, Ord, StorableUUID)
+    deriving (Eq, Ord, Show, StorableUUID)
 
 mkServiceID :: String -> ServiceID
 mkServiceID = maybe (error "Invalid service ID") ServiceID . U.fromString
