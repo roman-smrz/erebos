@@ -267,6 +267,7 @@ passUpIncoming GlobalState {..} = do
 processIncoming :: GlobalState addr -> STM (IO ())
 processIncoming gs@GlobalState {..} = do
     guard =<< isEmptyTMVar gNextUp
+    guard =<< canWriteFlow gControlFlow
 
     (addr, msg) <- readFlow gDataFlow
     mbconn <- findConnection gs addr
