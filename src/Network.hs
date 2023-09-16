@@ -451,7 +451,8 @@ handlePacket identity secure peer chanSvc svcs (TransportHeader headers) prefs =
 
             DataResponse dgst -> if
                 | Just pref <- find ((==dgst) . refDigest) prefs -> do
-                    addHeader $ Acknowledged dgst
+                    when (not secure) $ do
+                        addHeader $ Acknowledged dgst
                     liftSTM $ writeTQueue (serverDataResponse server) (peer, Just pref)
                 | otherwise -> throwError $ "mismatched data response " ++ show dgst
 
@@ -470,7 +471,6 @@ handlePacket identity secure peer chanSvc svcs (TransportHeader headers) prefs =
                 readTVarP (peerIdentityVar peer) >>= \case
                     PeerIdentityFull _ -> do
                         void $ newWaitingRef dgst $ handleIdentityUpdate peer
-                        addHeader $ Acknowledged dgst
                     _ -> return ()
 
             TrChannelRequest dgst -> do
@@ -513,7 +513,6 @@ handlePacket identity secure peer chanSvc svcs (TransportHeader headers) prefs =
                     | svc `elem` svcs -> do
                         if dgst `elem` map refDigest prefs || True {- TODO: used by Message service to confirm receive -}
                            then do
-                                addHeader $ Acknowledged dgst
                                 void $ newWaitingRef dgst $ \ref ->
                                     liftIO $ atomically $ writeTQueue chanSvc (peer, svc, ref)
                            else throwError $ "missing service object " ++ show dgst
