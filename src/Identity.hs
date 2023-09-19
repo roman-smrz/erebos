@@ -6,7 +6,7 @@ module Identity (
 
     emptyIdentityData,
     createIdentity,
-    validateIdentity, validateIdentityF,
+    validateIdentity, validateIdentityF, validateIdentityFE,
     loadIdentity, loadUnifiedIdentity,
 
     mergeIdentity, toUnifiedIdentity, toComposedIdentity,
@@ -140,19 +140,24 @@ validateIdentity :: Stored (Signed IdentityData) -> Maybe UnifiedIdentity
 validateIdentity = validateIdentityF . I.Identity
 
 validateIdentityF :: Foldable m => m (Stored (Signed IdentityData)) -> Maybe (Identity m)
-validateIdentityF mdata = do
+validateIdentityF = either (const Nothing) Just . runExcept . validateIdentityFE
+
+validateIdentityFE :: Foldable m => m (Stored (Signed IdentityData)) -> Except String (Identity m)
+validateIdentityFE mdata = do
     let idata = filterAncestors $ toList mdata
-    guard $ not $ null idata
+    when (null idata) $ throwError "null data"
     mapM_ verifySignatures $ gatherPrevious S.empty idata
     Identity
         <$> pure mdata
         <*> pure (lookupProperty iddName idata)
         <*> case lookupProperty iddOwner idata of
                  Nothing    -> return Nothing
-                 Just owner -> Just <$> validateIdentityF [owner]
+                 Just owner -> return <$> validateIdentityFE [owner]
         <*> pure []
         <*> pure (iddKeyIdentity $ fromStored $ signedData $ fromStored $ minimum idata)
-        <*> lookupProperty iddKeyMessage idata
+        <*> case lookupProperty iddKeyMessage idata of
+                 Nothing -> throwError "no message key"
+                 Just mk -> return mk
 
 loadIdentity :: String -> LoadRec ComposedIdentity
 loadIdentity name = maybe (throwError "identity validation failed") return . validateIdentityF =<< loadRefs name
@@ -166,7 +171,7 @@ gatherPrevious res (n:ns) | n `S.member` res = gatherPrevious res ns
                           | otherwise        = gatherPrevious (S.insert n res) $ (iddPrev $ fromStored $ signedData $ fromStored n) ++ ns
 gatherPrevious res [] = res
 
-verifySignatures :: Stored (Signed IdentityData) -> Maybe ()
+verifySignatures :: Stored (Signed IdentityData) -> Except String ()
 verifySignatures sidd = do
     let idd = fromStored $ signedData $ fromStored sidd
         required = concat
@@ -174,7 +179,8 @@ verifySignatures sidd = do
             , map (iddKeyIdentity . fromStored . signedData . fromStored) $ iddPrev idd
             , map (iddKeyIdentity . fromStored . signedData . fromStored) $ toList $ iddOwner idd
             ]
-    guard $ all (fromStored sidd `isSignedBy`) required
+    unless (all (fromStored sidd `isSignedBy`) required) $ do
+        throwError "signature verification failed"
 
 lookupProperty :: forall a. (IdentityData -> Maybe a) -> [Stored (Signed IdentityData)] -> Maybe a
 lookupProperty sel topHeads = findResult filteredLayers
