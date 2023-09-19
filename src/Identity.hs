@@ -1,12 +1,18 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Identity (
-    Identity, ComposedIdentity, UnifiedIdentity, IdentityData(..),
-    idData, idDataF, idName, idOwner, idUpdates, idKeyIdentity, idKeyMessage,
+    Identity, ComposedIdentity, UnifiedIdentity,
+    IdentityData(..), ExtendedIdentityData(..), IdentityExtension(..),
+    idData, idDataF, idExtData, idExtDataF,
+    idName, idOwner, idUpdates, idKeyIdentity, idKeyMessage,
+    eiddBase, eiddStoredBase,
+    eiddName, eiddOwner, eiddKeyIdentity, eiddKeyMessage,
 
     emptyIdentityData,
+    emptyIdentityExtension,
     createIdentity,
     validateIdentity, validateIdentityF, validateIdentityFE,
+    validateExtendedIdentity, validateExtendedIdentityF, validateExtendedIdentityFE,
     loadIdentity, loadUnifiedIdentity,
 
     mergeIdentity, toUnifiedIdentity, toComposedIdentity,
@@ -38,22 +44,32 @@ import qualified Data.Text as T
 import PubKey
 import Storage
 import Storage.Merge
+import Util
 
-data Identity m = Identity
-    { idData_ :: m (Stored (Signed IdentityData))
+data Identity m = IdentityKind m => Identity
+    { idData_ :: m (Stored (Signed ExtendedIdentityData))
     , idName_ :: Maybe Text
     , idOwner_ :: Maybe ComposedIdentity
-    , idUpdates_ :: [Stored (Signed IdentityData)]
+    , idUpdates_ :: [Stored (Signed ExtendedIdentityData)]
     , idKeyIdentity_ :: Stored PublicKey
     , idKeyMessage_ :: Stored PublicKey
     }
 
-deriving instance Show (m (Stored (Signed IdentityData))) => Show (Identity m)
+deriving instance Show (m (Stored (Signed ExtendedIdentityData))) => Show (Identity m)
+
+class (Functor f, Foldable f) => IdentityKind f where
+    ikFilterAncestors :: Storable a => f (Stored a) -> f (Stored a)
+
+instance IdentityKind I.Identity where
+    ikFilterAncestors = id
+
+instance IdentityKind [] where
+    ikFilterAncestors = filterAncestors
 
 type ComposedIdentity = Identity []
 type UnifiedIdentity = Identity I.Identity
 
-instance Eq (m (Stored (Signed IdentityData))) => Eq (Identity m) where
+instance Eq (m (Stored (Signed ExtendedIdentityData))) => Eq (Identity m) where
     (==) = (==) `on` (idData_ &&& idUpdates_)
 
 data IdentityData = IdentityData
@@ -64,6 +80,21 @@ data IdentityData = IdentityData
     , iddKeyMessage :: Maybe (Stored PublicKey)
     }
     deriving (Show)
+
+data IdentityExtension = IdentityExtension
+    { idePrev :: [Stored (Signed ExtendedIdentityData)]
+    , ideBase :: Stored (Signed IdentityData)
+    , ideName :: Maybe Text
+    , ideOwner :: Maybe (Stored (Signed ExtendedIdentityData))
+    }
+    deriving (Show)
+
+data ExtendedIdentityData = BaseIdentityData IdentityData
+                          | ExtendedIdentityData IdentityExtension
+    deriving (Show)
+
+baseToExtended :: Stored (Signed IdentityData) -> Stored (Signed ExtendedIdentityData)
+baseToExtended = unsafeMapStored (unsafeMapSigned BaseIdentityData)
 
 instance Storable IdentityData where
     store' idt = storeRec $ do
@@ -80,16 +111,44 @@ instance Storable IdentityData where
         <*> loadRef "key-id"
         <*> loadMbRef "key-msg"
 
+instance Storable IdentityExtension where
+    store' IdentityExtension {..} = storeRec $ do
+        mapM_ (storeRef "SPREV") idePrev
+        storeRef "SBASE" ideBase
+        storeMbText "name" ideName
+        storeMbRef "owner" ideOwner
+
+    load' = loadRec $ IdentityExtension
+        <$> loadRefs "SPREV"
+        <*> loadRef "SBASE"
+        <*> loadMbText "name"
+        <*> loadMbRef "owner"
+
+instance Storable ExtendedIdentityData where
+    store' (BaseIdentityData idata) = store' idata
+    store' (ExtendedIdentityData idata) = store' idata
+
+    load' = msum
+        [ BaseIdentityData <$> load'
+        , ExtendedIdentityData <$> load'
+        ]
+
 instance Mergeable (Maybe ComposedIdentity) where
-    type Component (Maybe ComposedIdentity) = Signed IdentityData
-    mergeSorted = validateIdentityF
-    toComponents = maybe [] idDataF
+    type Component (Maybe ComposedIdentity) = Signed ExtendedIdentityData
+    mergeSorted = validateExtendedIdentityF
+    toComponents = maybe [] idExtDataF
 
 idData :: UnifiedIdentity -> Stored (Signed IdentityData)
 idData = I.runIdentity . idDataF
 
 idDataF :: Identity m -> m (Stored (Signed IdentityData))
-idDataF = idData_
+idDataF idt@Identity {} = ikFilterAncestors . fmap eiddStoredBase . idData_ $ idt
+
+idExtData :: UnifiedIdentity -> Stored (Signed ExtendedIdentityData)
+idExtData = I.runIdentity . idExtDataF
+
+idExtDataF :: Identity m -> m (Stored (Signed ExtendedIdentityData))
+idExtDataF = idData_
 
 idName :: Identity m -> Maybe Text
 idName = idName_
@@ -97,7 +156,7 @@ idName = idName_
 idOwner :: Identity m -> Maybe ComposedIdentity
 idOwner = idOwner_
 
-idUpdates :: Identity m -> [Stored (Signed IdentityData)]
+idUpdates :: Identity m -> [Stored (Signed ExtendedIdentityData)]
 idUpdates = idUpdates_
 
 idKeyIdentity :: Identity m -> Stored PublicKey
@@ -105,6 +164,33 @@ idKeyIdentity = idKeyIdentity_
 
 idKeyMessage :: Identity m -> Stored PublicKey
 idKeyMessage = idKeyMessage_
+
+eiddPrev :: ExtendedIdentityData -> [Stored (Signed ExtendedIdentityData)]
+eiddPrev (BaseIdentityData idata) = baseToExtended <$> iddPrev idata
+eiddPrev (ExtendedIdentityData IdentityExtension {..}) = baseToExtended ideBase : idePrev
+
+eiddBase :: ExtendedIdentityData -> IdentityData
+eiddBase (BaseIdentityData idata) = idata
+eiddBase (ExtendedIdentityData IdentityExtension {..}) = fromSigned ideBase
+
+eiddStoredBase :: Stored (Signed ExtendedIdentityData) -> Stored (Signed IdentityData)
+eiddStoredBase ext = case fromSigned ext of
+                          (BaseIdentityData idata) -> unsafeMapStored (unsafeMapSigned (const idata)) ext
+                          (ExtendedIdentityData IdentityExtension {..}) -> ideBase
+
+eiddName :: ExtendedIdentityData -> Maybe Text
+eiddName (BaseIdentityData idata) = iddName idata
+eiddName (ExtendedIdentityData IdentityExtension {..}) = ideName
+
+eiddOwner :: ExtendedIdentityData -> Maybe (Stored (Signed ExtendedIdentityData))
+eiddOwner (BaseIdentityData idata) = baseToExtended <$> iddOwner idata
+eiddOwner (ExtendedIdentityData IdentityExtension {..}) = ideOwner
+
+eiddKeyIdentity :: ExtendedIdentityData -> Stored PublicKey
+eiddKeyIdentity = iddKeyIdentity . eiddBase
+
+eiddKeyMessage :: ExtendedIdentityData -> Maybe (Stored PublicKey)
+eiddKeyMessage = iddKeyMessage . eiddBase
 
 
 emptyIdentityData :: Stored PublicKey -> IdentityData
@@ -116,6 +202,19 @@ emptyIdentityData key = IdentityData
     , iddKeyMessage = Nothing
     }
 
+emptyIdentityExtension :: Stored (Signed IdentityData) -> IdentityExtension
+emptyIdentityExtension base = IdentityExtension
+    { idePrev = []
+    , ideBase = base
+    , ideName = Nothing
+    , ideOwner = Nothing
+    }
+
+isExtension :: Stored (Signed ExtendedIdentityData) -> Bool
+isExtension x = case fromSigned x of BaseIdentityData {} -> False
+                                     _ -> True
+
+
 createIdentity :: Storage -> Maybe Text -> Maybe UnifiedIdentity -> IO UnifiedIdentity
 createIdentity st name owner = do
     (secret, public) <- generateKeys st
@@ -123,7 +222,7 @@ createIdentity st name owner = do
 
     let signOwner idd
             | Just o <- owner = do
-                Just ownerSecret <- loadKeyMb (iddKeyIdentity $ fromStored $ signedData $ fromStored $ idData o)
+                Just ownerSecret <- loadKeyMb (iddKeyIdentity $ fromSigned $ idData o)
                 signAdd ownerSecret idd
             | otherwise = return idd
 
@@ -139,62 +238,71 @@ createIdentity st name owner = do
 validateIdentity :: Stored (Signed IdentityData) -> Maybe UnifiedIdentity
 validateIdentity = validateIdentityF . I.Identity
 
-validateIdentityF :: Foldable m => m (Stored (Signed IdentityData)) -> Maybe (Identity m)
+validateIdentityF :: IdentityKind m => m (Stored (Signed IdentityData)) -> Maybe (Identity m)
 validateIdentityF = either (const Nothing) Just . runExcept . validateIdentityFE
 
-validateIdentityFE :: Foldable m => m (Stored (Signed IdentityData)) -> Except String (Identity m)
-validateIdentityFE mdata = do
-    let idata = filterAncestors $ toList mdata
+validateIdentityFE :: IdentityKind m => m (Stored (Signed IdentityData)) -> Except String (Identity m)
+validateIdentityFE = validateExtendedIdentityFE . fmap baseToExtended
+
+validateExtendedIdentity :: Stored (Signed ExtendedIdentityData) -> Maybe UnifiedIdentity
+validateExtendedIdentity = validateExtendedIdentityF . I.Identity
+
+validateExtendedIdentityF :: IdentityKind m => m (Stored (Signed ExtendedIdentityData)) -> Maybe (Identity m)
+validateExtendedIdentityF = either (const Nothing) Just . runExcept . validateExtendedIdentityFE
+
+validateExtendedIdentityFE :: IdentityKind m => m (Stored (Signed ExtendedIdentityData)) -> Except String (Identity m)
+validateExtendedIdentityFE mdata = do
+    let idata = ikFilterAncestors mdata
     when (null idata) $ throwError "null data"
-    mapM_ verifySignatures $ gatherPrevious S.empty idata
+    mapM_ verifySignatures $ gatherPrevious S.empty $ toList idata
     Identity
-        <$> pure mdata
-        <*> pure (lookupProperty iddName idata)
-        <*> case lookupProperty iddOwner idata of
+        <$> pure idata
+        <*> pure (lookupProperty eiddName idata)
+        <*> case lookupProperty eiddOwner idata of
                  Nothing    -> return Nothing
-                 Just owner -> return <$> validateIdentityFE [owner]
+                 Just owner -> return <$> validateExtendedIdentityFE [owner]
         <*> pure []
-        <*> pure (iddKeyIdentity $ fromStored $ signedData $ fromStored $ minimum idata)
-        <*> case lookupProperty iddKeyMessage idata of
+        <*> pure (eiddKeyIdentity $ fromSigned $ minimum idata)
+        <*> case lookupProperty eiddKeyMessage idata of
                  Nothing -> throwError "no message key"
                  Just mk -> return mk
 
 loadIdentity :: String -> LoadRec ComposedIdentity
-loadIdentity name = maybe (throwError "identity validation failed") return . validateIdentityF =<< loadRefs name
+loadIdentity name = maybe (throwError "identity validation failed") return . validateExtendedIdentityF =<< loadRefs name
 
 loadUnifiedIdentity :: String -> LoadRec UnifiedIdentity
-loadUnifiedIdentity name = maybe (throwError "identity validation failed") return . validateIdentity =<< loadRef name
+loadUnifiedIdentity name = maybe (throwError "identity validation failed") return . validateExtendedIdentity =<< loadRef name
 
 
-gatherPrevious :: Set (Stored (Signed IdentityData)) -> [Stored (Signed IdentityData)] -> Set (Stored (Signed IdentityData))
+gatherPrevious :: Set (Stored (Signed ExtendedIdentityData)) -> [Stored (Signed ExtendedIdentityData)] -> Set (Stored (Signed ExtendedIdentityData))
 gatherPrevious res (n:ns) | n `S.member` res = gatherPrevious res ns
-                          | otherwise        = gatherPrevious (S.insert n res) $ (iddPrev $ fromStored $ signedData $ fromStored n) ++ ns
+                          | otherwise        = gatherPrevious (S.insert n res) $ (eiddPrev $ fromSigned n) ++ ns
 gatherPrevious res [] = res
 
-verifySignatures :: Stored (Signed IdentityData) -> Except String ()
+verifySignatures :: Stored (Signed ExtendedIdentityData) -> Except String ()
 verifySignatures sidd = do
-    let idd = fromStored $ signedData $ fromStored sidd
+    let idd = fromSigned sidd
         required = concat
-            [ [ iddKeyIdentity idd ]
-            , map (iddKeyIdentity . fromStored . signedData . fromStored) $ iddPrev idd
-            , map (iddKeyIdentity . fromStored . signedData . fromStored) $ toList $ iddOwner idd
+            [ [ eiddKeyIdentity idd ]
+            , map (eiddKeyIdentity . fromSigned) $ eiddPrev idd
+            , map (eiddKeyIdentity . fromSigned) $ toList $ eiddOwner idd
             ]
     unless (all (fromStored sidd `isSignedBy`) required) $ do
         throwError "signature verification failed"
 
-lookupProperty :: forall a. (IdentityData -> Maybe a) -> [Stored (Signed IdentityData)] -> Maybe a
+lookupProperty :: forall a m. Foldable m => (ExtendedIdentityData -> Maybe a) -> m (Stored (Signed ExtendedIdentityData)) -> Maybe a
 lookupProperty sel topHeads = findResult filteredLayers
-    where findPropHeads :: Stored (Signed IdentityData) -> [(Stored (Signed IdentityData), a)]
-          findPropHeads sobj | Just x <- sel $ fromStored $ signedData $ fromStored sobj = [(sobj, x)]
-                             | otherwise = findPropHeads =<< (iddPrev $ fromStored $ signedData $ fromStored sobj)
+    where findPropHeads :: Stored (Signed ExtendedIdentityData) -> [(Stored (Signed ExtendedIdentityData), a)]
+          findPropHeads sobj | Just x <- sel $ fromSigned sobj = [(sobj, x)]
+                             | otherwise = findPropHeads =<< (eiddPrev $ fromSigned sobj)
 
-          propHeads :: [(Stored (Signed IdentityData), a)]
-          propHeads = findPropHeads =<< topHeads
+          propHeads :: [(Stored (Signed ExtendedIdentityData), a)]
+          propHeads = findPropHeads =<< toList topHeads
 
-          historyLayers :: [Set (Stored (Signed IdentityData))]
+          historyLayers :: [Set (Stored (Signed ExtendedIdentityData))]
           historyLayers = generations $ map fst propHeads
 
-          filteredLayers :: [[(Stored (Signed IdentityData), a)]]
+          filteredLayers :: [[(Stored (Signed ExtendedIdentityData), a)]]
           filteredLayers = scanl (\cur obsolete -> filter ((`S.notMember` obsolete) . fst) cur) propHeads historyLayers
 
           findResult ([(_, x)] : _) = Just x
@@ -203,10 +311,10 @@ lookupProperty sel topHeads = findResult filteredLayers
           findResult [xs] = Just $ snd $ minimumBy (comparing fst) xs
           findResult (_:rest) = findResult rest
 
-mergeIdentity :: (Foldable f, MonadStorage m, MonadError String m, MonadIO m) => Identity f -> m UnifiedIdentity
+mergeIdentity :: (MonadStorage m, MonadError String m, MonadIO m) => Identity f -> m UnifiedIdentity
 mergeIdentity idt | Just idt' <- toUnifiedIdentity idt = return idt'
-mergeIdentity idt = do
-    (owner, ownerData) <- case idOwner_ idt of
+mergeIdentity idt@Identity {..} = do
+    (owner, ownerData) <- case idOwner_ of
         Nothing -> return (Nothing, Nothing)
         Just cowner | Just owner <- toUnifiedIdentity cowner -> return (Just owner, Nothing)
                     | otherwise -> do owner <- mergeIdentity cowner
@@ -214,40 +322,51 @@ mergeIdentity idt = do
 
     let public = idKeyIdentity idt
     secret <- loadKey public
-    sdata <- mstore =<< sign secret =<< mstore (emptyIdentityData public)
-        { iddPrev = toList $ idDataF idt, iddOwner = ownerData }
-    return $ idt { idData_ = I.Identity sdata, idOwner_ = toComposedIdentity <$> owner }
 
-toUnifiedIdentity :: Foldable m => Identity m -> Maybe UnifiedIdentity
-toUnifiedIdentity idt
-    | [sdata] <- toList $ idDataF idt = Just idt { idData_ = I.Identity sdata }
+    unifiedBaseData <-
+        case toList $ idDataF idt of
+            [idata] -> return idata
+            idatas -> mstore =<< sign secret =<< mstore (emptyIdentityData public)
+                { iddPrev = idatas, iddOwner = ownerData }
+
+    case filter isExtension $ toList $ idExtDataF idt of
+        [] -> return Identity { idData_ = I.Identity (baseToExtended unifiedBaseData), idOwner_ = toComposedIdentity <$> owner, .. }
+        extdata -> do
+            unifiedExtendedData <- mstore =<< sign secret =<<
+                (mstore . ExtendedIdentityData) (emptyIdentityExtension unifiedBaseData)
+                    { idePrev = extdata }
+            return Identity { idData_ = I.Identity unifiedExtendedData, idOwner_ = toComposedIdentity <$> owner, .. }
+
+
+toUnifiedIdentity :: Identity m -> Maybe UnifiedIdentity
+toUnifiedIdentity Identity {..}
+    | [sdata] <- toList idData_ = Just Identity { idData_ = I.Identity sdata, .. }
     | otherwise = Nothing
 
-toComposedIdentity :: Foldable m => Identity m -> ComposedIdentity
-toComposedIdentity idt = idt { idData_ = toList $ idDataF idt
-                             , idOwner_ = toComposedIdentity <$> idOwner_ idt
-                             }
+toComposedIdentity :: Identity m -> ComposedIdentity
+toComposedIdentity Identity {..} = Identity { idData_ = toList idData_
+                                            , idOwner_ = toComposedIdentity <$> idOwner_
+                                            , ..
+                                            }
 
-
-updateIdentity :: Foldable m => [Stored (Signed IdentityData)] -> Identity m -> ComposedIdentity
+updateIdentity :: [Stored (Signed ExtendedIdentityData)] -> Identity m -> ComposedIdentity
 updateIdentity [] orig = toComposedIdentity orig
-updateIdentity updates orig =
-    case validateIdentityF $ filterAncestors (ourUpdates ++ idata) of
-         -- need to filter ancestors here as validateIdentityF currently stores the whole list in idData_
+updateIdentity updates orig@Identity {} =
+    case validateExtendedIdentityF $ ourUpdates ++ idata of
          Just updated -> updated
              { idOwner_ = updateIdentity ownerUpdates <$> idOwner_ updated
              , idUpdates_ = ownerUpdates
              }
          Nothing -> toComposedIdentity orig
     where idata = toList $ idData_ orig
-          ilen = length idata
+          idataRoots = foldl' mergeUniq [] $ map storedRoots idata
           (ourUpdates, ownerUpdates) = partitionEithers $ flip map (filterAncestors $ updates ++ idUpdates_ orig) $
               -- if an update is related to anything in idData_, use it here, otherwise push to owners
-              \u -> if length (filterAncestors (u : idata)) < ilen + 1
+              \u -> if storedRoots u `intersectsSorted` idataRoots
                        then Left u
                        else Right u
 
-updateOwners :: [Stored (Signed IdentityData)] -> Identity m -> Identity m
+updateOwners :: [Stored (Signed ExtendedIdentityData)] -> Identity m -> Identity m
 updateOwners updates orig@Identity { idOwner_ = Just owner, idUpdates_ = cupdates } =
     orig { idOwner_ = Just $ updateIdentity updates owner, idUpdates_ = filterAncestors (updates ++ cupdates) }
 updateOwners _ orig@Identity { idOwner_ = Nothing } = orig

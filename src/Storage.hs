@@ -46,6 +46,7 @@ module Storage (
     fromStored, storedRef,
     wrappedStore, wrappedLoad,
     copyStored,
+    unsafeMapStored,
 
     StoreInfo(..), makeStoreInfo,
 
@@ -890,6 +891,10 @@ wrappedLoad ref = Stored ref (load ref)
 copyStored :: forall c c' m a. (StorageCompleteness c, StorageCompleteness c', MonadIO m) =>
     Storage' c' -> Stored' c a -> m (LoadResult c (Stored' c' a))
 copyStored st (Stored ref' x) = liftIO $ returnLoadResult . fmap (flip Stored x) <$> copyRef' st ref'
+
+-- |Passed function needs to preserve the object representation to be safe
+unsafeMapStored :: (a -> b) -> Stored a -> Stored b
+unsafeMapStored f (Stored ref x) = Stored ref (f x)
 
 
 data StoreInfo = StoreInfo

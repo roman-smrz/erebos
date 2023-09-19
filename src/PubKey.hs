@@ -3,6 +3,8 @@ module PubKey (
     KeyPair(generateKeys), loadKey, loadKeyMb,
     Signature(sigKey), Signed, signedData, signedSignature,
     sign, signAdd, isSignedBy,
+    fromSigned,
+    unsafeMapSigned,
 
     PublicKexKey, SecretKexKey,
     dhSecret,
@@ -109,6 +111,13 @@ signAdd (SecretKey secret spublic) (Signed val sigs) = do
 
 isSignedBy :: Signed a -> Stored PublicKey -> Bool
 isSignedBy sig key = key `elem` map (sigKey . fromStored) (signedSignature sig)
+
+fromSigned :: Stored (Signed a) -> a
+fromSigned = fromStored . signedData . fromStored
+
+-- |Passed function needs to preserve the object representation to be safe
+unsafeMapSigned :: (a -> b) -> Signed a -> Signed b
+unsafeMapSigned f signed = signed { signedData_ = unsafeMapStored f (signedData_ signed) }
 
 
 data PublicKexKey = PublicKexKey CX.PublicKey

@@ -126,7 +126,7 @@ loadLocalStateHead st = loadHeads st >>= \case
 
 localIdentity :: LocalState -> UnifiedIdentity
 localIdentity ls = maybe (error "failed to verify local identity")
-    (updateOwners $ maybe [] idDataF $ lookupSharedValue $ lsShared ls)
+    (updateOwners $ maybe [] idExtDataF $ lookupSharedValue $ lsShared ls)
     (validateIdentity $ lsIdentity ls)
 
 headLocalIdentity :: Head LocalState -> UnifiedIdentity
