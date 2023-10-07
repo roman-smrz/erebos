@@ -57,11 +57,11 @@ previous (Stored ref _) = case load ref of
     Rec items | Just (RecRef dref) <- lookup (BC.pack "SDATA") items
               , Rec ditems <- load dref ->
                     map wrappedLoad $ catMaybes $ map (\case RecRef r -> Just r; _ -> Nothing) $
-                        map snd $ filter ((== BC.pack "SPREV") . fst) ditems
+                        map snd $ filter ((`elem` [ BC.pack "SPREV", BC.pack "SBASE" ]) . fst) ditems
 
               | otherwise ->
                     map wrappedLoad $ catMaybes $ map (\case RecRef r -> Just r; _ -> Nothing) $
-                        map snd $ filter ((== BC.pack "PREV") . fst) items
+                        map snd $ filter ((`elem` [ BC.pack "PREV", BC.pack "BASE" ]) . fst) items
     _ -> []
 
 
