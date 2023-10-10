@@ -220,19 +220,32 @@ createIdentity st name owner = do
     (secret, public) <- generateKeys st
     (_secretMsg, publicMsg) <- generateKeys st
 
-    let signOwner idd
+    let signOwner :: Signed a -> ReaderT Storage IO (Signed a)
+        signOwner idd
             | Just o <- owner = do
                 Just ownerSecret <- loadKeyMb (iddKeyIdentity $ fromSigned $ idData o)
                 signAdd ownerSecret idd
             | otherwise = return idd
 
     Just identity <- flip runReaderT st $ do
-        return . validateIdentity =<< mstore =<< signOwner =<< sign secret =<<
+        baseData <- mstore =<< signOwner =<< sign secret =<<
             mstore (emptyIdentityData public)
-                { iddName = name
-                , iddOwner = idData <$> owner
+                { iddOwner = idData <$> owner
                 , iddKeyMessage = Just publicMsg
                 }
+        let extOwner = do
+                odata <- idExtData <$> owner
+                guard $ isExtension odata
+                return odata
+
+        validateExtendedIdentityF . I.Identity <$>
+            if isJust name || isJust extOwner
+               then mstore =<< signOwner =<< sign secret =<<
+                       mstore . ExtendedIdentityData =<< return (emptyIdentityExtension baseData)
+                       { ideName = name
+                       , ideOwner = extOwner
+                       }
+               else return $ baseToExtended baseData
     return identity
 
 validateIdentity :: Stored (Signed IdentityData) -> Maybe UnifiedIdentity

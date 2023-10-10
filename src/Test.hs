@@ -321,7 +321,7 @@ cmdCreateIdentity = do
             _ -> return []
 
         storeHead st $ LocalState
-            { lsIdentity = idData identity
+            { lsIdentity = idExtData identity
             , lsShared = shared
             }
 
@@ -427,14 +427,14 @@ cmdUpdateLocalIdentity :: Command
 cmdUpdateLocalIdentity = do
     [name] <- asks tiParams
     updateLocalHead_ $ \ls -> do
-        Just identity <- return $ validateIdentity $ lsIdentity $ fromStored ls
+        Just identity <- return $ validateExtendedIdentity $ lsIdentity $ fromStored ls
         let public = idKeyIdentity identity
 
         secret <- loadKey public
-        nidata <- maybe (error "created invalid identity") (return . idData) . validateIdentity =<<
-            mstore =<< sign secret =<< mstore (emptyIdentityData public)
-            { iddPrev = toList $ idDataF identity
-            , iddName = Just name
+        nidata <- maybe (error "created invalid identity") (return . idExtData) . validateExtendedIdentity =<<
+            mstore =<< sign secret =<< mstore . ExtendedIdentityData =<< return (emptyIdentityExtension $ idData identity)
+            { idePrev = toList $ idExtDataF identity
+            , ideName = Just name
             }
         mstore (fromStored ls) { lsIdentity = nidata }
 
@@ -446,10 +446,11 @@ cmdUpdateSharedIdentity = do
         Just identity -> do
             let public = idKeyIdentity identity
             secret <- loadKey public
-            maybe (error "created invalid identity") (return . Just . toComposedIdentity) . validateIdentity =<<
-                mstore =<< sign secret =<< mstore (emptyIdentityData public)
-                { iddPrev = toList $ idDataF identity
-                , iddName = Just name
+            uidentity <- mergeIdentity identity
+            maybe (error "created invalid identity") (return . Just . toComposedIdentity) . validateExtendedIdentity =<<
+                mstore =<< sign secret =<< mstore . ExtendedIdentityData =<< return (emptyIdentityExtension $ idData uidentity)
+                { idePrev = toList $ idExtDataF identity
+                , ideName = Just name
                 }
 
 cmdAttachTo :: Command

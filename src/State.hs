@@ -38,7 +38,7 @@ import Storage
 import Storage.Merge
 
 data LocalState = LocalState
-    { lsIdentity :: Stored (Signed IdentityData)
+    { lsIdentity :: Stored (Signed ExtendedIdentityData)
     , lsShared :: [Stored SharedState]
     }
 
@@ -117,17 +117,17 @@ loadLocalStateHead st = loadHeads st >>= \case
         shared <- wrappedStore st $ SharedState
             { ssPrev = []
             , ssType = Just $ sharedTypeID @(Maybe ComposedIdentity) Proxy
-            , ssValue = [storedRef $ idData $ fromMaybe identity owner]
+            , ssValue = [storedRef $ idExtData $ fromMaybe identity owner]
             }
         storeHead st $ LocalState
-            { lsIdentity = idData identity
+            { lsIdentity = idExtData identity
             , lsShared = [shared]
             }
 
 localIdentity :: LocalState -> UnifiedIdentity
 localIdentity ls = maybe (error "failed to verify local identity")
     (updateOwners $ maybe [] idExtDataF $ lookupSharedValue $ lsShared ls)
-    (validateIdentity $ lsIdentity ls)
+    (validateExtendedIdentity $ lsIdentity ls)
 
 headLocalIdentity :: Head LocalState -> UnifiedIdentity
 headLocalIdentity = localIdentity . headObject

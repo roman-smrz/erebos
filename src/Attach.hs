@@ -42,13 +42,13 @@ instance PairingResult AttachIdentity where
 
     pairingVerifyResult (AttachIdentity sdata keys) = do
         curid <- lsIdentity . fromStored <$> svcGetLocal
-        secret <- loadKey $ iddKeyIdentity $ fromStored $ signedData $ fromStored curid
+        secret <- loadKey $ eiddKeyIdentity $ fromSigned curid
         sdata' <- mstore =<< signAdd secret (fromStored sdata)
         return $ do
-            guard $ iddKeyIdentity (fromStored $ signedData $ fromStored sdata) ==
-                iddKeyIdentity (fromStored $ signedData $ fromStored curid)
+            guard $ iddKeyIdentity (fromSigned sdata) ==
+                eiddKeyIdentity (fromSigned curid)
             identity <- validateIdentity sdata'
-            guard $ iddPrev (fromStored $ signedData $ fromStored $ idData identity) == [curid]
+            guard $ iddPrev (fromSigned $ idData identity) == [eiddStoredBase curid]
             return (identity, keys)
 
     pairingFinalizeRequest (identity, keys) = updateLocalHead_ $ \slocal -> do
@@ -57,9 +57,10 @@ instance PairingResult AttachIdentity where
         pkeys <- mapM (copyStored st) [ idKeyIdentity owner, idKeyMessage owner ]
         liftIO $ mapM_ storeKey $ catMaybes [ keyFromData sec pub | sec <- keys, pub <- pkeys ]
 
+        identity' <- mergeIdentity $ updateIdentity [ lsIdentity $ fromStored slocal ] identity
         shared <- makeSharedStateUpdate st (Just owner) (lsShared $ fromStored slocal)
         mstore (fromStored slocal)
-            { lsIdentity = idData identity
+            { lsIdentity = idExtData identity'
             , lsShared = [ shared ]
             }
 

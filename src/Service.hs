@@ -172,7 +172,7 @@ svcSetLocal x = modify $ \st -> st { svcLocal = x }
 
 svcSelf :: ServiceHandler s UnifiedIdentity
 svcSelf = maybe (throwError "failed to validate own identity") return .
-        validateIdentity . lsIdentity . fromStored =<< svcGetLocal
+        validateExtendedIdentity . lsIdentity . fromStored =<< svcGetLocal
 
 svcPrint :: String -> ServiceHandler s ()
 svcPrint str = afterCommit . ($ str) =<< asks svcPrintOp

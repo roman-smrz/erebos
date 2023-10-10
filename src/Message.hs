@@ -43,7 +43,7 @@ data DirectMessage = DirectMessage
 
 instance Storable DirectMessage where
     store' msg = storeRec $ do
-        mapM_ (storeRef "from") $ idDataF $ msgFrom msg
+        mapM_ (storeRef "from") $ idExtDataF $ msgFrom msg
         mapM_ (storeRef "PREV") $ msgPrev msg
         storeDate "time" $ msgTime msg
         storeText "text" $ msgText msg

@@ -39,7 +39,7 @@ data Contact = Contact
 
 data ContactData = ContactData
     { cdPrev :: [Stored ContactData]
-    , cdIdentity :: [Stored (Signed IdentityData)]
+    , cdIdentity :: [Stored (Signed ExtendedIdentityData)]
     , cdName :: Maybe Text
     }
 
@@ -59,7 +59,7 @@ instance Mergeable Contact where
 
     mergeSorted cdata = Contact
         { contactData = cdata
-        , contactIdentity_ = validateIdentityF $ concat $ findProperty ((\case [] -> Nothing; xs -> Just xs) . cdIdentity) cdata
+        , contactIdentity_ = validateExtendedIdentityF $ concat $ findProperty ((\case [] -> Nothing; xs -> Just xs) . cdIdentity) cdata
         , contactCustomName_ = findPropertyFirst cdName cdata
         }
 
@@ -169,7 +169,7 @@ finalizeContact identity = updateLocalHead_ $ updateSharedState_ $ \contacts -> 
     st <- getStorage
     cdata <- wrappedStore st ContactData
         { cdPrev = []
-        , cdIdentity = idDataF $ finalOwner identity
+        , cdIdentity = idExtDataF $ finalOwner identity
         , cdName = Nothing
         }
     storeSetAdd st (mergeSorted @Contact [cdata]) contacts

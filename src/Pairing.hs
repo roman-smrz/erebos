@@ -116,7 +116,7 @@ instance PairingResult a => Service (PairingService a) where
         (NoPairing, PairingRequest pdata sdata confirm) -> do
             self <- maybe (throwError "failed to validate received identity") return $ validateIdentity sdata
             self' <- maybe (throwError "failed to validate own identity") return .
-                validateIdentity . lsIdentity . fromStored =<< svcGetLocal
+                validateExtendedIdentity . lsIdentity . fromStored =<< svcGetLocal
             when (not $ self `sameIdentity` self') $ do
                 throwError "pairing request to different identity"
 

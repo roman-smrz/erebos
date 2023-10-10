@@ -223,7 +223,7 @@ startServer opt serverOrigHead logd' serverServices = do
 
             let announceUpdate identity = do
                     st <- derivePartialStorage serverStorage
-                    let selfRef = partialRef st $ storedRef $ idData identity
+                    let selfRef = partialRef st $ storedRef $ idExtData identity
                         updateRefs = map refDigest $ selfRef : map (partialRef st . storedRef) (idUpdates identity)
                         ackedBy = concat [[ Acknowledged r, Rejected r, DataRequest r ] | r <- updateRefs ]
                         hitems = map AnnounceUpdate updateRefs
@@ -585,7 +585,7 @@ finalizedChannel peer@Peer {..} ch self = do
 
     -- Identity update
     writeTQueue (serverIOActions peerServer_) $ liftIO $ atomically $ do
-        let selfRef = refDigest $ storedRef $ idData $ self
+        let selfRef = refDigest $ storedRef $ idExtData $ self
             updateRefs = selfRef : map (refDigest . storedRef) (idUpdates self)
             ackedBy = concat [[ Acknowledged r, Rejected r, DataRequest r ] | r <- updateRefs ]
         sendToPeerS peer ackedBy $ flip TransportPacket [] $ TransportHeader $ map AnnounceUpdate updateRefs
