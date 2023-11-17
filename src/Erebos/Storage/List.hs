@@ -1,4 +1,4 @@
-module Storage.List (
+module Erebos.Storage.List (
     StoredList,
     emptySList, fromSList, storedFromSList,
     slistAdd, slistAddS,
@@ -16,9 +16,9 @@ import Data.List
 import Data.Maybe
 import qualified Data.Set as S
 
-import Storage
-import Storage.Internal
-import Storage.Merge
+import Erebos.Storage
+import Erebos.Storage.Internal
+import Erebos.Storage.Merge
 
 data List a = ListNil
             | ListItem { listPrev :: [StoredList a]

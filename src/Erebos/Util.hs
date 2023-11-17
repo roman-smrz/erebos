@@ -1,4 +1,4 @@
-module Util where
+module Erebos.Util where
 
 uniq :: Eq a => [a] -> [a]
 uniq (x:y:xs) | x == y    = uniq (x:xs)

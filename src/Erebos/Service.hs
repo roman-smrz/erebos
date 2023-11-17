@@ -1,4 +1,4 @@
-module Service (
+module Erebos.Service (
     Service(..),
     SomeService(..), someService, someServiceAttr, someServiceID,
     SomeServiceState(..), fromServiceState, someServiceEmptyState,
@@ -32,10 +32,10 @@ import Data.Typeable
 import Data.UUID (UUID)
 import qualified Data.UUID as U
 
-import Identity
-import {-# SOURCE #-} Network
-import State
-import Storage
+import Erebos.Identity
+import {-# SOURCE #-} Erebos.Network
+import Erebos.State
+import Erebos.Storage
 
 class (Typeable s, Storable s, Typeable (ServiceState s), Typeable (ServiceGlobalState s)) => Service s where
     serviceID :: proxy s -> ServiceID

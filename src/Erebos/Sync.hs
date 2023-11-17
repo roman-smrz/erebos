@@ -1,4 +1,4 @@
-module Sync (
+module Erebos.Sync (
     SyncService(..),
 ) where
 
@@ -7,11 +7,11 @@ import Control.Monad.Reader
 
 import Data.List
 
-import Identity
-import Service
-import State
-import Storage
-import Storage.Merge
+import Erebos.Identity
+import Erebos.Service
+import Erebos.State
+import Erebos.Storage
+import Erebos.Storage.Merge
 
 data SyncService = SyncPacket (Stored SharedState)
 

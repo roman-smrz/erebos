@@ -1,4 +1,4 @@
-module Flow (
+module Erebos.Flow (
     Flow, SymFlow,
     newFlow, newFlowIO,
     readFlow, tryReadFlow, canReadFlow,

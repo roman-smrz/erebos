@@ -1,4 +1,4 @@
-module Storage.Internal where
+module Erebos.Storage.Internal where
 
 import Codec.Compression.Zlib
 

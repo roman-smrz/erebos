@@ -1,4 +1,4 @@
-module Pairing (
+module Erebos.Pairing (
     PairingService(..),
     PairingState(..),
     PairingAttributes(..),
@@ -24,12 +24,12 @@ import Data.Maybe
 import Data.Typeable
 import Data.Word
 
-import Identity
-import Network
-import PubKey
-import Service
-import State
-import Storage
+import Erebos.Identity
+import Erebos.Network
+import Erebos.PubKey
+import Erebos.Service
+import Erebos.State
+import Erebos.Storage
 
 data PairingService a = PairingRequest (Stored (Signed IdentityData)) (Stored (Signed IdentityData)) RefDigest
                       | PairingResponse Bytes

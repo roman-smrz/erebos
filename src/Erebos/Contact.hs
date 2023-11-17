@@ -1,4 +1,4 @@
-module Contact (
+module Erebos.Contact (
     Contact,
     contactIdentity,
     contactCustomName,
@@ -21,15 +21,15 @@ import Data.Proxy
 import Data.Text (Text)
 import qualified Data.Text as T
 
-import Identity
-import Network
-import Pairing
-import PubKey
-import Service
-import Set
-import State
-import Storage
-import Storage.Merge
+import Erebos.Identity
+import Erebos.Network
+import Erebos.Pairing
+import Erebos.PubKey
+import Erebos.Service
+import Erebos.Set
+import Erebos.State
+import Erebos.Storage
+import Erebos.Storage.Merge
 
 data Contact = Contact
     { contactData :: [Stored ContactData]

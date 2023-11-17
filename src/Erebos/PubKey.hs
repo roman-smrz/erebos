@@ -1,4 +1,4 @@
-module PubKey (
+module Erebos.PubKey (
     PublicKey, SecretKey,
     KeyPair(generateKeys), loadKey, loadKeyMb,
     Signature(sigKey), Signed, signedData, signedSignature,
@@ -21,8 +21,8 @@ import Data.ByteArray
 import Data.ByteString (ByteString)
 import qualified Data.Text as T
 
-import Storage
-import Storage.Key
+import Erebos.Storage
+import Erebos.Storage.Key
 
 data PublicKey = PublicKey ED.PublicKey
     deriving (Show)

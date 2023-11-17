@@ -1,6 +1,6 @@
-module Network where
+module Erebos.Network where
 
-import Storage
+import Erebos.Storage
 
 data Server
 data Peer

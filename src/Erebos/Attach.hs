@@ -1,4 +1,4 @@
-module Attach (
+module Erebos.Attach (
     AttachService,
     attachToOwner,
     attachAccept,
@@ -13,14 +13,14 @@ import Data.Maybe
 import Data.Proxy
 import qualified Data.Text as T
 
-import Identity
-import Network
-import Pairing
-import PubKey
-import Service
-import State
-import Storage
-import Storage.Key
+import Erebos.Identity
+import Erebos.Network
+import Erebos.Pairing
+import Erebos.PubKey
+import Erebos.Service
+import Erebos.State
+import Erebos.Storage
+import Erebos.Storage.Key
 
 type AttachService = PairingService AttachIdentity
 

@@ -1,4 +1,4 @@
-module Storage.Key (
+module Erebos.Storage.Key (
     KeyPair(..),
     storeKey, loadKey, loadKeyMb,
     moveKeys,
@@ -17,8 +17,8 @@ import System.Directory
 import System.FilePath
 import System.IO.Error
 
-import Storage
-import Storage.Internal
+import Erebos.Storage
+import Erebos.Storage.Internal
 
 class Storable pub => KeyPair sec pub | sec -> pub, pub -> sec where
     generateKeys :: Storage -> IO (sec, Stored pub)

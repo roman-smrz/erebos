@@ -1,4 +1,4 @@
-module Network (
+module Erebos.Network (
     Server,
     startServer,
     stopServer,
@@ -43,16 +43,16 @@ import GHC.Conc.Sync (unsafeIOToSTM)
 import Network.Socket hiding (ControlMessage)
 import qualified Network.Socket.ByteString as S
 
-import Channel
-import ICE
-import Identity
-import Network.Protocol
-import PubKey
-import Service
-import State
-import Storage
-import Storage.Key
-import Storage.Merge
+import Erebos.Channel
+import Erebos.ICE
+import Erebos.Identity
+import Erebos.Network.Protocol
+import Erebos.PubKey
+import Erebos.Service
+import Erebos.State
+import Erebos.Storage
+import Erebos.Storage.Key
+import Erebos.Storage.Merge
 
 
 discoveryPort :: PortNumber

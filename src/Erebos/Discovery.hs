@@ -1,4 +1,4 @@
-module Discovery (
+module Erebos.Discovery (
     DiscoveryService(..),
     DiscoveryConnection(..)
 ) where
@@ -15,11 +15,11 @@ import qualified Data.Text as T
 
 import Network.Socket
 
-import ICE
-import Identity
-import Network
-import Service
-import Storage
+import Erebos.ICE
+import Erebos.Identity
+import Erebos.Network
+import Erebos.Service
+import Erebos.Storage
 
 
 keepaliveSeconds :: Int

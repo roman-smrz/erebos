@@ -30,20 +30,21 @@ import System.Console.GetOpt
 import System.Console.Haskeline
 import System.Environment
 
-import Attach
-import Contact
-import Discovery
-import ICE
-import Identity
-import Message
-import Network
-import PubKey
-import Service
-import Set
-import State
-import Storage
-import Storage.Merge
-import Sync
+import Erebos.Attach
+import Erebos.Contact
+import Erebos.Discovery
+import Erebos.ICE
+import Erebos.Identity
+import Erebos.Message
+import Erebos.Network
+import Erebos.PubKey
+import Erebos.Service
+import Erebos.Set
+import Erebos.State
+import Erebos.Storage
+import Erebos.Storage.Merge
+import Erebos.Sync
+
 import Test
 
 data Options = Options

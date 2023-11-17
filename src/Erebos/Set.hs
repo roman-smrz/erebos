@@ -1,4 +1,4 @@
-module Set (
+module Erebos.Set (
     Set,
 
     emptySet,
@@ -18,9 +18,9 @@ import Data.Map qualified as M
 import Data.Maybe
 import Data.Ord
 
-import Storage
-import Storage.Merge
-import Util
+import Erebos.Storage
+import Erebos.Storage.Merge
+import Erebos.Util
 
 data Set a = Set [Stored (SetItem (Component a))]
 

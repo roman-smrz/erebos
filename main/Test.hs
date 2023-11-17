@@ -27,20 +27,20 @@ import Network.Socket
 import System.IO
 import System.IO.Error
 
-import Attach
-import Contact
-import Identity
-import Message
-import Network
-import Pairing
-import PubKey
-import Service
-import Set
-import State
-import Storage
-import Storage.Internal (unsafeStoreRawBytes)
-import Storage.Merge
-import Sync
+import Erebos.Attach
+import Erebos.Contact
+import Erebos.Identity
+import Erebos.Message
+import Erebos.Network
+import Erebos.Pairing
+import Erebos.PubKey
+import Erebos.Service
+import Erebos.Set
+import Erebos.State
+import Erebos.Storage
+import Erebos.Storage.Internal (unsafeStoreRawBytes)
+import Erebos.Storage.Merge
+import Erebos.Sync
 
 
 data TestState = TestState

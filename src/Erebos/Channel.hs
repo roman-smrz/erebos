@@ -1,4 +1,4 @@
-module Channel (
+module Erebos.Channel (
     Channel,
     ChannelRequest, ChannelRequestData(..),
     ChannelAccept, ChannelAcceptData(..),
@@ -24,9 +24,9 @@ import Data.ByteArray qualified as BA
 import Data.ByteString.Lazy qualified as BL
 import Data.List
 
-import Identity
-import PubKey
-import Storage
+import Erebos.Identity
+import Erebos.PubKey
+import Erebos.Storage
 
 data Channel = Channel
     { chPeers :: [Stored (Signed IdentityData)]

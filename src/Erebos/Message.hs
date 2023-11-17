@@ -1,4 +1,4 @@
-module Message (
+module Erebos.Message (
     DirectMessage(..),
     sendDirectMessage,
 
@@ -27,12 +27,12 @@ import qualified Data.Text as T
 import Data.Time.Format
 import Data.Time.LocalTime
 
-import Identity
-import Network
-import Service
-import State
-import Storage
-import Storage.Merge
+import Erebos.Identity
+import Erebos.Network
+import Erebos.Service
+import Erebos.State
+import Erebos.Storage
+import Erebos.Storage.Merge
 
 data DirectMessage = DirectMessage
     { msgFrom :: ComposedIdentity

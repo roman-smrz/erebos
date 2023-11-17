@@ -1,4 +1,4 @@
-module Storage.Merge (
+module Erebos.Storage.Merge (
     Mergeable(..),
     merge, storeMerge,
 
@@ -30,9 +30,9 @@ import Data.Set qualified as S
 
 import System.IO.Unsafe (unsafePerformIO)
 
-import Storage
-import Storage.Internal
-import Util
+import Erebos.Storage
+import Erebos.Storage.Internal
+import Erebos.Util
 
 class Storable (Component a) => Mergeable a where
     type Component a :: Type

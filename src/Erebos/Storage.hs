@@ -1,4 +1,4 @@
-module Storage (
+module Erebos.Storage (
     Storage, PartialStorage,
     openStorage, memoryStorage,
     deriveEphemeralStorage, derivePartialStorage,
@@ -104,7 +104,7 @@ import System.INotify
 import System.IO.Error
 import System.IO.Unsafe
 
-import Storage.Internal
+import Erebos.Storage.Internal
 
 
 type Storage = Storage' Complete

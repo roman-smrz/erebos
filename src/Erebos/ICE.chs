@@ -1,7 +1,7 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE RecursiveDo #-}
 
-module ICE (
+module Erebos.ICE (
     IceSession,
     IceSessionRole(..),
     IceRemoteInfo,
@@ -39,8 +39,8 @@ import Foreign.Marshal.Array
 import Foreign.Ptr
 import Foreign.StablePtr
 
-import Flow
-import Storage
+import Erebos.Flow
+import Erebos.Storage
 
 #include "pjproject.h"
 

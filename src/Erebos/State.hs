@@ -1,4 +1,4 @@
-module State (
+module Erebos.State (
     LocalState(..),
     SharedState, SharedType(..),
     SharedTypeID, mkSharedTypeID,
@@ -32,10 +32,10 @@ import qualified Data.UUID as U
 
 import System.IO
 
-import Identity
-import PubKey
-import Storage
-import Storage.Merge
+import Erebos.Identity
+import Erebos.PubKey
+import Erebos.Storage
+import Erebos.Storage.Merge
 
 data LocalState = LocalState
     { lsIdentity :: Stored (Signed ExtendedIdentityData)

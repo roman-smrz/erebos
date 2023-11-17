@@ -1,6 +1,6 @@
 {-# LANGUAGE UndecidableInstances #-}
 
-module Identity (
+module Erebos.Identity (
     Identity, ComposedIdentity, UnifiedIdentity,
     IdentityData(..), ExtendedIdentityData(..), IdentityExtension(..),
     idData, idDataF, idExtData, idExtDataF,
@@ -41,10 +41,10 @@ import qualified Data.Set as S
 import Data.Text (Text)
 import qualified Data.Text as T
 
-import PubKey
-import Storage
-import Storage.Merge
-import Util
+import Erebos.PubKey
+import Erebos.Storage
+import Erebos.Storage.Merge
+import Erebos.Util
 
 data Identity m = IdentityKind m => Identity
     { idData_ :: m (Stored (Signed ExtendedIdentityData))

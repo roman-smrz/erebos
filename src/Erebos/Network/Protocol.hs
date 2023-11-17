@@ -1,4 +1,4 @@
-module Network.Protocol (
+module Erebos.Network.Protocol (
     TransportPacket(..),
     transportToObject,
     TransportHeader(..),
@@ -20,7 +20,7 @@ module Network.Protocol (
     connGetChannel,
     connSetChannel,
 
-    module Flow,
+    module Erebos.Flow,
 ) where
 
 import Control.Applicative
@@ -42,11 +42,11 @@ import Data.Text qualified as T
 
 import System.Clock
 
-import Channel
-import Flow
-import Identity
-import Service
-import Storage
+import Erebos.Channel
+import Erebos.Flow
+import Erebos.Identity
+import Erebos.Service
+import Erebos.Storage
 
 
 protocolVersion :: Text
