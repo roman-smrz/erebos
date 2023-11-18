@@ -90,7 +90,6 @@ library
     pkgconfig-depends:   libpjproject >= 2.9
 
     build-depends:
-        aeson >=1.4 && <2.1,
         async >=2.2 && <2.3,
         binary >=0.8 && <0.11,
         bytestring >=0.10 && <0.12,

@@ -31,14 +31,14 @@ module Erebos.Storage (
     StorableText(..), StorableDate(..), StorableUUID(..),
 
     storeBlob, storeRec, storeZero,
-    storeEmpty, storeInt, storeNum, storeText, storeBinary, storeDate, storeUUID, storeJson, storeRef, storeRawRef,
-    storeMbEmpty, storeMbInt, storeMbNum, storeMbText, storeMbBinary, storeMbDate, storeMbUUID, storeMbJson, storeMbRef, storeMbRawRef,
+    storeEmpty, storeInt, storeNum, storeText, storeBinary, storeDate, storeUUID, storeRef, storeRawRef,
+    storeMbEmpty, storeMbInt, storeMbNum, storeMbText, storeMbBinary, storeMbDate, storeMbUUID, storeMbRef, storeMbRawRef,
     storeZRef,
 
     LoadRec,
     loadBlob, loadRec, loadZero,
-    loadEmpty, loadInt, loadNum, loadText, loadBinary, loadDate, loadUUID, loadJson, loadRef, loadRawRef,
-    loadMbEmpty, loadMbInt, loadMbNum, loadMbText, loadMbBinary, loadMbDate, loadMbUUID, loadMbJson, loadMbRef, loadMbRawRef,
+    loadEmpty, loadInt, loadNum, loadText, loadBinary, loadDate, loadUUID, loadRef, loadRawRef,
+    loadMbEmpty, loadMbInt, loadMbNum, loadMbText, loadMbBinary, loadMbDate, loadMbUUID, loadMbRef, loadMbRawRef,
     loadTexts, loadBinaries, loadRefs, loadRawRefs,
     loadZRef,
 
@@ -69,7 +69,6 @@ import Control.Monad.Writer
 
 import Crypto.Hash
 
-import qualified Data.Aeson as J
 import Data.ByteString (ByteString)
 import qualified Data.ByteArray as BA
 import qualified Data.ByteString as B
@@ -192,7 +191,6 @@ copyObject' st (Rec rs) = fmap Rec . sequence <$> mapM copyItem rs
               RecBinary x -> return $ return $ RecBinary x
               RecDate x -> return $ return $ RecDate x
               RecUUID x -> return $ return $ RecUUID x
-              RecJson x -> return $ return $ RecJson x
               RecRef x -> fmap RecRef <$> copyRef' st x
 copyObject' _ ZeroObject = return $ return ZeroObject
 
@@ -226,7 +224,6 @@ data RecItem' c
     | RecBinary ByteString
     | RecDate ZonedTime
     | RecUUID UUID
-    | RecJson J.Value
     | RecRef (Ref' c)
     deriving (Show)
 
@@ -261,7 +258,6 @@ serializeRecItem name (RecText x) = [name, BC.pack ":t", BC.singleton ' ', escap
 serializeRecItem name (RecBinary x) = [name, BC.pack ":b ", showHex x, BC.singleton '\n']
 serializeRecItem name (RecDate x) = [name, BC.pack ":d", BC.singleton ' ', BC.pack (formatTime defaultTimeLocale "%s %z" x), BC.singleton '\n']
 serializeRecItem name (RecUUID x) = [name, BC.pack ":u", BC.singleton ' ', U.toASCIIBytes x, BC.singleton '\n']
-serializeRecItem name (RecJson x) = [name, BC.pack ":j", BC.singleton ' '] ++ BL.toChunks (J.encode x) ++ [BC.singleton '\n']
 serializeRecItem name (RecRef x) = [name, BC.pack ":r ", showRef x, BC.singleton '\n']
 
 lazyLoadObject :: forall c. StorageCompleteness c => Ref' c -> LoadResult c (Object' c)
@@ -326,7 +322,6 @@ unsafeDeserializeObject st bytes =
                           "b" -> RecBinary <$> readHex content
                           "d" -> RecDate <$> parseTimeM False defaultTimeLocale "%s %z" (BC.unpack content)
                           "u" -> RecUUID <$> U.fromASCIIBytes content
-                          "j" -> RecJson <$> J.decode (BL.fromStrict content)
                           "r" -> RecRef . Ref st <$> readRefDigest content
                           _   -> Nothing
               return (name, val)
@@ -697,12 +692,6 @@ storeUUID name x = tell [return [(BC.pack name, RecUUID $ toUUID x)]]
 storeMbUUID :: StorableUUID a => String -> Maybe a -> StoreRec c
 storeMbUUID name = maybe (return ()) (storeUUID name)
 
-storeJson :: J.ToJSON a => String -> a -> StoreRec c
-storeJson name x = tell [return [(BC.pack name, RecJson $ J.toJSON x)]]
-
-storeMbJson :: J.ToJSON a => String -> Maybe a -> StoreRec c
-storeMbJson name = maybe (return ()) (storeJson name)
-
 storeRef :: Storable a => StorageCompleteness c => String -> a -> StoreRec c
 storeRef name x = do
     s <- ask
@@ -822,17 +811,6 @@ loadMbUUID name = asks (lookup (BC.pack name) . snd) >>= \case
     Nothing -> return Nothing
     Just (RecUUID x) -> return $ Just $ fromUUID x
     Just _ -> throwError $ "Expecting type UUID of record item '"++name++"'"
-
-loadJson :: J.FromJSON a => String -> LoadRec a
-loadJson name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbJson name
-
-loadMbJson :: J.FromJSON a => String -> LoadRec (Maybe a)
-loadMbJson name = asks (lookup (BC.pack name) . snd) >>= \case
-    Nothing -> return Nothing
-    Just (RecJson v) -> case J.fromJSON v of
-                             J.Error err -> throwError err
-                             J.Success x -> return (Just x)
-    Just _ -> throwError $ "Expecting type JSON of record item '"++name++"'"
 
 loadRawRef :: String -> LoadRec Ref
 loadRawRef name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbRawRef name
