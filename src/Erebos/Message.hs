@@ -85,6 +85,7 @@ instance Service DirectMessage where
                    next <- wrappedStore st $ MessageState
                        { msPrev = prev
                        , msPeer = powner
+                       , msReady = []
                        , msSent = []
                        , msReceived = received'
                        , msSeen = []
@@ -107,6 +108,7 @@ instance Service DirectMessage where
 data MessageState = MessageState
     { msPrev :: [Stored MessageState]
     , msPeer :: ComposedIdentity
+    , msReady :: [Stored DirectMessage]
     , msSent :: [Stored DirectMessage]
     , msReceived :: [Stored DirectMessage]
     , msSeen :: [Stored DirectMessage]
@@ -121,19 +123,22 @@ toThreadList :: DirectMessageThreads -> [DirectMessageThread]
 toThreadList (DirectMessageThreads _ threads) = threads
 
 instance Storable MessageState where
-    store' ms = storeRec $ do
-        mapM_ (storeRef "PREV") $ msPrev ms
-        mapM_ (storeRef "peer") $ idDataF $ msPeer ms
-        mapM_ (storeRef "sent") $ msSent ms
-        mapM_ (storeRef "received") $ msReceived ms
-        mapM_ (storeRef "seen") $ msSeen ms
+    store' MessageState {..} = storeRec $ do
+        mapM_ (storeRef "PREV") msPrev
+        mapM_ (storeRef "peer") $ idDataF msPeer
+        mapM_ (storeRef "ready") msReady
+        mapM_ (storeRef "sent") msSent
+        mapM_ (storeRef "received") msReceived
+        mapM_ (storeRef "seen") msSeen
 
-    load' = loadRec $ MessageState
-        <$> loadRefs "PREV"
-        <*> loadIdentity "peer"
-        <*> loadRefs "sent"
-        <*> loadRefs "received"
-        <*> loadRefs "seen"
+    load' = loadRec $ do
+        msPrev <- loadRefs "PREV"
+        msPeer <- loadIdentity "peer"
+        msReady <- loadRefs "ready"
+        msSent <- loadRefs "sent"
+        msReceived <- loadRefs "received"
+        msSeen <- loadRefs "seen"
+        return MessageState {..}
 
 instance Mergeable DirectMessageThreads where
     type Component DirectMessageThreads = MessageState
@@ -156,20 +161,21 @@ sendDirectMessage pid text = updateLocalHead $ \ls -> do
     let self = localIdentity $ fromStored ls
         powner = finalOwner pid
     flip updateSharedState ls $ \(DirectMessageThreads prev _) -> do
-        let sent = findMsgProperty powner msSent prev
+        let ready = findMsgProperty powner msReady prev
             received = findMsgProperty powner msReceived prev
 
         time <- liftIO getZonedTime
         smsg <- mstore DirectMessage
             { msgFrom = toComposedIdentity $ finalOwner self
-            , msgPrev = filterAncestors $ sent ++ received
+            , msgPrev = filterAncestors $ ready ++ received
             , msgTime = time
             , msgText = text
             }
         next <- mstore MessageState
             { msPrev = prev
             , msPeer = powner
-            , msSent = [smsg]
+            , msReady = [smsg]
+            , msSent = []
             , msReceived = []
             , msSeen = []
             }
@@ -181,10 +187,32 @@ syncDirectMessageToPeer (DirectMessageThreads mss _) = do
     peer <- asks svcPeer
     let thread = messageThreadFor pid mss
     mapM_ (sendToPeerStored peer) $ msgHead thread
+    updateLocalHead_ $ \ls -> do
+        let powner = finalOwner pid
+        flip updateSharedState_ ls $ \unchanged@(DirectMessageThreads prev _) -> do
+            let ready = findMsgProperty powner msReady prev
+                sent = findMsgProperty powner msSent prev
+                sent' = filterAncestors (ready ++ sent)
+
+            if sent' /= sent
+              then do
+                next <- mstore MessageState
+                    { msPrev = prev
+                    , msPeer = powner
+                    , msReady = []
+                    , msSent = sent'
+                    , msReceived = []
+                    , msSeen = []
+                    }
+                return $ DirectMessageThreads [next] (messageThreadView [next])
+              else do
+                return unchanged
+
 
 data DirectMessageThread = DirectMessageThread
     { msgPeer :: ComposedIdentity
     , msgHead :: [Stored DirectMessage]
+    , msgSent :: [Stored DirectMessage]
     , msgSeen :: [Stored DirectMessage]
     }
 
@@ -209,14 +237,16 @@ messageThreadView = helper []
 
 messageThreadFor :: ComposedIdentity -> [Stored MessageState] -> DirectMessageThread
 messageThreadFor peer mss =
-    let sent = findMsgProperty peer msSent mss
+    let ready = findMsgProperty peer msReady mss
+        sent = findMsgProperty peer msSent mss
         received = findMsgProperty peer msReceived mss
         seen = findMsgProperty peer msSeen mss
 
      in DirectMessageThread
          { msgPeer = peer
-         , msgHead = filterAncestors $ sent ++ received
-         , msgSeen = filterAncestors $ sent ++ seen
+         , msgHead = filterAncestors $ ready ++ received
+         , msgSent = filterAncestors $ sent ++ received
+         , msgSeen = filterAncestors $ ready ++ seen
          }
 
 
