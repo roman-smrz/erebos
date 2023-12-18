@@ -10,8 +10,6 @@ module Erebos.Storage.List (
     -- TODO withStoredListItem, withStoredListItemS,
 ) where
 
-import Control.Monad.Reader
-
 import Data.List
 import Data.Maybe
 import qualified Data.Set as S
@@ -35,7 +33,7 @@ instance Storable a => Storable (List a) where
         mapM_ (storeRef "item") $ listItem x
         mapM_ (storeRef "remove") $ listRemove x
 
-    load' = asks snd >>= \case
+    load' = loadCurrentObject >>= \case
         ZeroObject -> return ListNil
         _ -> loadRec $ ListItem <$> loadRefs "PREV"
                                 <*> loadMbRef "item"

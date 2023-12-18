@@ -1,5 +1,5 @@
 module Erebos.Storage (
-    Storage, PartialStorage,
+    Storage, PartialStorage, StorageCompleteness,
     openStorage, memoryStorage,
     deriveEphemeralStorage, derivePartialStorage,
 
@@ -30,12 +30,18 @@ module Erebos.Storage (
     Storable(..), ZeroStorable(..),
     StorableText(..), StorableDate(..), StorableUUID(..),
 
+    Store, StoreRec,
+    evalStore, evalStoreObject,
     storeBlob, storeRec, storeZero,
     storeEmpty, storeInt, storeNum, storeText, storeBinary, storeDate, storeUUID, storeRef, storeRawRef,
     storeMbEmpty, storeMbInt, storeMbNum, storeMbText, storeMbBinary, storeMbDate, storeMbUUID, storeMbRef, storeMbRawRef,
     storeZRef,
 
-    LoadRec,
+    Load, LoadRec,
+    evalLoad,
+    loadCurrentRef, loadCurrentObject,
+    loadRecCurrentRef, loadRecItems,
+
     loadBlob, loadRec, loadZero,
     loadEmpty, loadInt, loadNum, loadText, loadBinary, loadDate, loadUUID, loadRef, loadRawRef,
     loadMbEmpty, loadMbInt, loadMbNum, loadMbText, loadMbBinary, loadMbDate, loadMbUUID, loadMbRef, loadMbRawRef,
@@ -236,6 +242,8 @@ serializeObject = \case
                 in BL.fromChunks [BC.pack "rec ", BC.pack (show $ BL.length cnt), BC.singleton '\n'] `BL.append` cnt
     ZeroObject -> BL.empty
 
+-- |Serializes and stores object data without ony dependencies, so is safe only
+-- if all the referenced objects are already stored or reference is partial.
 unsafeStoreObject :: Storage' c -> Object' c -> IO (Ref' c)
 unsafeStoreObject storage = \case
     ZeroObject -> return $ zeroRef storage
@@ -544,10 +552,9 @@ class Storable a where
     load' :: Load a
 
     store :: StorageCompleteness c => Storage' c -> a -> IO (Ref' c)
-    store st = unsafeStoreObject st <=< evalStore st . store'
+    store st = evalStore st . store'
     load :: Ref -> a
-    load ref = let Load f = load'
-                in either (error {- TODO throw -} . ((BC.unpack (showRef ref) ++ ": ")++)) id $ runReaderT f (ref, lazyLoadObject ref)
+    load = evalLoad load'
 
 class Storable a => ZeroStorable a where
     fromZero :: Storage -> a
@@ -556,17 +563,39 @@ data Store = StoreBlob ByteString
            | StoreRec (forall c. StorageCompleteness c => Storage' c -> [IO [(ByteString, RecItem' c)]])
            | StoreZero
 
-evalStore :: StorageCompleteness c => Storage' c -> Store -> IO (Object' c)
-evalStore _ (StoreBlob x) = return $ Blob x
-evalStore s (StoreRec f) = Rec . concat <$> sequence (f s)
-evalStore _ StoreZero = return ZeroObject
+evalStore :: StorageCompleteness c => Storage' c -> Store -> IO (Ref' c)
+evalStore st = unsafeStoreObject st <=< evalStoreObject st
 
-type StoreRec c = ReaderT (Storage' c) (Writer [IO [(ByteString, RecItem' c)]]) ()
+evalStoreObject :: StorageCompleteness c => Storage' c -> Store -> IO (Object' c)
+evalStoreObject _ (StoreBlob x) = return $ Blob x
+evalStoreObject s (StoreRec f) = Rec . concat <$> sequence (f s)
+evalStoreObject _ StoreZero = return ZeroObject
+
+newtype StoreRecM c a = StoreRecM (ReaderT (Storage' c) (Writer [IO [(ByteString, RecItem' c)]]) a)
+    deriving (Functor, Applicative, Monad)
+
+type StoreRec c = StoreRecM c ()
 
 newtype Load a = Load (ReaderT (Ref, Object) (Either String) a)
-    deriving (Functor, Applicative, Alternative, Monad, MonadPlus, MonadReader (Ref, Object), MonadError String)
+    deriving (Functor, Applicative, Alternative, Monad, MonadPlus, MonadError String)
 
-type LoadRec a = ReaderT (Ref, [(ByteString, RecItem)]) (Either String) a
+evalLoad :: Load a -> Ref -> a
+evalLoad (Load f) ref = either (error {- TODO throw -} . ((BC.unpack (showRef ref) ++ ": ")++)) id $ runReaderT f (ref, lazyLoadObject ref)
+
+loadCurrentRef :: Load Ref
+loadCurrentRef = Load $ asks fst
+
+loadCurrentObject :: Load Object
+loadCurrentObject = Load $ asks snd
+
+newtype LoadRec a = LoadRec (ReaderT (Ref, [(ByteString, RecItem)]) (Either String) a)
+    deriving (Functor, Applicative, Alternative, Monad, MonadPlus, MonadError String)
+
+loadRecCurrentRef :: LoadRec Ref
+loadRecCurrentRef = LoadRec $ asks fst
+
+loadRecItems :: LoadRec [(ByteString, RecItem)]
+loadRecItems = LoadRec $ asks snd
 
 
 instance Storable Object where
@@ -576,7 +605,7 @@ instance Storable Object where
         return xs'
     store' ZeroObject = StoreZero
 
-    load' = asks snd
+    load' = loadCurrentObject
 
     store st = unsafeStoreObject st <=< copyObject st
     load = lazyLoadObject
@@ -591,7 +620,7 @@ instance Storable a => Storable [a] where
         storeRef "i" x
         storeRef "n" xs
 
-    load' = asks snd >>= \case
+    load' = loadCurrentObject >>= \case
                 ZeroObject -> return []
                 _          -> loadRec $ (:)
                                   <$> loadRef "i"
@@ -605,7 +634,9 @@ storeBlob :: ByteString -> Store
 storeBlob = StoreBlob
 
 storeRec :: (forall c. StorageCompleteness c => StoreRec c) -> Store
-storeRec r = StoreRec $ execWriter . runReaderT r
+storeRec sr = StoreRec $ do
+    let StoreRecM r = sr
+    execWriter . runReaderT r
 
 storeZero :: Store
 storeZero = StoreZero
@@ -651,49 +682,49 @@ instance StorableUUID UUID where
 
 
 storeEmpty :: String -> StoreRec c
-storeEmpty name = tell [return [(BC.pack name, RecEmpty)]]
+storeEmpty name = StoreRecM $ tell [return [(BC.pack name, RecEmpty)]]
 
 storeMbEmpty :: String -> Maybe () -> StoreRec c
 storeMbEmpty name = maybe (return ()) (const $ storeEmpty name)
 
 storeInt :: Integral a => String -> a -> StoreRec c
-storeInt name x = tell [return [(BC.pack name, RecInt $ toInteger x)]]
+storeInt name x = StoreRecM $ tell [return [(BC.pack name, RecInt $ toInteger x)]]
 
 storeMbInt :: Integral a => String -> Maybe a -> StoreRec c
 storeMbInt name = maybe (return ()) (storeInt name)
 
 storeNum :: (Real a, Fractional a) => String -> a -> StoreRec c
-storeNum name x = tell [return [(BC.pack name, RecNum $ toRational x)]]
+storeNum name x = StoreRecM $ tell [return [(BC.pack name, RecNum $ toRational x)]]
 
 storeMbNum :: (Real a, Fractional a) => String -> Maybe a -> StoreRec c
 storeMbNum name = maybe (return ()) (storeNum name)
 
 storeText :: StorableText a => String -> a -> StoreRec c
-storeText name x = tell [return [(BC.pack name, RecText $ toText x)]]
+storeText name x = StoreRecM $ tell [return [(BC.pack name, RecText $ toText x)]]
 
 storeMbText :: StorableText a => String -> Maybe a -> StoreRec c
 storeMbText name = maybe (return ()) (storeText name)
 
 storeBinary :: BA.ByteArrayAccess a => String -> a -> StoreRec c
-storeBinary name x = tell [return [(BC.pack name, RecBinary $ BA.convert x)]]
+storeBinary name x = StoreRecM $ tell [return [(BC.pack name, RecBinary $ BA.convert x)]]
 
 storeMbBinary :: BA.ByteArrayAccess a => String -> Maybe a -> StoreRec c
 storeMbBinary name = maybe (return ()) (storeBinary name)
 
 storeDate :: StorableDate a => String -> a -> StoreRec c
-storeDate name x = tell [return [(BC.pack name, RecDate $ toDate x)]]
+storeDate name x = StoreRecM $ tell [return [(BC.pack name, RecDate $ toDate x)]]
 
 storeMbDate :: StorableDate a => String -> Maybe a -> StoreRec c
 storeMbDate name = maybe (return ()) (storeDate name)
 
 storeUUID :: StorableUUID a => String -> a -> StoreRec c
-storeUUID name x = tell [return [(BC.pack name, RecUUID $ toUUID x)]]
+storeUUID name x = StoreRecM $ tell [return [(BC.pack name, RecUUID $ toUUID x)]]
 
 storeMbUUID :: StorableUUID a => String -> Maybe a -> StoreRec c
 storeMbUUID name = maybe (return ()) (storeUUID name)
 
 storeRef :: Storable a => StorageCompleteness c => String -> a -> StoreRec c
-storeRef name x = do
+storeRef name x = StoreRecM $ do
     s <- ask
     tell $ (:[]) $ do
         ref <- store s x
@@ -703,7 +734,7 @@ storeMbRef :: Storable a => StorageCompleteness c => String -> Maybe a -> StoreR
 storeMbRef name = maybe (return ()) (storeRef name)
 
 storeRawRef :: StorageCompleteness c => String -> Ref -> StoreRec c
-storeRawRef name ref = do
+storeRawRef name ref = StoreRecM $ do
     st <- ask
     tell $ (:[]) $ do
         ref' <- copyRef st ref
@@ -713,7 +744,7 @@ storeMbRawRef :: StorageCompleteness c => String -> Maybe Ref -> StoreRec c
 storeMbRawRef name = maybe (return ()) (storeRawRef name)
 
 storeZRef :: (ZeroStorable a, StorageCompleteness c) => String -> a -> StoreRec c
-storeZRef name x = do
+storeZRef name x = StoreRecM $ do
     s <- ask
     tell $ (:[]) $ do
         ref <- store s x
@@ -722,17 +753,19 @@ storeZRef name x = do
 
 
 loadBlob :: (ByteString -> a) -> Load a
-loadBlob f = asks snd >>= \case
+loadBlob f = loadCurrentObject >>= \case
     Blob x -> return $ f x
     _      -> throwError "Expecting blob"
 
 loadRec :: LoadRec a -> Load a
-loadRec lrec = ask >>= \case
-    (ref, Rec rs) -> either throwError return $ runReaderT lrec (ref, rs)
-    _             -> throwError "Expecting record"
+loadRec (LoadRec lrec) = loadCurrentObject >>= \case
+    Rec rs -> do
+        ref <- loadCurrentRef
+        either throwError return $ runReaderT lrec (ref, rs)
+    _ -> throwError "Expecting record"
 
 loadZero :: a -> Load a
-loadZero x = asks snd >>= \case
+loadZero x = loadCurrentObject >>= \case
     ZeroObject -> return x
     _          -> throwError "Expecting zero"
 
@@ -741,7 +774,7 @@ loadEmpty :: String -> LoadRec ()
 loadEmpty name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbEmpty name
 
 loadMbEmpty :: String -> LoadRec (Maybe ())
-loadMbEmpty name = asks (lookup (BC.pack name) . snd) >>= \case
+loadMbEmpty name = (lookup (BC.pack name) <$> loadRecItems) >>= \case
     Nothing -> return Nothing
     Just (RecEmpty) -> return (Just ())
     Just _ -> throwError $ "Expecting type int of record item '"++name++"'"
@@ -750,7 +783,7 @@ loadInt :: Num a => String -> LoadRec a
 loadInt name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbInt name
 
 loadMbInt :: Num a => String -> LoadRec (Maybe a)
-loadMbInt name = asks (lookup (BC.pack name) . snd) >>= \case
+loadMbInt name = (lookup (BC.pack name) <$> loadRecItems) >>= \case
     Nothing -> return Nothing
     Just (RecInt x) -> return (Just $ fromInteger x)
     Just _ -> throwError $ "Expecting type int of record item '"++name++"'"
@@ -759,7 +792,7 @@ loadNum :: (Real a, Fractional a) => String -> LoadRec a
 loadNum name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbNum name
 
 loadMbNum :: (Real a, Fractional a) => String -> LoadRec (Maybe a)
-loadMbNum name = asks (lookup (BC.pack name) . snd) >>= \case
+loadMbNum name = (lookup (BC.pack name) <$> loadRecItems) >>= \case
     Nothing -> return Nothing
     Just (RecNum x) -> return (Just $ fromRational x)
     Just _ -> throwError $ "Expecting type number of record item '"++name++"'"
@@ -768,14 +801,14 @@ loadText :: StorableText a => String -> LoadRec a
 loadText name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbText name
 
 loadMbText :: StorableText a => String -> LoadRec (Maybe a)
-loadMbText name = asks (lookup (BC.pack name) . snd) >>= \case
+loadMbText name = (lookup (BC.pack name) <$> loadRecItems) >>= \case
     Nothing -> return Nothing
     Just (RecText x) -> Just <$> fromText x
     Just _ -> throwError $ "Expecting type text of record item '"++name++"'"
 
 loadTexts :: StorableText a => String -> LoadRec [a]
 loadTexts name = do
-    items <- map snd . filter ((BC.pack name ==) . fst) <$> asks snd
+    items <- map snd . filter ((BC.pack name ==) . fst) <$> loadRecItems
     forM items $ \case RecText x -> fromText x
                        _ -> throwError $ "Expecting type text of record item '"++name++"'"
 
@@ -783,14 +816,14 @@ loadBinary :: BA.ByteArray a => String -> LoadRec a
 loadBinary name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbBinary name
 
 loadMbBinary :: BA.ByteArray a => String -> LoadRec (Maybe a)
-loadMbBinary name = asks (lookup (BC.pack name) . snd) >>= \case
+loadMbBinary name = (lookup (BC.pack name) <$> loadRecItems) >>= \case
     Nothing -> return Nothing
     Just (RecBinary x) -> return $ Just $ BA.convert x
     Just _ -> throwError $ "Expecting type binary of record item '"++name++"'"
 
 loadBinaries :: BA.ByteArray a => String -> LoadRec [a]
 loadBinaries name = do
-    items <- map snd . filter ((BC.pack name ==) . fst) <$> asks snd
+    items <- map snd . filter ((BC.pack name ==) . fst) <$> loadRecItems
     forM items $ \case RecBinary x -> return $ BA.convert x
                        _ -> throwError $ "Expecting type binary of record item '"++name++"'"
 
@@ -798,7 +831,7 @@ loadDate :: StorableDate a => String -> LoadRec a
 loadDate name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbDate name
 
 loadMbDate :: StorableDate a => String -> LoadRec (Maybe a)
-loadMbDate name = asks (lookup (BC.pack name) . snd) >>= \case
+loadMbDate name = (lookup (BC.pack name) <$> loadRecItems) >>= \case
     Nothing -> return Nothing
     Just (RecDate x) -> return $ Just $ fromDate x
     Just _ -> throwError $ "Expecting type date of record item '"++name++"'"
@@ -807,7 +840,7 @@ loadUUID :: StorableUUID a => String -> LoadRec a
 loadUUID name = maybe (throwError $ "Missing record iteem '"++name++"'") return =<< loadMbUUID name
 
 loadMbUUID :: StorableUUID a => String -> LoadRec (Maybe a)
-loadMbUUID name = asks (lookup (BC.pack name) . snd) >>= \case
+loadMbUUID name = (lookup (BC.pack name) <$> loadRecItems) >>= \case
     Nothing -> return Nothing
     Just (RecUUID x) -> return $ Just $ fromUUID x
     Just _ -> throwError $ "Expecting type UUID of record item '"++name++"'"
@@ -816,14 +849,14 @@ loadRawRef :: String -> LoadRec Ref
 loadRawRef name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbRawRef name
 
 loadMbRawRef :: String -> LoadRec (Maybe Ref)
-loadMbRawRef name = asks (lookup (BC.pack name) . snd) >>= \case
+loadMbRawRef name = (lookup (BC.pack name) <$> loadRecItems) >>= \case
     Nothing -> return Nothing
     Just (RecRef x) -> return (Just x)
     Just _ -> throwError $ "Expecting type ref of record item '"++name++"'"
 
 loadRawRefs :: String -> LoadRec [Ref]
 loadRawRefs name = do
-    items <- map snd . filter ((BC.pack name ==) . fst) <$> asks snd
+    items <- map snd . filter ((BC.pack name ==) . fst) <$> loadRecItems
     forM items $ \case RecRef x -> return x
                        _ -> throwError $ "Expecting type ref of record item '"++name++"'"
 
@@ -838,7 +871,7 @@ loadRefs name = map load <$> loadRawRefs name
 
 loadZRef :: ZeroStorable a => String -> LoadRec a
 loadZRef name = loadMbRef name >>= \case
-                    Nothing -> do Ref st _ <- asks fst
+                    Nothing -> do Ref st _ <- loadRecCurrentRef
                                   return $ fromZero st
                     Just x  -> return x
 
@@ -848,7 +881,7 @@ type Stored a = Stored' Complete a
 instance Storable a => Storable (Stored a) where
     store st = copyRef st . storedRef
     store' (Stored _ x) = store' x
-    load' = Stored <$> asks fst <*> load'
+    load' = Stored <$> loadCurrentRef <*> load'
 
 instance ZeroStorable a => ZeroStorable (Stored a) where
     fromZero st = Stored (zeroRef st) $ fromZero st
