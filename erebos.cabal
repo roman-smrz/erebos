@@ -2,17 +2,32 @@ Cabal-Version:       2.2
 
 Name:                erebos
 Version:             0.1.0.0
--- synopsis:
--- description:
+Synopsis:            Decentralized messaging and synchronization
+Description:
+    Library and simple CLI interface implementing the Erebos identity
+    management, decentralized messaging and synchronization protocol, along
+    with local storage.
+    .
+    Erebos identity is based on locally stored cryptographic keys, all
+    communication is end-to-end encrypted. Multiple devices can be attached to
+    the same identity, after which they function interchangeably, without any
+    one being in any way "primary"; messages and other state data are then
+    synchronized automatically whenever the devices are able to connect with
+    one another.
 License:             BSD-3-Clause
 License-File:        LICENSE
-Author:              Roman Smrž
+Homepage:            http://erebosprotocol.net
+Author:              Roman Smrž <roman.smrz@seznam.cz>
 Maintainer:          roman.smrz@seznam.cz
--- copyright:
--- category:
+Category:            Network
+Stability:           experimental
 Build-type:          Simple
 Extra-Source-Files:
     src/Erebos/ICE/pjproject.h
+
+source-repository head
+    type:       git
+    location:   git://erebosprotocol.net/erebos
 
 common common
     ghc-options:         -Wall
