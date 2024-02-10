@@ -14,6 +14,8 @@ Description:
     one being in any way "primary"; messages and other state data are then
     synchronized automatically whenever the devices are able to connect with
     one another.
+    .
+    See README for usage of the CLI tool.
 License:             BSD-3-Clause
 License-File:        LICENSE
 Homepage:            http://erebosprotocol.net
@@ -22,6 +24,8 @@ Maintainer:          roman.smrz@seznam.cz
 Category:            Network
 Stability:           experimental
 Build-type:          Simple
+Extra-Doc-Files:
+    README.md
 Extra-Source-Files:
     src/Erebos/ICE/pjproject.h
 
