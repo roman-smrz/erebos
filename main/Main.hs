@@ -46,14 +46,17 @@ import Erebos.Storage.Merge
 import Erebos.Sync
 
 import Test
+import Version
 
 data Options = Options
     { optServer :: ServerOptions
+    , optShowVersion :: Bool
     }
 
 defaultOptions :: Options
 defaultOptions = Options
     { optServer = defaultServerOptions
+    , optShowVersion = False
     }
 
 options :: [OptDescr (Options -> Options)]
@@ -64,6 +67,9 @@ options =
     , Option ['s'] ["silent"]
         (NoArg (so $ \opts -> opts { serverLocalDiscovery = False }))
         "do not send announce packets for local discovery"
+    , Option ['V'] ["version"]
+        (NoArg $ \opts -> opts { optShowVersion = True })
+        "show version and exit"
     ]
     where so f opts = opts { optServer = f $ optServer opts }
 
@@ -125,7 +131,10 @@ main = do
                 (o, [], []) -> return (foldl (flip id) defaultOptions o)
                 (_, _, errs) -> ioError (userError (concat errs ++ usageInfo header options))
                     where header = "Usage: erebos [OPTION...]"
-            interactiveLoop st opts
+
+            if optShowVersion opts
+               then putStrLn versionLine
+               else interactiveLoop st opts
 
 
 interactiveLoop :: Storage -> Options -> IO ()

@@ -64,6 +64,7 @@ common common
         ForeignFunctionInterface
         OverloadedStrings
         RecursiveDo
+        TemplateHaskell
         UndecidableInstances
 
 library
@@ -144,15 +145,21 @@ executable erebos
 
     main-is:             Main.hs
     other-modules:
+        Paths_erebos
         Test
+        Version
+        Version.Git
 
     build-depends:
         bytestring,
         cryptonite,
+        directory,
         erebos,
         haskeline >=0.7 && <0.9,
         mtl,
         network,
+        process >=1.6 && <1.7,
+        template-haskell >=2.18 && <2.22,
         text,
         time,
         transformers >= 0.5 && <0.7,
