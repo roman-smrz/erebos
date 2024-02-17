@@ -30,6 +30,9 @@ Extra-Doc-Files:
 Extra-Source-Files:
     src/Erebos/ICE/pjproject.h
 
+Flag ice
+    Description:    Enable peer discovery with ICE support using pjproject
+
 source-repository head
     type:       git
     location:   git://erebosprotocol.net/erebos
@@ -61,11 +64,15 @@ common common
         TypeFamilyDependencies
 
     other-extensions:
+        CPP
         ForeignFunctionInterface
         OverloadedStrings
         RecursiveDo
         TemplateHaskell
         UndecidableInstances
+
+    if flag(ice)
+        cpp-options: -DENABLE_ICE_SUPPORT
 
 library
     import: common
@@ -76,8 +83,6 @@ library
         Erebos.Attach
         Erebos.Channel
         Erebos.Contact
-        Erebos.Discovery
-        Erebos.ICE
         Erebos.Identity
         Erebos.Message
         Erebos.Network
@@ -100,15 +105,22 @@ library
         Erebos.Util
 
     c-sources:
-        src/Erebos/ICE/pjproject.c
         src/Erebos/Network/ifaddrs.c
     include-dirs:
-        src/Erebos/ICE
         src
-    includes:
-        src/Erebos/ICE/pjproject.h
-    build-tool-depends:  c2hs:c2hs
-    pkgconfig-depends:   libpjproject >= 2.9
+
+    if flag(ice)
+        exposed-modules:
+            Erebos.Discovery
+            Erebos.ICE
+        c-sources:
+            src/Erebos/ICE/pjproject.c
+        include-dirs:
+            src/Erebos/ICE
+        includes:
+            src/Erebos/ICE/pjproject.h
+        build-tool-depends:  c2hs:c2hs
+        pkgconfig-depends:   libpjproject >= 2.9
 
     build-depends:
         async >=2.2 && <2.3,

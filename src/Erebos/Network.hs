@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP #-}
+
 module Erebos.Network (
     Server,
     startServer,
@@ -10,7 +12,10 @@ module Erebos.Network (
     PeerIdentity(..), peerIdentity,
     WaitingRef, wrDigest,
     Service(..),
-    serverPeer, serverPeerIce,
+    serverPeer,
+#ifdef ENABLE_ICE_SUPPORT
+    serverPeerIce,
+#endif
     sendToPeer, sendToPeerStored, sendToPeerWith,
     runPeerService,
 
@@ -44,7 +49,9 @@ import Network.Socket hiding (ControlMessage)
 import qualified Network.Socket.ByteString as S
 
 import Erebos.Channel
+#ifdef ENABLE_ICE_SUPPORT
 import Erebos.ICE
+#endif
 import Erebos.Identity
 import Erebos.Network.Protocol
 import Erebos.PubKey
@@ -127,7 +134,9 @@ instance Eq Peer where
     (==) = (==) `on` peerIdentityVar
 
 data PeerAddress = DatagramAddress SockAddr
+#ifdef ENABLE_ICE_SUPPORT
                  | PeerIceSession IceSession
+#endif
 
 instance Show PeerAddress where
     show (DatagramAddress saddr) = unwords $ case IP.fromSockAddr saddr of
@@ -137,18 +146,24 @@ instance Show PeerAddress where
         Just (addr, port)
             -> [show addr, show port]
         _ -> [show saddr]
+#ifdef ENABLE_ICE_SUPPORT
     show (PeerIceSession ice) = show ice
+#endif
 
 instance Eq PeerAddress where
     DatagramAddress addr == DatagramAddress addr' = addr == addr'
+#ifdef ENABLE_ICE_SUPPORT
     PeerIceSession ice   == PeerIceSession ice'   = ice == ice'
     _                    == _                     = False
+#endif
 
 instance Ord PeerAddress where
     compare (DatagramAddress addr) (DatagramAddress addr') = compare addr addr'
+#ifdef ENABLE_ICE_SUPPORT
     compare (DatagramAddress _   ) _                       = LT
     compare _                      (DatagramAddress _    ) = GT
     compare (PeerIceSession ice  ) (PeerIceSession ice')   = compare ice ice'
+#endif
 
 
 data PeerIdentity = PeerIdentityUnknown (TVar [UnifiedIdentity -> ExceptT String IO ()])
@@ -261,7 +276,9 @@ startServer opt serverOrigHead logd' serverServices = do
                 (paddr, msg) <- readFlowIO serverRawPath
                 case paddr of
                     DatagramAddress addr -> void $ S.sendTo sock msg addr
+#ifdef ENABLE_ICE_SUPPORT
                     PeerIceSession ice   -> iceSend ice msg
+#endif
 
             forkServerThread server $ forever $ do
                 readFlowIO serverControlFlow >>= \case
@@ -655,12 +672,14 @@ serverPeer :: Server -> SockAddr -> IO Peer
 serverPeer server paddr = do
     serverPeer' server (DatagramAddress paddr)
 
+#ifdef ENABLE_ICE_SUPPORT
 serverPeerIce :: Server -> IceSession -> IO Peer
 serverPeerIce server@Server {..} ice = do
     let paddr = PeerIceSession ice
     peer <- serverPeer' server paddr
     iceSetChan ice $ mapFlow undefined (paddr,) serverRawPath
     return peer
+#endif
 
 serverPeer' :: Server -> PeerAddress -> IO Peer
 serverPeer' server paddr = do

@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Main (main) where
@@ -32,8 +33,10 @@ import System.Environment
 
 import Erebos.Attach
 import Erebos.Contact
+#ifdef ENABLE_ICE_SUPPORT
 import Erebos.Discovery
 import Erebos.ICE
+#endif
 import Erebos.Identity
 import Erebos.Message
 import Erebos.Network
@@ -159,7 +162,9 @@ interactiveLoop st opts = runInputT defaultSettings $ do
             , someService @SyncService Proxy
             , someService @ContactService Proxy
             , someService @DirectMessage Proxy
+#ifdef ENABLE_ICE_SUPPORT
             , someService @DiscoveryService Proxy
+#endif
             ]
 
     peers <- liftIO $ newMVar []
@@ -227,7 +232,9 @@ interactiveLoop st opts = runInputT defaultSettings $ do
     loop $ Just $ CommandState
         { csHead = erebosHead
         , csContext = NoContext
+#ifdef ENABLE_ICE_SUPPORT
         , csIceSessions = []
+#endif
         , csIcePeer = Nothing
         }
 
@@ -244,7 +251,9 @@ data CommandInput = CommandInput
 data CommandState = CommandState
     { csHead :: Head LocalState
     , csContext :: CommandContext
+#ifdef ENABLE_ICE_SUPPORT
     , csIceSessions :: [IceSession]
+#endif
     , csIcePeer :: Maybe Peer
     }
 
@@ -302,6 +311,7 @@ commands =
     , ("contact-add", cmdContactAdd)
     , ("contact-accept", cmdContactAccept)
     , ("contact-reject", cmdContactReject)
+#ifdef ENABLE_ICE_SUPPORT
     , ("discovery-init", cmdDiscoveryInit)
     , ("discovery", cmdDiscovery)
     , ("ice-create", cmdIceCreate)
@@ -309,6 +319,7 @@ commands =
     , ("ice-show", cmdIceShow)
     , ("ice-connect", cmdIceConnect)
     , ("ice-send", cmdIceSend)
+#endif
     ]
 
 cmdUnknown :: String -> Command
@@ -408,6 +419,8 @@ cmdContactAccept = contactAccept =<< getSelectedPeer
 cmdContactReject :: Command
 cmdContactReject = contactReject =<< getSelectedPeer
 
+#ifdef ENABLE_ICE_SUPPORT
+
 cmdDiscoveryInit :: Command
 cmdDiscoveryInit = void $ do
     server <- asks ciServer
@@ -477,3 +490,5 @@ cmdIceSend = void $ do
     s:_ <- gets csIceSessions
     server <- asks ciServer
     liftIO $ serverPeerIce server s
+
+#endif
