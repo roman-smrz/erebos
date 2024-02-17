@@ -2,13 +2,25 @@ Erebos
 ======
 
 The erebos binary provides simple CLI interface to the decentralized Erebos
-messaging service. Local identity is created on the first run.
+messaging service. Local identity is created on the first run. Protocol and
+services specification is being written at:
+
+[http://erebosprotocol.net](http://erebosprotocol.net)
 
 Erebos identity is based on locally stored cryptographic keys, all
 communication is end-to-end encrypted. Multiple devices can be attached to the
 same identity, after which they function interchangeably, without any one being
 in any way "primary"; messages and other state data are then synchronized
 automatically whenever the devices are able to connect with one another.
+
+Status
+------
+
+This is experimental implementation of yet unfinished specification, so
+changes, especially in the library API, are expected. Storage format and
+network protocol should generally remain backward compatible, with their
+respective versions to be increased in case of incompatible changes, to allow
+for interoperability even in that case.
 
 Usage
 -----
