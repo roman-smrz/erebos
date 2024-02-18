@@ -2,3 +2,5 @@
 cabal.project.local
 dist-newstyle/
 .erebos
+.test/
+.minici/
