@@ -161,6 +161,8 @@ executable erebos
         Test
         Version
         Version.Git
+    autogen-modules:
+        Paths_erebos
 
     build-depends:
         bytestring,
