@@ -1,0 +1,43 @@
+test:
+	spawn as p1
+	spawn as p2
+	send "create-identity Device1 Owner" to p1
+	send "create-identity Device2" to p2
+	send "watch-local-identity" to p1
+	send "watch-local-identity" to p2
+	send "start-server" to p1
+	send "start-server" to p2
+	expect from p1:
+		/local-identity Device1 Owner/
+		/peer 1 addr ${p2.node.ip} 29665/
+		/peer 1 id Device2/
+	expect from p2:
+		/local-identity Device2/
+		/peer 1 addr ${p1.node.ip} 29665/
+		/peer 1 id Device1 Owner/
+
+	send "attach-to 1" to p2
+	expect /attach-request 1 .*/ from p1
+	expect /attach-response 1 .*/ from p2
+	send "attach-reject 1" to p1
+	expect /attach-request-failed 1 user/ from p1
+	expect /attach-response-failed 1 rejected/ from p2
+
+	send "attach-to 1" to p2
+	expect /attach-request 1 .*/ from p1
+	expect /attach-response 1 .*/ from p2
+	send "attach-reject 1" to p2
+	expect /attach-request-failed 1 rejected/ from p1
+	expect /attach-response-failed 1 user/ from p2
+
+	send "attach-to 1" to p2
+	expect /attach-request 1 ([0-9]*)/ from p1 capture code1
+	expect /attach-response 1 ([0-9]*)/ from p2 capture code2
+	guard (code1 == code2)
+
+	send "attach-accept 1" to p1
+	send "attach-accept 1" to p2
+	expect /attach-request-done 1/ from p1
+	expect /attach-response-done 1/ from p2
+	expect /local-identity Device2 Owner/ from p2
+	expect /peer 1 id Device2 Owner/ from p1

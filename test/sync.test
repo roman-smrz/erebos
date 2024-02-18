@@ -1,0 +1,93 @@
+test:
+	spawn as p1
+	spawn as p2
+	send "create-identity Device1 Owner" to p1
+	send "create-identity Device2" to p2
+	send "watch-local-identity" to p1
+	send "watch-local-identity" to p2
+	send "watch-shared-identity" to p1
+	send "watch-shared-identity" to p2
+	send "start-server" to p1
+	send "start-server" to p2
+	expect from p1:
+		/local-identity Device1 Owner/
+		/shared-identity Owner/
+		/peer 1 addr ${p2.node.ip} 29665/
+		/peer 1 id Device2/
+	expect from p2:
+		/local-identity Device2/
+		/peer 1 addr ${p1.node.ip} 29665/
+		/peer 1 id Device1 Owner/
+
+	send "attach-to 1" to p2
+	local:
+		expect /attach-request 1 ([0-9]*)/ from p1 capture code1
+		expect /attach-response 1 ([0-9]*)/ from p2 capture code2
+		guard (code1 == code2)
+
+	send "attach-accept 1" to p1
+	send "attach-accept 1" to p2
+	expect /attach-request-done 1/ from p1
+	expect /attach-response-done 1/ from p2
+	expect /local-identity Device2 Owner/ from p2
+	expect /shared-identity Owner/ from p2
+	expect /peer 1 id Device2 Owner/ from p1
+
+	send "update-shared-identity NewOwner" to p1
+	expect /shared-identity NewOwner/ from p1
+	expect /shared-identity NewOwner/ from p2
+
+	send "update-shared-identity NewOwner2" to p2
+	expect /shared-identity NewOwner2/ from p1
+	expect /shared-identity NewOwner2/ from p2
+
+	send "update-shared-identity NewOwner3" to p1
+	expect /shared-identity NewOwner3/ from p1
+	expect /shared-identity NewOwner3/ from p2
+
+	send "shared-state-get" to p1
+	expect /shared-state-get (.*)/ from p1 capture p1state
+	send "shared-state-wait $p1state" to p2
+	expect /shared-state-wait $p1state/ from p2
+
+	subnet s
+	spawn on s as p3
+
+	with p3:
+		send "create-identity Device3"
+		send "watch-local-identity"
+		send "watch-shared-identity"
+		send "start-server"
+
+		send "peer-add ${p1.node.ip}"
+
+		expect:
+			/local-identity Device3/
+			/peer 1 addr ${p1.node.ip} 29665/
+			/peer 1 id Device1 NewOwner3/
+
+		expect from p1:
+			/peer 2 addr ${p3.node.ip} 29665/
+			/peer 2 id Device3/
+
+	send "attach-to 1" to p3
+	local:
+		expect /attach-request 2 ([0-9]*)/ from p1 capture code1
+		expect /attach-response 1 ([0-9]*)/ from p3 capture code2
+		guard (code1 == code2)
+
+	send "attach-accept 2" to p1
+	send "attach-accept 1" to p3
+
+	expect /local-identity Device3 NewOwner3/ from p3
+	expect /shared-identity NewOwner3/ from p3
+
+	send "update-shared-identity NewOwner4" to p3
+	expect /shared-identity NewOwner4/ from p1
+	expect /shared-identity NewOwner4/ from p2
+	expect /shared-identity NewOwner4/ from p3
+
+	send "update-shared-identity NewOwner5" to p2
+	expect /shared-identity NewOwner5/ from p1
+	expect /shared-identity NewOwner5/ from p2
+	expect /shared-identity NewOwner5/ from p3

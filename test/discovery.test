@@ -1,0 +1,119 @@
+test:
+	spawn as p1
+	spawn as p2
+	send "create-identity Device1 Owner" to p1
+	send "create-identity Device2" to p2
+	send "start-server" to p1
+	send "start-server" to p2
+	expect from p1:
+		/peer 1 addr ${p2.node.ip} 29665/
+		/peer 1 id Device2/
+	expect from p2:
+		/peer 1 addr ${p1.node.ip} 29665/
+		/peer 1 id Device1 Owner/
+
+	send "update-local-identity Device1A" to p1
+	expect /peer 1 id Device1A Owner/ from p2
+
+	send "update-shared-identity OwnerA" to p1
+	expect /peer 1 id Device1A OwnerA/ from p2
+
+	send "update-local-identity Device1B" to p1
+	expect /peer 1 id Device1B OwnerA/ from p2
+
+	send "update-shared-identity OwnerB" to p1
+	expect /peer 1 id Device1B OwnerB/ from p2
+
+	with p2:
+		send "stop-server"
+		expect /stop-server-done/
+
+	send "update-shared-identity OwnerC" to p1
+
+	with p1:
+		send "stop-server"
+		expect /stop-server-done/
+
+	spawn as p3
+	spawn as p4
+	spawn as p5
+	spawn as p6
+	send "create-identity Device3" to p3
+	send "create-identity Device4" to p4
+	send "create-identity Device5" to p5
+	send "create-identity Device6" to p6
+
+	for p in [ p1, p2, p3, p4, p5, p6 ]:
+		send "start-server" to p
+
+	expect from p1:
+		/peer ([0-9]+) addr ${p2.node.ip} 29665/ capture peer1_2
+		/peer $peer1_2 id Device2/
+		/peer ([0-9]+) addr ${p3.node.ip} 29665/ capture peer1_3
+		/peer $peer1_3 id Device3/
+		/peer ([0-9]+) addr ${p4.node.ip} 29665/ capture peer1_4
+		/peer $peer1_4 id Device4/
+		/peer ([0-9]+) addr ${p5.node.ip} 29665/ capture peer1_5
+		/peer $peer1_5 id Device5/
+		/peer ([0-9]+) addr ${p6.node.ip} 29665/ capture peer1_6
+		/peer $peer1_6 id Device6/
+
+	expect from p2:
+		/peer ([0-9]+) addr ${p1.node.ip} 29665/ capture peer2_1
+		/peer $peer2_1 id Device1B OwnerC/
+		/peer ([0-9]+) addr ${p3.node.ip} 29665/ capture peer2_3
+		/peer $peer2_3 id Device3/
+		/peer ([0-9]+) addr ${p4.node.ip} 29665/ capture peer2_4
+		/peer $peer2_4 id Device4/
+		/peer ([0-9]+) addr ${p5.node.ip} 29665/ capture peer2_5
+		/peer $peer2_5 id Device5/
+		/peer ([0-9]+) addr ${p6.node.ip} 29665/ capture peer2_6
+		/peer $peer2_6 id Device6/
+
+	expect from p3:
+		/peer ([0-9]+) addr ${p1.node.ip} 29665/ capture peer3_1
+		/peer $peer3_1 id Device1B OwnerC/
+		/peer ([0-9]+) addr ${p2.node.ip} 29665/ capture peer3_2
+		/peer $peer3_2 id Device2/
+		/peer ([0-9]+) addr ${p4.node.ip} 29665/ capture peer3_4
+		/peer $peer3_4 id Device4/
+		/peer ([0-9]+) addr ${p5.node.ip} 29665/ capture peer3_5
+		/peer $peer3_5 id Device5/
+		/peer ([0-9]+) addr ${p6.node.ip} 29665/ capture peer3_6
+		/peer $peer3_6 id Device6/
+
+	expect from p4:
+		/peer ([0-9]+) addr ${p1.node.ip} 29665/ capture peer4_1
+		/peer $peer4_1 id Device1B OwnerC/
+		/peer ([0-9]+) addr ${p2.node.ip} 29665/ capture peer4_2
+		/peer $peer4_2 id Device2/
+		/peer ([0-9]+) addr ${p3.node.ip} 29665/ capture peer4_3
+		/peer $peer4_3 id Device3/
+		/peer ([0-9]+) addr ${p5.node.ip} 29665/ capture peer4_5
+		/peer $peer4_5 id Device5/
+		/peer ([0-9]+) addr ${p6.node.ip} 29665/ capture peer4_6
+		/peer $peer4_6 id Device6/
+
+	expect from p5:
+		/peer ([0-9]+) addr ${p1.node.ip} 29665/ capture peer5_1
+		/peer $peer5_1 id Device1B OwnerC/
+		/peer ([0-9]+) addr ${p2.node.ip} 29665/ capture peer5_2
+		/peer $peer5_2 id Device2/
+		/peer ([0-9]+) addr ${p3.node.ip} 29665/ capture peer5_3
+		/peer $peer5_3 id Device3/
+		/peer ([0-9]+) addr ${p4.node.ip} 29665/ capture peer5_4
+		/peer $peer5_4 id Device4/
+		/peer ([0-9]+) addr ${p6.node.ip} 29665/ capture peer5_6
+		/peer $peer5_6 id Device6/
+
+	expect from p6:
+		/peer ([0-9]+) addr ${p1.node.ip} 29665/ capture peer6_1
+		/peer $peer6_1 id Device1B OwnerC/
+		/peer ([0-9]+) addr ${p2.node.ip} 29665/ capture peer6_2
+		/peer $peer6_2 id Device2/
+		/peer ([0-9]+) addr ${p3.node.ip} 29665/ capture peer6_3
+		/peer $peer6_3 id Device3/
+		/peer ([0-9]+) addr ${p4.node.ip} 29665/ capture peer6_4
+		/peer $peer6_4 id Device4/
+		/peer ([0-9]+) addr ${p5.node.ip} 29665/ capture peer6_5
+		/peer $peer6_5 id Device5/

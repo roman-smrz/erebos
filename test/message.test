@@ -1,0 +1,149 @@
+test DirectMessage:
+	spawn as p1
+	spawn as p2
+	send "create-identity Device1 Owner1" to p1
+	send "create-identity Device2 Owner2" to p2
+	send "start-server" to p1
+	send "start-server" to p2
+
+	expect from p1:
+		/peer ([0-9]+) addr ${p2.node.ip} 29665/ capture peer1_2
+		/peer $peer1_2 id Device2 Owner2/
+
+	expect from p2:
+		/peer ([0-9]+) addr ${p1.node.ip} 29665/ capture peer2_1
+		/peer $peer2_1 id Device1 Owner1/
+
+	with p1:
+		send "dm-list-peer $peer1_2"
+		expect /dm-list-done/
+
+	# Send messages to peers
+
+	for i in [1..2]:
+		send "dm-send-peer $peer1_2 hello$i" to p1
+		expect /dm-received from Owner1 text hello$i/ from p2
+
+	for i in [1..2]:
+		send "dm-send-peer $peer2_1 hi$i" to p2
+		expect /dm-received from Owner2 text hi$i/ from p1
+
+	for i in [3..4]:
+		send "dm-send-peer $peer1_2 hello$i" to p1
+		expect /dm-received from Owner1 text hello$i/ from p2
+		send "dm-send-peer $peer2_1 hi$i" to p2
+		expect /dm-received from Owner2 text hi$i/ from p1
+
+	# Create contacts
+
+	local:
+		send "contact-request $peer1_2" to p1
+		expect /contact-request $peer2_1 ([0-9]*)/ from p2 capture code2
+		expect /contact-response $peer1_2 ([0-9]*)/ from p1 capture code1
+		guard (code1 == code2)
+
+	send "contact-accept $peer1_2" to p1
+	send "contact-accept $peer2_1" to p2
+	expect /contact-request-done $peer2_1/ from p2
+	expect /contact-response-done $peer1_2/ from p1
+
+	send "contact-list" to p1
+	expect from p1:
+		/contact-list-item ([a-z0-9#]+) Owner2 Owner2/ capture c1_2
+		/contact-list-(.*)/ capture done1_1
+
+	send "contact-list" to p2
+	expect from p2:
+		/contact-list-item ([a-z0-9#]+) Owner1 Owner1/ capture c2_1
+		/contact-list-(.*)/ capture done1_2
+
+	# Send messages to contacts
+
+	for i in [1..2]:
+		send "dm-send-contact $c1_2 hello_c_$i" to p1
+		expect /dm-received from Owner1 text hello_c_$i/ from p2
+
+	for i in [1..2]:
+		send "dm-send-contact $c2_1 hi_c_$i" to p2
+		expect /dm-received from Owner2 text hi_c_$i/ from p1
+
+	for i in [3..4]:
+		send "dm-send-contact $c1_2 hello_c_$i" to p1
+		expect /dm-received from Owner1 text hello_c_$i/ from p2
+		send "dm-send-contact $c2_1 hi_c_$i" to p2
+		expect /dm-received from Owner2 text hi_c_$i/ from p1
+
+	send "dm-list-contact $c1_2" to p1
+	send "dm-list-contact $c2_1" to p2
+	for p in [p1, p2]:
+		with p:
+			for i in [1..4]:
+				expect /dm-list-item from Owner1 text hello_c_$i/
+				expect /dm-list-item from Owner2 text hi_c_$i/
+			for i in [1..4]:
+				expect /dm-list-item from Owner1 text hello$i/
+				expect /dm-list-item from Owner2 text hi$i/
+			expect /dm-list-(.*)/ capture done
+			guard (done == "done")
+
+	# Reload message history
+
+	for p in [p1, p2]:
+		with p:
+			send "stop-server"
+	for p in [p1, p2]:
+		with p:
+			expect /stop-server-done/
+	for p in [p1, p2]:
+		with p:
+			send "start-server"
+
+	with p1:
+		send "contact-list"
+		expect:
+			/contact-list-item $c1_2 Owner2 Owner2/
+			/contact-list-(.*)/ capture done
+		guard (done == "done")
+
+	send "dm-list-contact $c1_2" to p1
+	send "dm-list-contact $c2_1" to p2
+	for p in [p1, p2]:
+		with p:
+			for i in [1..4]:
+				expect /dm-list-item from Owner1 text hello_c_$i/
+				expect /dm-list-item from Owner2 text hi_c_$i/
+			for i in [1..4]:
+				expect /dm-list-item from Owner1 text hello$i/
+				expect /dm-list-item from Owner2 text hi$i/
+			expect /dm-list-(.*)/ capture done
+			guard (done == "done")
+
+	# Send message while offline
+
+	for p in [p1, p2]:
+		with p:
+			send "stop-server"
+	for p in [p1, p2]:
+		with p:
+			expect /stop-server-done/
+	send "start-server" to p2
+
+	send "dm-send-contact $c1_2 while_offline" to p1
+	send "start-server" to p1
+
+	expect /dm-received from Owner1 text while_offline/ from p2
+
+	for p in [p1, p2]:
+		with p:
+			send "stop-server"
+	for p in [p1, p2]:
+		with p:
+			expect /stop-server-done/
+	send "start-server" to p1
+
+	send "dm-send-contact $c1_2 while_peer_offline" to p1
+	# TODO: sync from p1 on peer p2 discovery not ensured without addition wait
+	#wait
+	send "start-server" to p2
+
+	expect /dm-received from Owner1 text while_peer_offline/ from p2

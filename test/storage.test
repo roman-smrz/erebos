@@ -1,0 +1,201 @@
+test Storage:
+	spawn as p1
+
+	# Root finding
+	###############
+
+	# Diamond history
+	send to p1:
+		"store rec"
+		"text:t First root"
+		""
+	expect from p1:
+		/store-done (blake2#[0-9a-f]*)/ capture r1
+	guard (r1 == "blake2#c4a8c69fbc8398acf76a2ec1e5a191f339c4d03c3eb425af19d6d7d5efac6b8e")
+
+	send to p1:
+		"store rec"
+		"PREV:r $r1"
+		""
+	expect from p1:
+		/store-done (blake2#[0-9a-f]*)/ capture r2
+
+	send to p1:
+		"store rec"
+		"text:t Second branch"
+		"PREV:r $r1"
+		""
+	expect from p1:
+		/store-done (blake2#[0-9a-f]*)/ capture r3
+
+	send to p1:
+		"store rec"
+		"PREV:r $r2"
+		"PREV:r $r3"
+		""
+	expect from p1:
+		/store-done (blake2#[0-9a-f]*)/ capture r4
+
+	send to p1 "stored-generation $r1"
+	expect from p1 /stored-generation $r1 0/
+
+	send to p1 "stored-generation $r2"
+	expect from p1 /stored-generation $r2 1/
+
+	send to p1 "stored-generation $r3"
+	expect from p1 /stored-generation $r3 1/
+
+	send to p1 "stored-generation $r4"
+	expect from p1 /stored-generation $r4 2/
+
+	send to p1 "stored-roots $r1"
+	expect from p1 /stored-roots $r1 $r1/
+
+	send to p1 "stored-roots $r2"
+	expect from p1 /stored-roots $r2 $r1/
+
+	send to p1 "stored-roots $r3"
+	expect from p1 /stored-roots $r3 $r1/
+
+	send to p1 "stored-roots $r4"
+	expect from p1 /stored-roots $r4 $r1/
+
+	# Attach second root
+	send to p1:
+		"store rec"
+		"text:t Second root"
+		""
+	expect from p1:
+		/store-done (blake2#[0-9a-f]*)/ capture r2_1
+
+	send to p1:
+		"store rec"
+		"PREV:r $r2_1"
+		""
+	expect from p1:
+		/store-done (blake2#[0-9a-f]*)/ capture r2_2
+
+	send to p1:
+		"store rec"
+		"PREV:r $r2_2"
+		"PREV:r $r4"
+		""
+	expect from p1:
+		/store-done (blake2#[0-9a-f]*)/ capture r2_3
+
+	send to p1 "stored-generation $r2_3"
+	expect from p1 /stored-generation $r2_3 3/
+
+	send to p1 "stored-generation $r2_2"
+	expect from p1 /stored-generation $r2_2 1/
+
+	send to p1 "stored-roots $r2_3"
+	expect from p1 /stored-roots $r2_3 $r2_1 $r1/
+
+	send to p1 "stored-roots $r2_2"
+	expect from p1 /stored-roots $r2_2 $r2_1/
+
+
+	# Set
+	#####
+
+	send to p1 "stored-set-add $r1"
+	expect from p1 /stored-set-add (blake2#[0-9a-f]*)/ capture s1
+	send to p1 "stored-set-add $r2 $s1"
+	expect from p1 /stored-set-add (blake2#[0-9a-f]*)/ capture s2
+	send to p1 "stored-set-add $r3 $s2"
+	expect from p1 /stored-set-add (blake2#[0-9a-f]*)/ capture s3
+	send to p1 "stored-set-add $r4 $s3"
+	expect from p1 /stored-set-add (blake2#[0-9a-f]*)/ capture s4
+
+	send to p1 "stored-set-list $s1"
+	expect from p1:
+		/stored-set-item $r1/
+		/stored-set-(.*)/ capture done1
+	guard (done1 == "done")
+
+	send to p1 "stored-set-list $s2"
+	expect from p1:
+		/stored-set-item $r2/
+		/stored-set-(.*)/ capture done2
+	guard (done2 == "done")
+
+	send to p1 "stored-set-list $s3"
+	expect from p1:
+		/stored-set-item $r2 $r3/
+		/stored-set-(.*)/ capture done3
+	guard (done3 == "done")
+
+	send to p1 "stored-set-list $s4"
+	expect from p1:
+		/stored-set-item $r4/
+		/stored-set-(.*)/ capture done4
+	guard (done4 == "done")
+
+
+	send to p1 "stored-set-add $r2_2 $s4"
+	expect from p1 /stored-set-add (blake2#[0-9a-f]*)/ capture s5
+	send to p1 "stored-set-add $r2_3 $s5"
+	expect from p1 /stored-set-add (blake2#[0-9a-f]*)/ capture s6
+
+	send to p1 "stored-set-list $s5"
+	expect from p1:
+		/stored-set-item $r4/
+		/stored-set-item $r2_2/
+		/stored-set-(.*)/ capture done5
+	guard (done5 == "done")
+
+	send to p1 "stored-set-list $s6"
+	expect from p1:
+		/stored-set-item $r2_3/
+		/stored-set-(.*)/ capture done6
+	guard (done6 == "done")
+
+
+test StorageWatcher:
+	spawn as p1
+	spawn as p2
+	send "create-identity Device1 Owner" to p1
+	send "create-identity Device2" to p2
+	send "watch-local-identity" to p1
+	send "watch-local-identity" to p2
+	send "start-server" to p1
+	send "start-server" to p2
+	expect from p1:
+		/local-identity Device1 Owner/
+		/peer 1 addr ${p2.node.ip} 29665/
+		/peer 1 id Device2/
+	expect from p2:
+		/local-identity Device2/
+		/peer 1 addr ${p1.node.ip} 29665/
+		/peer 1 id Device1 Owner/
+
+	local:
+		send "attach-to 1" to p2
+		expect /attach-request 1 ([0-9]*)/ from p1 capture code1
+		expect /attach-response 1 ([0-9]*)/ from p2 capture code2
+		guard (code1 == code2)
+
+	send "attach-accept 1" to p1
+	send "attach-accept 1" to p2
+	expect /attach-request-done 1/ from p1
+	expect /attach-response-done 1/ from p2
+	expect /local-identity Device2 Owner/ from p2
+	expect /peer 1 id Device2 Owner/ from p1
+
+	for i in [1..5]:
+		send "update-local-identity Owner2" to p1
+		send "shared-state-get" to p1
+		expect /shared-state-get (.*)/ from p1 capture s1
+
+		send "shared-state-wait $s1" to p2
+		expect /shared-state-wait $s1/ from p2
+
+		send "update-local-identity Owner1" to p1
+		send "shared-state-get" to p1
+		expect /shared-state-get (.*)/ from p1 capture s2
+
+		send "shared-state-wait $s1" to p2
+		send "shared-state-wait $s2" to p2
+		expect /shared-state-wait $s1/ from p2
+		expect /shared-state-wait $s2/ from p2

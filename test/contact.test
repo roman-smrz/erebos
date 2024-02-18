@@ -1,0 +1,200 @@
+test Contact:
+	spawn as p1
+	spawn as p2
+	spawn as p3
+	spawn as p4
+
+	send "create-identity Device1 Owner1" to p1
+	send "create-identity Device2 Owner2" to p2
+	send "create-identity Device3 Owner3" to p3
+	send "create-identity Device4"        to p4
+
+	send "start-server" to p1
+	send "start-server" to p2
+	send "start-server" to p3
+	send "start-server" to p4
+
+	expect from p1:
+		/peer ([0-9]+) addr ${p2.node.ip} 29665/ capture peer1_2
+		/peer $peer1_2 id Device2 Owner2/
+		/peer ([0-9]+) addr ${p3.node.ip} 29665/ capture peer1_3
+		/peer $peer1_3 id Device3 Owner3/
+		/peer ([0-9]+) addr ${p4.node.ip} 29665/ capture peer1_4
+		/peer $peer1_4 id Device4/
+
+	expect from p2:
+		/peer ([0-9]+) addr ${p1.node.ip} 29665/ capture peer2_1
+		/peer $peer2_1 id Device1 Owner1/
+		/peer ([0-9]+) addr ${p3.node.ip} 29665/ capture peer2_3
+		/peer $peer2_3 id Device3 Owner3/
+		/peer ([0-9]+) addr ${p4.node.ip} 29665/ capture peer2_4
+		/peer $peer2_4 id Device4/
+
+	expect from p3:
+		/peer ([0-9]+) addr ${p1.node.ip} 29665/ capture peer3_1
+		/peer $peer3_1 id Device1 Owner1/
+		/peer ([0-9]+) addr ${p2.node.ip} 29665/ capture peer3_2
+		/peer $peer3_2 id Device2 Owner2/
+		/peer ([0-9]+) addr ${p4.node.ip} 29665/ capture peer3_4
+		/peer $peer3_4 id Device4/
+
+	expect from p4:
+		/peer ([0-9]+) addr ${p1.node.ip} 29665/ capture peer4_1
+		/peer $peer4_1 id Device1 Owner1/
+		/peer ([0-9]+) addr ${p2.node.ip} 29665/ capture peer4_2
+		/peer $peer4_2 id Device2 Owner2/
+		/peer ([0-9]+) addr ${p3.node.ip} 29665/ capture peer4_3
+		/peer $peer4_3 id Device3 Owner3/
+
+	# Rejected contacts
+
+	send "contact-request $peer1_2" to p1
+	expect /contact-request $peer2_1 [0-9]*/ from p2
+	expect /contact-response $peer1_2 [0-9]*/ from p1
+	send "contact-reject $peer1_2" to p1
+	expect /contact-request-failed $peer2_1 rejected/ from p2
+	expect /contact-response-failed $peer1_2 user/ from p1
+
+	send "contact-request $peer1_2" to p1
+	expect /contact-request $peer2_1 [0-9]*/ from p2
+	expect /contact-response $peer1_2 [0-9]*/ from p1
+	send "contact-reject $peer2_1" to p2
+	expect /contact-request-failed $peer2_1 user/ from p2
+	expect /contact-response-failed $peer1_2 rejected/ from p1
+
+	# Contact between 1 and 2
+
+	local:
+		send "contact-request $peer1_2" to p1
+		expect /contact-request $peer2_1 ([0-9]*)/ from p2 capture code2
+		expect /contact-response $peer1_2 ([0-9]*)/ from p1 capture code1
+		guard (code1 == code2)
+
+	send "contact-accept $peer1_2" to p1
+	send "contact-accept $peer2_1" to p2
+	expect /contact-request-done $peer2_1/ from p2
+	expect /contact-response-done $peer1_2/ from p1
+
+	send "contact-list" to p1
+	expect from p1:
+		/contact-list-item [a-z0-9#]+ Owner2 Owner2/
+		/contact-list-(.*)/ capture done1_1
+	guard (done1_1 == "done")
+	send "contact-list" to p2
+	expect from p2:
+		/contact-list-item [a-z0-9#]+ Owner1 Owner1/
+		/contact-list-(.*)/ capture done1_2
+	guard (done1_2 == "done")
+
+	# Attach peer 4 to Owner1
+
+	send "watch-local-identity" to p4
+	expect /local-identity Device4/ from p4
+
+	send "attach-to $peer4_1" to p4
+	local:
+		expect /attach-request $peer1_4 ([0-9]*)/ from p1 capture code1
+		expect /attach-response $peer4_1 ([0-9]*)/ from p4 capture code4
+		guard (code1 == code4)
+
+	send "attach-accept $peer1_4" to p1
+	send "attach-accept $peer4_1" to p4
+	expect /attach-request-done $peer1_4/ from p1
+	expect /attach-response-done $peer4_1/ from p4
+	expect /local-identity Device4 Owner1/ from p4
+	expect /peer $peer1_4 id Device4 Owner1/ from p1
+	expect /peer $peer2_4 id Device4 Owner1/ from p2
+	expect /peer $peer3_4 id Device4 Owner1/ from p3
+
+	# Contact between 3 and 4
+
+	send "contact-request $peer3_4" to p3
+	local:
+		expect /contact-request $peer4_3 ([0-9]*)/ from p4 capture code4
+		expect /contact-response $peer3_4 ([0-9]*)/ from p3 capture code3
+		guard (code3 == code4)
+
+	send "contact-accept $peer3_4" to p3
+	send "contact-accept $peer4_3" to p4
+	expect /contact-request-done $peer4_3/ from p4
+	expect /contact-response-done $peer3_4/ from p3
+
+	send "contact-list" to p3
+	expect from p3:
+		/contact-list-item [a-z0-9#]+ Owner1 Owner1/
+		/contact-list-(.*)/ capture done2_3
+	guard (done2_3 == "done")
+
+	send "shared-state-get" to p1
+	expect /shared-state-get (.*)/ from p1 capture s1
+	send "shared-state-wait $s1" to p4
+	expect /shared-state-wait $s1/ from p4
+
+	send "contact-list" to p4
+	expect from p4:
+		/contact-list-item ([a-z0-9#]+) Owner2 Owner2/ capture c4_2
+		/contact-list-item ([a-z0-9#]+) Owner3 Owner3/ capture c4_3
+		/contact-list-(.*)/ capture done2_4
+	guard (done2_4 == "done")
+
+	# Check sync between 1 and 4
+
+	send "shared-state-get" to p4
+	expect /shared-state-get (.*)/ from p4 capture s4
+	send "shared-state-wait $s4" to p1
+	expect /shared-state-wait $s4/ from p1
+
+	send "contact-list" to p1
+	expect from p1:
+		/contact-list-item ([a-z0-9#]+) Owner2 Owner2/ capture c1_2
+		/contact-list-item ([a-z0-9#]+) Owner3 Owner3/ capture c1_3
+		/contact-list-(.*)/ capture done2_1
+	guard (done2_1 == "done")
+
+	# Update custom name
+
+	send "contact-set-name $c4_2 Custom2" to p4
+	expect /contact-set-name-done/ from p4
+
+	send "contact-list" to p4
+	expect from p4:
+		/contact-list-item $c4_2 Custom2 Owner2/
+		/contact-list-item $c4_3 Owner3 Owner3/
+		/contact-list-(.*)/ capture done3_4
+	guard (done3_4 == "done")
+
+	send "shared-state-get" to p4
+	expect /shared-state-get (.*)/ from p4 capture s4b
+	send "shared-state-wait $s4b" to p1
+	expect /shared-state-wait $s4b/ from p1
+
+	send "contact-list" to p1
+	expect from p1:
+		/contact-list-item $c4_2 Custom2 Owner2/
+		/contact-list-item $c4_3 Owner3 Owner3/
+		/contact-list-(.*)/ capture done3_1
+	guard (done3_1 == "done")
+
+	send "contact-set-name $c1_2 Custom2B" to p1
+	expect /contact-set-name-done/ from p1
+	send "contact-set-name $c1_3 Custom3B" to p1
+	expect /contact-set-name-done/ from p1
+
+	send "contact-list" to p1
+	expect from p1:
+		/contact-list-item $c1_2 Custom2B Owner2/
+		/contact-list-item $c1_3 Custom3B Owner3/
+		/contact-list-(.*)/ capture done4_1
+	guard (done4_1 == "done")
+
+	send "shared-state-get" to p1
+	expect /shared-state-get (.*)/ from p1 capture s1b
+	send "shared-state-wait $s1b" to p4
+	expect /shared-state-wait $s1b/ from p4
+
+	send "contact-list" to p4
+	expect from p4:
+		/contact-list-item $c4_2 Custom2B Owner2/
+		/contact-list-item $c4_3 Custom3B Owner3/
+		/contact-list-(.*)/ capture done4_4
+	guard (done4_4 == "done")
