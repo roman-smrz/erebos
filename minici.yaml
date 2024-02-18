@@ -1,0 +1,13 @@
+job build:
+  shell:
+    - cabal build
+    - mkdir build
+    - cp $(cabal list-bin erebos) build/erebos
+  artifact erebos:
+    path: build/erebos
+
+job test:
+  uses:
+    - build.erebos
+  shell:
+    - EREBOS_TEST_TOOL='build/erebos test' erebos-tester -v
