@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP #-}
+
 module Erebos.Storage.Internal where
 
 import Codec.Compression.Zlib
@@ -229,7 +231,14 @@ openLockFile :: FilePath -> IO Handle
 openLockFile path = do
     createDirectoryIfMissing True (takeDirectory path)
     fd <- retry 10 $
+#if MIN_VERSION_unix(2,8,0)
+        openFd path WriteOnly defaultFileFlags
+            { creat = Just $ unionFileModes ownerReadMode ownerWriteMode
+            , exclusive = True
+            }
+#else
         openFd path WriteOnly (Just $ unionFileModes ownerReadMode ownerWriteMode) (defaultFileFlags { exclusive = True })
+#endif
     fdToHandle fd
   where
     retry :: Int -> IO a -> IO a
