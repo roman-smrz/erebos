@@ -573,11 +573,11 @@ newtype StoreRecM c a = StoreRecM (ReaderT (Storage' c) (Writer [IO [(ByteString
 
 type StoreRec c = StoreRecM c ()
 
-newtype Load a = Load (ReaderT (Ref, Object) (Either String) a)
+newtype Load a = Load (ReaderT (Ref, Object) (Except String) a)
     deriving (Functor, Applicative, Alternative, Monad, MonadPlus, MonadError String)
 
 evalLoad :: Load a -> Ref -> a
-evalLoad (Load f) ref = either (error {- TODO throw -} . ((BC.unpack (showRef ref) ++ ": ")++)) id $ runReaderT f (ref, lazyLoadObject ref)
+evalLoad (Load f) ref = either (error {- TODO throw -} . ((BC.unpack (showRef ref) ++ ": ")++)) id $ runExcept $ runReaderT f (ref, lazyLoadObject ref)
 
 loadCurrentRef :: Load Ref
 loadCurrentRef = Load $ asks fst
@@ -585,7 +585,7 @@ loadCurrentRef = Load $ asks fst
 loadCurrentObject :: Load Object
 loadCurrentObject = Load $ asks snd
 
-newtype LoadRec a = LoadRec (ReaderT (Ref, [(ByteString, RecItem)]) (Either String) a)
+newtype LoadRec a = LoadRec (ReaderT (Ref, [(ByteString, RecItem)]) (Except String) a)
     deriving (Functor, Applicative, Alternative, Monad, MonadPlus, MonadError String)
 
 loadRecCurrentRef :: LoadRec Ref
@@ -754,7 +754,7 @@ loadRec :: LoadRec a -> Load a
 loadRec (LoadRec lrec) = loadCurrentObject >>= \case
     Rec rs -> do
         ref <- loadCurrentRef
-        either throwError return $ runReaderT lrec (ref, rs)
+        either throwError return $ runExcept $ runReaderT lrec (ref, rs)
     _ -> throwError "Expecting record"
 
 loadZero :: a -> Load a
