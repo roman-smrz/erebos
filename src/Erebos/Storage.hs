@@ -61,9 +61,6 @@ module Erebos.Storage (
     beginHistory, modifyHistory,
 ) where
 
-import qualified Codec.MIME.Type as MIME
-import qualified Codec.MIME.Parse as MIME
-
 import Control.Applicative
 import Control.Arrow
 import Control.Concurrent
@@ -651,10 +648,6 @@ instance StorableText Text where
 
 instance StorableText [Char] where
     toText = T.pack; fromText = return . T.unpack
-
-instance StorableText MIME.Type where
-    toText = MIME.showType
-    fromText = maybe (throwError "Malformed MIME type") return . MIME.parseMIMEType
 
 
 class StorableDate a where
