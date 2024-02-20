@@ -7,6 +7,7 @@ module Erebos.Storage.Key (
 import Control.Concurrent.MVar
 import Control.Monad
 import Control.Monad.Except
+import Control.Monad.IO.Class
 
 import Data.ByteArray
 import qualified Data.ByteString.Char8 as BC

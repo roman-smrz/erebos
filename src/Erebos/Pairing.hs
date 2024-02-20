@@ -10,6 +10,7 @@ module Erebos.Pairing (
     pairingReject,
 ) where
 
+import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
 

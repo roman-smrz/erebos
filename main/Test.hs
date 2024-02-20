@@ -5,6 +5,7 @@ module Test (
 import Control.Arrow
 import Control.Concurrent
 import Control.Exception
+import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.State

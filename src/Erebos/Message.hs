@@ -16,6 +16,7 @@ module Erebos.Message (
     formatMessage,
 ) where
 
+import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
 

@@ -14,6 +14,7 @@ module Erebos.Channel (
 import Control.Concurrent.MVar
 import Control.Monad
 import Control.Monad.Except
+import Control.Monad.IO.Class
 
 import Crypto.Cipher.ChaChaPoly1305
 import Crypto.Error

@@ -5,6 +5,7 @@ module Erebos.Attach (
     attachReject,
 ) where
 
+import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
 
