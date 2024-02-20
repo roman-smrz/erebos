@@ -41,7 +41,7 @@ common common
     ghc-options:         -Wall
 
     build-depends:
-        base >=4.13 && <4.17,
+        base >=4.13 && <4.19,
 
     default-extensions:
         DefaultSignatures
