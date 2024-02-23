@@ -43,6 +43,8 @@ import Erebos.Storage.Internal (unsafeStoreRawBytes)
 import Erebos.Storage.Merge
 import Erebos.Sync
 
+import Test.Service
+
 
 data TestState = TestState
     { tsHead :: Maybe (Head LocalState)
@@ -243,6 +245,7 @@ commands = map (T.pack *** id)
     , ("start-server", cmdStartServer)
     , ("stop-server", cmdStopServer)
     , ("peer-add", cmdPeerAdd)
+    , ("test-message-send", cmdTestMessageSend)
     , ("shared-state-get", cmdSharedStateGet)
     , ("shared-state-wait", cmdSharedStateWait)
     , ("watch-local-identity", cmdWatchLocalIdentity)
@@ -340,6 +343,10 @@ cmdStartServer = do
         , someServiceAttr $ pairingAttributes (Proxy @ContactService) out rsPeers "contact"
         , someServiceAttr $ directMessageAttributes out
         , someService @SyncService Proxy
+        , someServiceAttr $ (defaultServiceAttributes Proxy)
+            { testMessageReceived = \otype len sref ->
+                liftIO $ outLine out $ unwords ["test-message-received", otype, len, sref]
+            }
         ]
 
     rsPeerThread <- liftIO $ forkIO $ void $ forever $ do
@@ -377,6 +384,15 @@ cmdPeerAdd = do
                             (p:_) -> p
     addr:_ <- liftIO $ getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just host) (Just port)
     void $ liftIO $ serverPeer rsServer (addrAddress addr)
+
+cmdTestMessageSend :: Command
+cmdTestMessageSend = do
+    [spidx, tref] <- asks tiParams
+    st <- asks tiStorage
+    Just ref <- liftIO $ readRef st (encodeUtf8 tref)
+    peer <- getPeer spidx
+    sendToPeer peer $ TestMessage $ wrappedLoad ref
+    cmdOut "test-message-send done"
 
 cmdSharedStateGet :: Command
 cmdSharedStateGet = do

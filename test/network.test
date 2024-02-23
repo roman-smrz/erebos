@@ -1,4 +1,4 @@
-test:
+test Discovery:
 	spawn as p1
 	spawn as p2
 	send "create-identity Device1 Owner" to p1
@@ -117,3 +117,30 @@ test:
 		/peer $peer6_4 id Device4/
 		/peer ([0-9]+) addr ${p5.node.ip} 29665/ capture peer6_5
 		/peer $peer6_5 id Device5/
+
+
+test LargeData:
+	spawn as p1
+	spawn as p2
+	send "create-identity Device1" to p1
+	send "create-identity Device2" to p2
+	send "start-server" to p1
+	send "start-server" to p2
+	expect from p1:
+		/peer 1 addr ${p2.node.ip} 29665/
+		/peer 1 id Device2/
+	expect from p2:
+		/peer 1 addr ${p1.node.ip} 29665/
+		/peer 1 id Device1/
+
+	for i in [0..1]:
+		with p1:
+			send "store blob"
+			for j in [1 .. i * 10]:
+				send "123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789"
+			send ""
+			expect /store-done (blake2#[0-9a-f]*)/ capture ref
+
+			send "test-message-send 1 $ref"
+			expect /test-message-send done/
+			expect /test-message-received blob ${i*1000} $ref/ from p2
