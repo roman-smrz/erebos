@@ -133,7 +133,7 @@ test LargeData:
 		/peer 1 addr ${p1.node.ip} 29665/
 		/peer 1 id Device1/
 
-	for i in [0..1]:
+	for i in [0..10]:
 		with p1:
 			send "store blob"
 			for j in [1 .. i * 10]:
