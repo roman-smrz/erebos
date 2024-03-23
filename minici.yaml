@@ -1,6 +1,6 @@
 job build:
   shell:
-    - cabal build
+    - cabal build -fci
     - mkdir build
     - cp $(cabal list-bin erebos) build/erebos
   artifact erebos:

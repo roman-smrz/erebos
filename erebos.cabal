@@ -33,12 +33,25 @@ Extra-Source-Files:
 Flag ice
     Description:    Enable peer discovery with ICE support using pjproject
 
+Flag ci
+    description:    Options for CI testing
+    default: False
+    manual: True
+
 source-repository head
     type:       git
     location:   git://erebosprotocol.net/erebos
 
 common common
-    ghc-options:         -Wall
+    ghc-options:
+        -Wall
+        -fdefer-typed-holes
+
+    if flag(ci)
+        ghc-options:
+            -Werror
+            -- sometimes needed for backward/forward compatibility:
+            -Wno-error=unused-imports
 
     build-depends:
         base >=4.13 && <4.19,
