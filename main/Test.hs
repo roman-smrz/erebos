@@ -29,6 +29,7 @@ import System.IO
 import System.IO.Error
 
 import Erebos.Attach
+import Erebos.Chatroom
 import Erebos.Contact
 import Erebos.Identity
 import Erebos.Message
@@ -264,6 +265,8 @@ commands = map (T.pack *** id)
     , ("dm-send-contact", cmdDmSendContact)
     , ("dm-list-peer", cmdDmListPeer)
     , ("dm-list-contact", cmdDmListContact)
+    , ("chatroom-create", cmdChatroomCreate)
+    , ("chatroom-list-local", cmdChatroomListLocal)
     ]
 
 cmdStore :: Command
@@ -565,3 +568,23 @@ cmdDmListContact = do
     [cid] <- asks tiParams
     Just to <- contactIdentity <$> getContact cid
     dmList to
+
+cmdChatroomCreate :: Command
+cmdChatroomCreate = do
+    [name] <- asks tiParams
+    void $ createChatroom (Just name) Nothing
+
+cmdChatroomListLocal :: Command
+cmdChatroomListLocal = do
+    [] <- asks tiParams
+    h <- getHead
+    let rooms = fromSetBy (comparing $ roomName <=< roomStateRoom) . lookupSharedValue . lsShared . headObject $ h
+    forM_ rooms $ \room -> do
+        r:_ <- return $ filterAncestors $ concatMap storedRoots $ toComponents room
+        cmdOut $ concat
+            [ "chatroom-list-item "
+            , show $ refDigest $ storedRef r
+            , " "
+            , maybe "<unnamed>" T.unpack $ roomName =<< roomStateRoom room
+            ]
+    cmdOut "chatroom-list-done"

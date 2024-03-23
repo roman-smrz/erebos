@@ -1,0 +1,14 @@
+test LocalChatrooms:
+	spawn as p1
+	with p1:
+		send "create-identity Device1 Owner1"
+
+		send "chatroom-create first"
+		send "chatroom-create second"
+
+		send "chatroom-list-local"
+		expect /chatroom-list-item [a-z0-9#]+ first/
+		expect /chatroom-list-item [a-z0-9#]+ second/
+		local:
+			expect /chatroom-list-(.*)/ capture done
+			guard (done == "done")

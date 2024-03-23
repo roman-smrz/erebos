@@ -82,6 +82,7 @@ library
     exposed-modules:
         Erebos.Attach
         Erebos.Channel
+        Erebos.Chatroom
         Erebos.Contact
         Erebos.Identity
         Erebos.Message
