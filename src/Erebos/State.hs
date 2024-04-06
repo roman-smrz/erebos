@@ -86,6 +86,8 @@ instance SharedType (Maybe ComposedIdentity) where
 
 class (MonadIO m, MonadStorage m) => MonadHead a m where
     updateLocalHead :: (Stored a -> m (Stored a, b)) -> m b
+    getLocalHead :: m (Stored a)
+    getLocalHead = updateLocalHead $ \x -> return (x, x)
 
 updateLocalHead_ :: MonadHead a m => (Stored a -> m (Stored a)) -> m ()
 updateLocalHead_ f = updateLocalHead (fmap (,()) . f)

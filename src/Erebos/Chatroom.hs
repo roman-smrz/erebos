@@ -5,19 +5,31 @@ module Erebos.Chatroom (
 
     ChatroomState(..),
     createChatroom,
+    listChatrooms,
+
+    ChatroomSetChange(..),
+    watchChatrooms,
+
+    ChatroomService(..),
 ) where
 
+import Control.Arrow
 import Control.Monad
 import Control.Monad.Except
 
+import Data.IORef
+import Data.Maybe
 import Data.Monoid
+import Data.Ord
 import Data.Text (Text)
 
 import Erebos.PubKey
+import Erebos.Service
 import Erebos.Set
 import Erebos.State
 import Erebos.Storage
 import Erebos.Storage.Merge
+import Erebos.Util
 
 
 data ChatroomData = ChatroomData
@@ -118,3 +130,127 @@ createChatroom rdName rdDescription = do
             }
         storeSetAdd st (mergeSorted @ChatroomState [ sdata ]) rooms
     return room
+
+listChatrooms :: MonadHead LocalState m => m [ChatroomState]
+listChatrooms = fromSetBy (comparing $ roomName <=< roomStateRoom) .
+    lookupSharedValue . lsShared . fromStored <$> getLocalHead
+
+
+data ChatroomSetChange = AddedChatroom ChatroomState
+                       | RemovedChatroom ChatroomState
+                       | UpdatedChatroom ChatroomState ChatroomState
+
+watchChatrooms :: MonadIO m => Head LocalState -> (Set ChatroomState -> Maybe [ChatroomSetChange] -> IO ()) -> m WatchedHead
+watchChatrooms h f = liftIO $ do
+    lastVar <- newIORef Nothing
+    watchHeadWith h (lookupSharedValue . lsShared . headObject) $ \cur -> do
+        let curList = chatroomSetToList cur
+        mbLast <- readIORef lastVar
+        writeIORef lastVar $ Just curList
+        f cur $ do
+            lastList <- mbLast
+            return $ makeChatroomDiff lastList curList
+
+chatroomSetToList :: Set ChatroomState -> [(Stored ChatroomStateData, ChatroomState)]
+chatroomSetToList = map (cmp &&& id) . fromSetBy (comparing cmp)
+  where
+    cmp :: ChatroomState -> Stored ChatroomStateData
+    cmp = head . filterAncestors . concatMap storedRoots . toComponents
+
+makeChatroomDiff
+    :: [(Stored ChatroomStateData, ChatroomState)]
+    -> [(Stored ChatroomStateData, ChatroomState)]
+    -> [ChatroomSetChange]
+makeChatroomDiff (x@(cx, vx) : xs) (y@(cy, vy) : ys)
+    | cx < cy = RemovedChatroom vx : makeChatroomDiff xs (y : ys)
+    | cx > cy = AddedChatroom vy : makeChatroomDiff (x : xs) ys
+    | roomStateData vx /= roomStateData vy = UpdatedChatroom vx vy : makeChatroomDiff xs ys
+    | otherwise = makeChatroomDiff xs ys
+makeChatroomDiff xs [] = map (RemovedChatroom . snd) xs
+makeChatroomDiff [] ys = map (AddedChatroom . snd) ys
+
+
+data ChatroomService = ChatroomService
+    { chatRoomQuery :: Bool
+    , chatRoomInfo :: [Stored (Signed ChatroomData)]
+    }
+
+emptyPacket :: ChatroomService
+emptyPacket = ChatroomService
+    { chatRoomQuery = False
+    , chatRoomInfo = []
+    }
+
+instance Storable ChatroomService where
+    store' ChatroomService {..} = storeRec $ do
+        when  chatRoomQuery $ storeEmpty "room-query"
+        forM_ chatRoomInfo $ storeRef "room-info"
+
+    load' = loadRec $ do
+        chatRoomQuery <- isJust <$> loadMbEmpty "room-query"
+        chatRoomInfo <- loadRefs "room-info"
+        return ChatroomService {..}
+
+data PeerState = PeerState
+    { psSendRoomUpdates :: Bool
+    , psLastList :: [(Stored ChatroomStateData, ChatroomState)]
+    }
+
+instance Service ChatroomService where
+    serviceID _ = mkServiceID "627657ae-3e39-468a-8381-353395ef4386"
+
+    type ServiceState ChatroomService = PeerState
+    emptyServiceState _ = PeerState
+        { psSendRoomUpdates = False
+        , psLastList = []
+        }
+
+    serviceHandler spacket = do
+        let ChatroomService {..} = fromStored spacket
+        svcModify $ \s -> s { psSendRoomUpdates = True }
+
+        when chatRoomQuery $ do
+            rooms <- listChatrooms
+            replyPacket emptyPacket
+                { chatRoomInfo = concatMap roomData $ catMaybes $ map roomStateRoom rooms
+                }
+
+        when (not $ null chatRoomInfo) $ do
+            updateLocalHead_ $ updateSharedState_ $ \roomSet -> do
+                let rooms = fromSetBy (comparing $ roomName <=< roomStateRoom) roomSet
+                    upd set (roomInfo :: Stored (Signed ChatroomData)) = do
+                        let currentRoots = storedRoots roomInfo
+                            isCurrentRoom = any ((`intersectsSorted` currentRoots) . storedRoots) .
+                                concatMap (rsdRoom . fromStored) . roomStateData
+
+                        let prev = concatMap roomStateData $ filter isCurrentRoom rooms
+                            prevRoom = concatMap (rsdRoom . fromStored) prev
+                            room = filterAncestors $ (roomInfo : ) prevRoom
+
+                        -- update local state only if we got roomInfo not present there
+                        if roomInfo `notElem` prevRoom && roomInfo `elem` room
+                          then do
+                            sdata <- mstore ChatroomStateData { rsdPrev = prev, rsdRoom = room }
+                            storeSetAddComponent sdata set
+                          else return set
+                foldM upd roomSet chatRoomInfo
+
+    serviceNewPeer = do
+        replyPacket emptyPacket { chatRoomQuery = True }
+
+    serviceStorageWatchers _ = (:[]) $
+        SomeStorageWatcher (lookupSharedValue . lsShared . fromStored) syncChatroomsToPeer
+
+syncChatroomsToPeer :: Set ChatroomState -> ServiceHandler ChatroomService ()
+syncChatroomsToPeer set = do
+    ps@PeerState {..} <- svcGet
+    when psSendRoomUpdates $ do
+        let curList = chatroomSetToList set
+        updates <- fmap (concat . catMaybes) $
+            forM (makeChatroomDiff psLastList curList) $ return . \case
+                AddedChatroom room -> roomData <$> roomStateRoom room
+                RemovedChatroom {} -> Nothing
+                UpdatedChatroom _ room -> roomData <$> roomStateRoom room
+        when (not $ null updates) $ do
+            replyPacket $ emptyPacket { chatRoomInfo = updates }
+        svcSet $ ps { psLastList = curList }

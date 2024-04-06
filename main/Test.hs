@@ -267,6 +267,7 @@ commands = map (T.pack *** id)
     , ("dm-list-contact", cmdDmListContact)
     , ("chatroom-create", cmdChatroomCreate)
     , ("chatroom-list-local", cmdChatroomListLocal)
+    , ("chatroom-watch-local", cmdChatroomWatchLocal)
     ]
 
 cmdStore :: Command
@@ -346,6 +347,7 @@ cmdStartServer = do
         , someServiceAttr $ pairingAttributes (Proxy @ContactService) out rsPeers "contact"
         , someServiceAttr $ directMessageAttributes out
         , someService @SyncService Proxy
+        , someService @ChatroomService Proxy
         , someServiceAttr $ (defaultServiceAttributes Proxy)
             { testMessageReceived = \otype len sref ->
                 liftIO $ outLine out $ unwords ["test-message-received", otype, len, sref]
@@ -577,14 +579,27 @@ cmdChatroomCreate = do
 cmdChatroomListLocal :: Command
 cmdChatroomListLocal = do
     [] <- asks tiParams
-    h <- getHead
-    let rooms = fromSetBy (comparing $ roomName <=< roomStateRoom) . lookupSharedValue . lsShared . headObject $ h
+    rooms <- listChatrooms
     forM_ rooms $ \room -> do
-        r:_ <- return $ filterAncestors $ concatMap storedRoots $ toComponents room
-        cmdOut $ concat
-            [ "chatroom-list-item "
-            , show $ refDigest $ storedRef r
-            , " "
-            , maybe "<unnamed>" T.unpack $ roomName =<< roomStateRoom room
-            ]
+        cmdOut $ unwords $ "chatroom-list-item" : chatroomInfo room
     cmdOut "chatroom-list-done"
+
+cmdChatroomWatchLocal :: Command
+cmdChatroomWatchLocal = do
+    [] <- asks tiParams
+    h <- getHead
+    out <- asks tiOutput
+    void $ watchChatrooms h $ \_ -> \case
+        Nothing -> return ()
+        Just diff -> forM_ diff $ \case
+            AddedChatroom room -> outLine out $ unwords $ "chatroom-watched-added" : chatroomInfo room
+            RemovedChatroom room -> outLine out $ unwords $ "chatroom-watched-removed" : chatroomInfo room
+            UpdatedChatroom oldroom room -> outLine out $ unwords $ "chatroom-watched-updated" : chatroomInfo room ++
+                map (show . refDigest . storedRef) (roomStateData oldroom) ++
+                map (show . refDigest . storedRef) (roomStateData room)
+
+chatroomInfo :: ChatroomState -> [String]
+chatroomInfo room =
+    [ show . refDigest . storedRef . head . filterAncestors . concatMap storedRoots . toComponents $ room
+    , maybe "<unnamed>" T.unpack $ roomName =<< roomStateRoom room
+    ]

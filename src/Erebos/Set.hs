@@ -4,6 +4,7 @@ module Erebos.Set (
     emptySet,
     loadSet,
     storeSetAdd,
+    storeSetAddComponent,
 
     fromSetBy,
 ) where
@@ -23,6 +24,7 @@ import Erebos.Storage.Merge
 import Erebos.Util
 
 data Set a = Set [Stored (SetItem (Component a))]
+    deriving (Eq)
 
 data SetItem a = SetItem
     { siPrev :: [Stored (SetItem a)]
@@ -54,6 +56,12 @@ storeSetAdd :: (Mergeable a, MonadIO m) => Storage -> a -> Set a -> m (Set a)
 storeSetAdd st x (Set prev) = Set . (:[]) <$> wrappedStore st SetItem
     { siPrev = prev
     , siItem = toComponents x
+    }
+
+storeSetAddComponent :: (Mergeable a, MonadStorage m, MonadIO m) => Stored (Component a) -> Set a -> m (Set a)
+storeSetAddComponent component (Set prev) = Set . (:[]) <$> mstore SetItem
+    { siPrev = prev
+    , siItem = [ component ]
     }
 
 
