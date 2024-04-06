@@ -1,4 +1,6 @@
-test LocalChatrooms:
+test ChatroomSetup:
+	# Local chatrooms
+
 	spawn as p1
 	with p1:
 		send "create-identity Device1 Owner1"
@@ -12,3 +14,40 @@ test LocalChatrooms:
 		local:
 			expect /chatroom-list-(.*)/ capture done
 			guard (done == "done")
+
+	# Send chatrooms to new peers
+
+	spawn as p2
+	send "create-identity Device2 Owner2" to p2
+
+	spawn as p3
+	send "create-identity Device3 Owner3" to p3
+
+	for p in [ p1, p2, p3 ]:
+		with p:
+			send "chatroom-watch-local"
+			send "start-server"
+
+	for p in [ p2, p3 ]:
+		with p:
+			expect /chatroom-watched-added [a-z0-9#]+ first/
+			expect /chatroom-watched-added [a-z0-9#]+ second/
+
+	with p2:
+		send "chatroom-list-local"
+		expect /chatroom-list-item [a-z0-9#]+ first/
+		expect /chatroom-list-item [a-z0-9#]+ second/
+		local:
+			expect /chatroom-list-(.*)/ capture done
+			guard (done == "done")
+
+	# Create and sync additional chatrooms
+
+	send "chatroom-create third" to p1
+	send "chatroom-create fourth" to p2
+	send "chatroom-create fifth" to p3
+	for p in [ p1, p2, p3 ]:
+		with p:
+			expect /chatroom-watched-added [a-z0-9#]+ third/
+			expect /chatroom-watched-added [a-z0-9#]+ fourth/
+			expect /chatroom-watched-added [a-z0-9#]+ fifth/
