@@ -9,11 +9,15 @@ test ChatroomSetup:
 		send "chatroom-create second"
 
 		send "chatroom-list-local"
-		expect /chatroom-list-item [a-z0-9#]+ first/
+
+		expect /chatroom-list-item ([a-z0-9#]+) first/ capture first
 		expect /chatroom-list-item [a-z0-9#]+ second/
 		local:
 			expect /chatroom-list-(.*)/ capture done
 			guard (done == "done")
+
+	expect /chatroom-create-done ([a-z0-9#]+) first.*/ from p1 capture first
+	expect /chatroom-create-done ([a-z0-9#]+) second.*/ from p1 capture second
 
 	# Send chatrooms to new peers
 
@@ -46,8 +50,26 @@ test ChatroomSetup:
 	send "chatroom-create third" to p1
 	send "chatroom-create fourth" to p2
 	send "chatroom-create fifth" to p3
+
+	expect /chatroom-create-done ([a-z0-9#]+) fourth.*/ from p2 capture fourth
+	expect /chatroom-create-done ([a-z0-9#]+) fifth.*/ from p3 capture fifth
+
 	for p in [ p1, p2, p3 ]:
 		with p:
 			expect /chatroom-watched-added [a-z0-9#]+ third/
 			expect /chatroom-watched-added [a-z0-9#]+ fourth/
 			expect /chatroom-watched-added [a-z0-9#]+ fifth/
+
+	# Update chatroom name
+
+	send "chatroom-set-name $first first2" to p1
+	for p in [ p1, p2, p3 ]:
+		with p:
+			expect /chatroom-watched-updated [a-z0-9#]+ first2.*/
+
+	send "chatroom-set-name $fourth fourth2" to p2
+	send "chatroom-set-name $fifth fifth2" to p3
+	for p in [ p1, p2, p3 ]:
+		with p:
+			expect /chatroom-watched-updated [a-z0-9#]+ fourth2.*/
+			expect /chatroom-watched-updated [a-z0-9#]+ fifth2.*/
