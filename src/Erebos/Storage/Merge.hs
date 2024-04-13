@@ -10,6 +10,7 @@ module Erebos.Storage.Merge (
     generations,
     ancestors,
     precedes,
+    precedesOrEquals,
     filterAncestors,
     storedRoots,
     walkAncestors,
@@ -108,6 +109,9 @@ ancestors = last . (S.empty:) . generations
 
 precedes :: Storable a => Stored a -> Stored a -> Bool
 precedes x y = not $ x `elem` filterAncestors [x, y]
+
+precedesOrEquals :: Storable a => Stored a -> Stored a -> Bool
+precedesOrEquals x y = filterAncestors [ x, y ] == [ y ]
 
 filterAncestors :: Storable a => [Stored a] -> [Stored a]
 filterAncestors [x] = [x]

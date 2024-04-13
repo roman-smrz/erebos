@@ -4,8 +4,12 @@ module Erebos.Chatroom (
     validateChatroom,
 
     ChatroomState(..),
+    ChatroomStateData(..),
     createChatroom,
+    updateChatroomByStateData,
     listChatrooms,
+    findChatroomByRoomData,
+    findChatroomByStateData,
 
     ChatroomSetChange(..),
     watchChatrooms,
@@ -18,6 +22,7 @@ import Control.Monad
 import Control.Monad.Except
 
 import Data.IORef
+import Data.List
 import Data.Maybe
 import Data.Monoid
 import Data.Ord
@@ -115,25 +120,77 @@ instance Mergeable ChatroomState where
 instance SharedType (Set ChatroomState) where
     sharedTypeID _ = mkSharedTypeID "7bc71cbf-bc43-42b1-b413-d3a2c9a2aae0"
 
-createChatroom :: (MonadStorage m, MonadHead LocalState m, MonadIO m, MonadError String m) => Maybe Text -> Maybe Text -> m Chatroom
+createChatroom :: (MonadStorage m, MonadHead LocalState m, MonadIO m, MonadError String m) => Maybe Text -> Maybe Text -> m ChatroomState
 createChatroom rdName rdDescription = do
-    st <- getStorage
-    (secret, rdKey) <- liftIO $ generateKeys st
+    (secret, rdKey) <- liftIO . generateKeys =<< getStorage
     let rdPrev = []
-    rdata <- wrappedStore st =<< sign secret =<< wrappedStore st ChatroomData {..}
-    room <- liftEither $ runExcept $ validateChatroom [ rdata ]
+    rdata <- mstore =<< sign secret =<< mstore ChatroomData {..}
+    cstate <- mergeSorted . (:[]) <$> mstore ChatroomStateData
+        { rsdPrev = []
+        , rsdRoom = [ rdata ]
+        }
 
-    updateLocalHead_ $ updateSharedState_ $ \rooms -> do
-        sdata <- wrappedStore st ChatroomStateData
-            { rsdPrev = []
+    updateLocalHead $ updateSharedState $ \rooms -> do
+        st <- getStorage
+        (, cstate) <$> storeSetAdd st cstate rooms
+
+findAndUpdateChatroomState
+    :: (MonadStorage m, MonadHead LocalState m)
+    => (ChatroomState -> Maybe (m ChatroomState))
+    -> m (Maybe ChatroomState)
+findAndUpdateChatroomState f = do
+    updateLocalHead $ updateSharedState $ \roomSet -> do
+        let roomList = fromSetBy (comparing $ roomName <=< roomStateRoom) roomSet
+        case catMaybes $ map (\x -> (x,) <$> f x) roomList of
+            ((orig, act) : _) -> do
+                upd <- act
+                if roomStateData orig /= roomStateData upd
+                  then do
+                    st <- getStorage
+                    roomSet' <- storeSetAdd st upd roomSet
+                    return (roomSet', Just upd)
+                  else do
+                    return (roomSet, Just upd)
+            [] -> return (roomSet, Nothing)
+
+updateChatroomByStateData
+    :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
+    => Stored ChatroomStateData
+    -> Maybe Text
+    -> Maybe Text
+    -> m (Maybe ChatroomState)
+updateChatroomByStateData lookupData newName newDesc = findAndUpdateChatroomState $ \cstate -> do
+    guard $ any (lookupData `precedesOrEquals`) $ roomStateData cstate
+    room <- roomStateRoom cstate
+    Just $ do
+        secret <- loadKey $ roomKey room
+        rdata <- mstore =<< sign secret =<< mstore ChatroomData
+            { rdPrev = roomData room
+            , rdName = newName
+            , rdDescription = newDesc
+            , rdKey = roomKey room
+            }
+        mergeSorted . (:[]) <$> mstore ChatroomStateData
+            { rsdPrev = roomStateData cstate
             , rsdRoom = [ rdata ]
             }
-        storeSetAdd st (mergeSorted @ChatroomState [ sdata ]) rooms
-    return room
+
 
 listChatrooms :: MonadHead LocalState m => m [ChatroomState]
 listChatrooms = fromSetBy (comparing $ roomName <=< roomStateRoom) .
     lookupSharedValue . lsShared . fromStored <$> getLocalHead
+
+findChatroom :: MonadHead LocalState m => (ChatroomState -> Bool) -> m (Maybe ChatroomState)
+findChatroom p = do
+    list <- map snd . chatroomSetToList . lookupSharedValue . lsShared . fromStored <$> getLocalHead
+    return $ find p list
+
+findChatroomByRoomData :: MonadHead LocalState m => Stored (Signed ChatroomData) -> m (Maybe ChatroomState)
+findChatroomByRoomData cdata = findChatroom $
+    maybe False (any (cdata `precedesOrEquals`) . roomData) . roomStateRoom
+
+findChatroomByStateData :: MonadHead LocalState m => Stored ChatroomStateData -> m (Maybe ChatroomState)
+findChatroomByStateData cdata = findChatroom $ any (cdata `precedesOrEquals`) . roomStateData
 
 
 data ChatroomSetChange = AddedChatroom ChatroomState

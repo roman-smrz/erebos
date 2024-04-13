@@ -268,6 +268,7 @@ commands = map (T.pack *** id)
     , ("chatroom-create", cmdChatroomCreate)
     , ("chatroom-list-local", cmdChatroomListLocal)
     , ("chatroom-watch-local", cmdChatroomWatchLocal)
+    , ("chatroom-set-name", cmdChatroomSetName)
     ]
 
 cmdStore :: Command
@@ -574,7 +575,22 @@ cmdDmListContact = do
 cmdChatroomCreate :: Command
 cmdChatroomCreate = do
     [name] <- asks tiParams
-    void $ createChatroom (Just name) Nothing
+    room <- createChatroom (Just name) Nothing
+    cmdOut $ unwords $ "chatroom-create-done" : chatroomInfo room
+
+getChatroomStateData :: Text -> CommandM (Stored ChatroomStateData)
+getChatroomStateData tref = do
+    st <- asks tiStorage
+    Just ref <- liftIO $ readRef st (encodeUtf8 tref)
+    return $ wrappedLoad ref
+
+cmdChatroomSetName :: Command
+cmdChatroomSetName = do
+    [cid, name] <- asks tiParams
+    sdata <- getChatroomStateData cid
+    updateChatroomByStateData sdata (Just name) Nothing >>= \case
+        Just room -> cmdOut $ unwords $ "chatroom-set-name-done" : chatroomInfo room
+        Nothing -> cmdOut "chatroom-set-name-failed"
 
 cmdChatroomListLocal :: Command
 cmdChatroomListLocal = do
@@ -594,9 +610,11 @@ cmdChatroomWatchLocal = do
         Just diff -> forM_ diff $ \case
             AddedChatroom room -> outLine out $ unwords $ "chatroom-watched-added" : chatroomInfo room
             RemovedChatroom room -> outLine out $ unwords $ "chatroom-watched-removed" : chatroomInfo room
-            UpdatedChatroom oldroom room -> outLine out $ unwords $ "chatroom-watched-updated" : chatroomInfo room ++
-                map (show . refDigest . storedRef) (roomStateData oldroom) ++
-                map (show . refDigest . storedRef) (roomStateData room)
+            UpdatedChatroom oldroom room -> outLine out $ unwords $ concat
+                [ [ "chatroom-watched-updated" ], chatroomInfo room
+                , [ "old" ], map (show . refDigest . storedRef) (roomStateData oldroom)
+                , [ "new" ], map (show . refDigest . storedRef) (roomStateData room)
+                ]
 
 chatroomInfo :: ChatroomState -> [String]
 chatroomInfo room =
