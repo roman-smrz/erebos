@@ -5,7 +5,7 @@ The erebos binary provides simple CLI interface to the decentralized Erebos
 messaging service. Local identity is created on the first run. Protocol and
 services specification is being written at:
 
-[http://erebosprotocol.net](http://erebosprotocol.net)
+[https://erebosprotocol.net/spec](https://erebosprotocol.net/spec)
 
 Erebos identity is based on locally stored cryptographic keys, all
 communication is end-to-end encrypted. Multiple devices can be attached to the
