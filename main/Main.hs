@@ -140,8 +140,11 @@ main = do
                else interactiveLoop st opts
 
 
+inputSettings :: Settings IO
+inputSettings = setComplete commandCompletion $ defaultSettings
+
 interactiveLoop :: Storage -> Options -> IO ()
-interactiveLoop st opts = runInputT defaultSettings $ do
+interactiveLoop st opts = runInputT inputSettings $ do
     erebosHead <- liftIO $ loadLocalStateHead st
     outputStrLn $ T.unpack $ displayIdentity $ headLocalIdentity erebosHead
 
@@ -321,6 +324,14 @@ commands =
     , ("ice-send", cmdIceSend)
 #endif
     ]
+
+commandCompletion :: CompletionFunc IO
+commandCompletion = completeWordWithPrev Nothing [ ' ', '\t', '\n', '\r' ] $ curry $ \case
+    ([], '/':pref) -> return . map (simpleCompletion . ('/':)) . filter (pref `isPrefixOf`) $ sortedCommandNames
+    _ -> return []
+  where
+    sortedCommandNames = sort $ map fst commands
+
 
 cmdUnknown :: String -> Command
 cmdUnknown cmd = liftIO $ putStrLn $ "Unknown command: " ++ cmd
