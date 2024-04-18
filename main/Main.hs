@@ -5,6 +5,7 @@ module Main (main) where
 
 import Control.Arrow (first)
 import Control.Concurrent
+import Control.Exception
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
@@ -265,10 +266,15 @@ data CommandContext = NoContext
                     | SelectedContact Contact
 
 newtype CommandM a = CommandM (ReaderT CommandInput (StateT CommandState (ExceptT String IO)) a)
-    deriving (Functor, Applicative, Monad, MonadIO, MonadReader CommandInput, MonadState CommandState, MonadError String)
+    deriving (Functor, Applicative, Monad, MonadReader CommandInput, MonadState CommandState, MonadError String)
 
 instance MonadFail CommandM where
     fail = throwError
+
+instance MonadIO CommandM where
+    liftIO act = CommandM (liftIO (try act)) >>= \case
+        Left (e :: SomeException) -> throwError (show e)
+        Right x -> return x
 
 instance MonadRandom CommandM where
     getRandomBytes = liftIO . getRandomBytes
