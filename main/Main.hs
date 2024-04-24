@@ -56,12 +56,14 @@ import Version
 
 data Options = Options
     { optServer :: ServerOptions
+    , optShowHelp :: Bool
     , optShowVersion :: Bool
     }
 
 defaultOptions :: Options
 defaultOptions = Options
     { optServer = defaultServerOptions
+    , optShowHelp = False
     , optShowVersion = False
     }
 
@@ -73,6 +75,9 @@ options =
     , Option ['s'] ["silent"]
         (NoArg (so $ \opts -> opts { serverLocalDiscovery = False }))
         "do not send announce packets for local discovery"
+    , Option ['h'] ["help"]
+        (NoArg $ \opts -> opts { optShowHelp = True })
+        "show this help and exit"
     , Option ['V'] ["version"]
         (NoArg $ \opts -> opts { optShowVersion = True })
         "show version and exit"
@@ -135,12 +140,13 @@ main = do
         args -> case getOpt Permute options args of
             (o, [], []) -> do
                 let opts = foldl (flip id) defaultOptions o
-                if optShowVersion opts
-                   then putStrLn versionLine
-                   else interactiveLoop st opts
+                    header = "Usage: erebos [OPTION...]"
+                if | optShowHelp opts -> putStr $ usageInfo header options
+                   | optShowVersion opts -> putStrLn versionLine
+                   | otherwise -> interactiveLoop st opts
             (_, _, errs) -> do
-                let header = "Usage: erebos [OPTION...]"
-                hPutStr stderr $ concat errs ++ usageInfo header options
+                progName <- getProgName
+                hPutStrLn stderr $ concat errs <> "Try `" <> progName <> " --help' for more information."
                 exitFailure
 
 
