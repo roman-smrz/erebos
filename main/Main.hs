@@ -31,6 +31,8 @@ import Network.Socket
 import System.Console.GetOpt
 import System.Console.Haskeline
 import System.Environment
+import System.Exit
+import System.IO
 
 import Erebos.Attach
 import Erebos.Contact
@@ -130,15 +132,16 @@ main = do
 
         ["test"] -> runTestTool st
 
-        args -> do
-            opts <- case getOpt Permute options args of
-                (o, [], []) -> return (foldl (flip id) defaultOptions o)
-                (_, _, errs) -> ioError (userError (concat errs ++ usageInfo header options))
-                    where header = "Usage: erebos [OPTION...]"
-
-            if optShowVersion opts
-               then putStrLn versionLine
-               else interactiveLoop st opts
+        args -> case getOpt Permute options args of
+            (o, [], []) -> do
+                let opts = foldl (flip id) defaultOptions o
+                if optShowVersion opts
+                   then putStrLn versionLine
+                   else interactiveLoop st opts
+            (_, _, errs) -> do
+                let header = "Usage: erebos [OPTION...]"
+                hPutStr stderr $ concat errs ++ usageInfo header options
+                exitFailure
 
 
 inputSettings :: Settings IO
