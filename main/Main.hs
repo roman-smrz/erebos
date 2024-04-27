@@ -56,21 +56,46 @@ import Version
 
 data Options = Options
     { optServer :: ServerOptions
+    , optServices :: [ServiceOption]
     , optShowHelp :: Bool
     , optShowVersion :: Bool
+    }
+
+data ServiceOption = ServiceOption
+    { soptName :: String
+    , soptService :: SomeService
+    , soptEnabled :: Bool
+    , soptDescription :: String
     }
 
 defaultOptions :: Options
 defaultOptions = Options
     { optServer = defaultServerOptions
+    , optServices = availableServices
     , optShowHelp = False
     , optShowVersion = False
     }
 
+availableServices :: [ServiceOption]
+availableServices =
+    [ ServiceOption "attach" (someService @AttachService Proxy)
+        True "attach (to) other devices"
+    , ServiceOption "sync" (someService @SyncService Proxy)
+        True "synchronization with attached devices"
+    , ServiceOption "contact" (someService @ContactService Proxy)
+        True "create contacts with network peers"
+    , ServiceOption "dm" (someService @DirectMessage Proxy)
+        True "direct messages"
+#ifdef ENABLE_ICE_SUPPORT
+    , ServiceOption "discovery" (someService @DiscoveryService Proxy)
+        True "peer discovery"
+#endif
+    ]
+
 options :: [OptDescr (Options -> Options)]
 options =
     [ Option ['p'] ["port"]
-        (ReqArg (\p -> so $ \opts -> opts { serverPort = read p }) "PORT")
+        (ReqArg (\p -> so $ \opts -> opts { serverPort = read p }) "<port>")
         "local port to bind"
     , Option ['s'] ["silent"]
         (NoArg (so $ \opts -> opts { serverLocalDiscovery = False }))
@@ -83,6 +108,21 @@ options =
         "show version and exit"
     ]
     where so f opts = opts { optServer = f $ optServer opts }
+
+servicesOptions :: [OptDescr (Options -> Options)]
+servicesOptions = concatMap helper $ "all" : map soptName availableServices
+  where
+    helper name =
+        [ Option [] ["enable-" <> name] (NoArg $ so $ change name $ \sopt -> sopt { soptEnabled = True }) ""
+        , Option [] ["disable-" <> name] (NoArg $ so $ change name $ \sopt -> sopt { soptEnabled = False }) ""
+        ]
+    so f opts = opts { optServices = f $ optServices opts }
+    change :: String -> (ServiceOption -> ServiceOption) -> [ServiceOption] -> [ServiceOption]
+    change name f (s : ss)
+        | soptName s == name || name == "all"
+                    = f s : change name f ss
+        | otherwise =   s : change name f ss
+    change _ _ []   = []
 
 main :: IO ()
 main = do
@@ -137,11 +177,26 @@ main = do
 
         ["test"] -> runTestTool st
 
-        args -> case getOpt Permute options args of
+        args -> case getOpt Permute (options ++ servicesOptions) args of
             (o, [], []) -> do
                 let opts = foldl (flip id) defaultOptions o
                     header = "Usage: erebos [OPTION...]"
-                if | optShowHelp opts -> putStr $ usageInfo header options
+                    serviceDesc ServiceOption {..} = padService ("  " <> soptName) <> soptDescription
+
+                    padTo n str = str <> replicate (n - length str) ' '
+                    padOpt = padTo 28
+                    padService = padTo 16
+
+                if | optShowHelp opts -> putStr $ usageInfo header options <> unlines
+                      (
+                        [ padOpt "  --enable-<service>"  <> "enable network service <service>"
+                        , padOpt "  --disable-<service>" <> "disable network service <service>"
+                        , padOpt "  --enable-all"        <> "enable all network services"
+                        , padOpt "  --disable-all"       <> "disable all network services"
+                        , ""
+                        , "Available network services:"
+                        ] ++ map serviceDesc availableServices
+                      )
                    | optShowVersion opts -> putStrLn versionLine
                    | otherwise -> interactiveLoop st opts
             (_, _, errs) -> do
@@ -170,15 +225,8 @@ interactiveLoop st opts = runInputT inputSettings $ do
             extPrintLn . formatMessage tzone . fromStored
 
     server <- liftIO $ do
-        startServer (optServer opts) erebosHead extPrintLn
-            [ someService @AttachService Proxy
-            , someService @SyncService Proxy
-            , someService @ContactService Proxy
-            , someService @DirectMessage Proxy
-#ifdef ENABLE_ICE_SUPPORT
-            , someService @DiscoveryService Proxy
-#endif
-            ]
+        startServer (optServer opts) erebosHead extPrintLn $
+            map soptService $ filter soptEnabled $ optServices opts
 
     peers <- liftIO $ newMVar []
     contextOptions <- liftIO $ newMVar []
