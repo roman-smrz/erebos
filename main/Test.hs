@@ -315,6 +315,26 @@ cmdStoredSetList = do
         cmdOut $ "stored-set-item" ++ concatMap ((' ':) . show . refDigest . storedRef) item
     cmdOut $ "stored-set-done"
 
+initTestHead :: Head LocalState -> Command
+initTestHead h = do
+    _ <- liftIO . watchReceivedMessages h . dmReceivedWatcher =<< asks tiOutput
+    modify $ \s -> s { tsHead = Just h }
+
+loadTestHead :: CommandM (Head LocalState)
+loadTestHead = do
+    st <- asks tiStorage
+    h <- loadHeads st >>= \case
+        h : _ -> return h
+        [] -> fail "no local head found"
+    initTestHead h
+    return h
+
+getOrLoadHead :: CommandM (Head LocalState)
+getOrLoadHead = do
+    gets tsHead >>= \case
+        Just h -> return h
+        Nothing -> loadTestHead
+
 cmdCreateIdentity :: Command
 cmdCreateIdentity = do
     st <- asks tiStorage
@@ -333,15 +353,13 @@ cmdCreateIdentity = do
             { lsIdentity = idExtData identity
             , lsShared = shared
             }
-
-    _ <- liftIO . watchReceivedMessages h . dmReceivedWatcher =<< asks tiOutput
-    modify $ \s -> s { tsHead = Just h }
+    initTestHead h
 
 cmdStartServer :: Command
 cmdStartServer = do
     out <- asks tiOutput
 
-    Just h <- gets tsHead
+    h <- getOrLoadHead
     rsPeers <- liftIO $ newMVar (1, [])
     rsServer <- liftIO $ startServer defaultServerOptions h (hPutStrLn stderr)
         [ someServiceAttr $ pairingAttributes (Proxy @AttachService) out rsPeers "attach"
@@ -409,7 +427,7 @@ cmdSharedStateWait :: Command
 cmdSharedStateWait = do
     st <- asks tiStorage
     out <- asks tiOutput
-    Just h <- gets tsHead
+    h <- getOrLoadHead
     trefs <- asks tiParams
 
     liftIO $ do
@@ -425,7 +443,7 @@ cmdSharedStateWait = do
 
 cmdWatchLocalIdentity :: Command
 cmdWatchLocalIdentity = do
-    Just h <- gets tsHead
+    h <- getOrLoadHead
     Nothing <- gets tsWatchedLocalIdentity
 
     out <- asks tiOutput
@@ -435,7 +453,7 @@ cmdWatchLocalIdentity = do
 
 cmdWatchSharedIdentity :: Command
 cmdWatchSharedIdentity = do
-    Just h <- gets tsHead
+    h <- getOrLoadHead
     Nothing <- gets tsWatchedSharedIdentity
 
     out <- asks tiOutput
