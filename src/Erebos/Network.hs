@@ -433,7 +433,10 @@ openStream = do
     conn <- readTVarP peerConnection >>= \case
         Right conn -> return conn
         _          -> throwError "can't open stream without established connection"
-    (hdr, writer, handler) <- liftSTM $ connAddWriteStream conn
+    (hdr, writer, handler) <- liftSTM (connAddWriteStream conn) >>= \case
+        Right res -> return res
+        Left err -> throwError err
+
     liftSTM $ writeTQueue (serverIOActions peerServer_) (liftIO $ forkServerThread peerServer_ handler)
     addHeader hdr
     return writer
