@@ -217,11 +217,10 @@ connAddWriteStream conn@Connection {..} = do
                     _             -> retry
                 (,) <$> reservePacket conn
                     <*> readFlow (sFlowOut stream)
-            let (plain, cont) = case msg of
-                    StreamData {..} -> (stpData, True)
-                    StreamClosed {} -> (BC.empty, False)
+            let (plain, cont, onAck) = case msg of
+                    StreamData {..} -> (stpData, True, return ())
+                    StreamClosed {} -> (BC.empty, False, streamClosed conn streamNumber)
                     -- TODO: send channel closed only after delivering all previous data packets
-                    -- TODO: free channel number after delivering stream closed
             let secure = True
                 plainAckedBy = []
                 mbReserved = Just reserved
@@ -248,7 +247,10 @@ connAddWriteStream conn@Connection {..} = do
 
             case mbs of
                 Just (bs, ackedBy) -> do
-                    let mbReserved' = (\rs -> rs { rsAckedBy = guard (not $ null ackedBy) >> Just (`elem` ackedBy) }) <$> mbReserved
+                    let mbReserved' = (\rs -> rs
+                            { rsAckedBy = guard (not $ null ackedBy) >> Just (`elem` ackedBy)
+                            , rsOnAck = rsOnAck rs >> onAck
+                            }) <$> mbReserved
                     sendBytes conn mbReserved' bs
                 Nothing -> return ()
 
@@ -300,6 +302,10 @@ streamAccepted Connection {..} snum = atomically $ do
                 StreamOpening -> StreamRunning
                 x             -> x
         Nothing -> return ()
+
+streamClosed :: Connection addr -> Word8 -> IO ()
+streamClosed Connection {..} snum = atomically $ do
+    modifyTVar' cOutStreams $ filter ((snum /=) . fst)
 
 readStreamToList :: RawStreamReader -> IO (Word64, [(Word64, BC.ByteString)])
 readStreamToList stream = readFlowIO stream >>= \case
