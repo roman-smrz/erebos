@@ -20,6 +20,7 @@ module Erebos.Chatroom (
 import Control.Arrow
 import Control.Monad
 import Control.Monad.Except
+import Control.Monad.IO.Class
 
 import Data.IORef
 import Data.List
