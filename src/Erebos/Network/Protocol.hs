@@ -330,7 +330,6 @@ readStreamToList stream = readFlowIO stream >>= \case
 readObjectsFromStream :: PartialStorage -> RawStreamReader -> IO (Except String [PartialObject])
 readObjectsFromStream st stream = do
     (seqEnd, list) <- readStreamToList stream
-    print (seqEnd, length list, list)
     let validate s ((s', bytes) : rest)
             | s == s'   = (bytes : ) <$> validate (s + 1) rest
             | s >  s'   = validate s rest
