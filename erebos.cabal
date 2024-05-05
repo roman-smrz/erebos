@@ -54,7 +54,7 @@ common common
             -Wno-error=unused-imports
 
     build-depends:
-        base >=4.13 && <4.19,
+        base >=4.13 && <4.20,
 
     default-extensions:
         DefaultSignatures
