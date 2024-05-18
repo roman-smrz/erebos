@@ -269,6 +269,7 @@ commands = map (T.pack *** id)
     , ("chatroom-list-local", cmdChatroomListLocal)
     , ("chatroom-watch-local", cmdChatroomWatchLocal)
     , ("chatroom-set-name", cmdChatroomSetName)
+    , ("chatroom-message-send", cmdChatroomMessageSend)
     ]
 
 cmdStore :: Command
@@ -628,14 +629,30 @@ cmdChatroomWatchLocal = do
         Just diff -> forM_ diff $ \case
             AddedChatroom room -> outLine out $ unwords $ "chatroom-watched-added" : chatroomInfo room
             RemovedChatroom room -> outLine out $ unwords $ "chatroom-watched-removed" : chatroomInfo room
-            UpdatedChatroom oldroom room -> outLine out $ unwords $ concat
-                [ [ "chatroom-watched-updated" ], chatroomInfo room
-                , [ "old" ], map (show . refDigest . storedRef) (roomStateData oldroom)
-                , [ "new" ], map (show . refDigest . storedRef) (roomStateData room)
-                ]
+            UpdatedChatroom oldroom room -> do
+                when (any (not . null . rsdRoom . fromStored) (roomStateData room)) $ do
+                    outLine out $ unwords $ concat
+                        [ [ "chatroom-watched-updated" ], chatroomInfo room
+                        , [ "old" ], map (show . refDigest . storedRef) (roomStateData oldroom)
+                        , [ "new" ], map (show . refDigest . storedRef) (roomStateData room)
+                        ]
+                when (any (not . null . rsdMessages . fromStored) (roomStateData room)) $ do
+                    forM_ (getMessagesSinceState room oldroom) $ \msg -> do
+                        outLine out $ unwords $ concat
+                            [ [ "chatroom-message-new" ]
+                            , [ show . refDigest . storedRef . head . filterAncestors . concatMap storedRoots . toComponents $ room ]
+                            , [ "from", maybe "<unnamed>" T.unpack $ idName $ cmsgFrom msg ]
+                            , maybe [] (("text":) . (:[]) . T.unpack) $ cmsgText msg
+                            ]
 
 chatroomInfo :: ChatroomState -> [String]
 chatroomInfo room =
     [ show . refDigest . storedRef . head . filterAncestors . concatMap storedRoots . toComponents $ room
     , maybe "<unnamed>" T.unpack $ roomName =<< roomStateRoom room
     ]
+
+cmdChatroomMessageSend :: Command
+cmdChatroomMessageSend = do
+    [cid, msg] <- asks tiParams
+    to <- getChatroomStateData cid
+    void $ chatroomMessageByStateData to msg

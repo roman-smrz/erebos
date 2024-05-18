@@ -73,3 +73,29 @@ test ChatroomSetup:
 		with p:
 			expect /chatroom-watched-updated [a-z0-9#]+ fourth2.*/
 			expect /chatroom-watched-updated [a-z0-9#]+ fifth2.*/
+
+
+test ChatroomMessages:
+	spawn as p1
+
+	send "create-identity Device1 Owner1" to p1
+
+	for p in [ p1 ]:
+		with p:
+			send "chatroom-watch-local"
+			send "start-server"
+
+	send "chatroom-create room" to p1
+	expect /chatroom-create-done ([a-z0-9#]+) room.*/ from p1 capture room
+
+	for p in [ p1 ]:
+		with p:
+			expect /chatroom-watched-added $room room/
+
+	send "chatroom-message-send $room message1" to p1
+	expect /chatroom-message-new $room from Owner1 text message1/ from p1
+
+	send "chatroom-message-send $room message2" to p1
+	local:
+		expect /chatroom-message-new $room from Owner1 text (.*)/ from p1 capture msg
+		guard (msg == "message2")
