@@ -14,6 +14,7 @@ module Erebos.Message (
 
     watchReceivedMessages,
     formatMessage,
+    formatDirectMessage,
 ) where
 
 import Control.Monad
@@ -258,8 +259,12 @@ watchReceivedMessages h f = do
         forM_ (map fromStored sms) $ \ms -> do
             mapM_ f $ filter (not . sameIdentity self . msgFrom . fromStored) $ msReceived ms
 
+{-# DEPRECATED formatMessage "use formatDirectMessage instead" #-}
 formatMessage :: TimeZone -> DirectMessage -> String
-formatMessage tzone msg = concat
+formatMessage = formatDirectMessage
+
+formatDirectMessage :: TimeZone -> DirectMessage -> String
+formatDirectMessage tzone msg = concat
     [ formatTime defaultTimeLocale "[%H:%M] " $ utcToLocalTime tzone $ zonedTimeToUTC $ msgTime msg
     , maybe "<unnamed>" T.unpack $ idName $ msgFrom msg
     , ": "

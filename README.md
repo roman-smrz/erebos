@@ -36,9 +36,9 @@ to be attached to already existing identity on other device.
 
 After the initial setup, the erebos tool presents interactive prompt for
 messages and commands. All commands start with the slash (`/`) character,
-followed by command name and parameters (if any) separated by spaces. When a
-peer or contact is selected, message to send him can be entered directly on the
-command prompt.
+followed by command name and parameters (if any) separated by spaces. When
+a conversation is selected, message to send there is entered directly on
+the command prompt.
 
 ### Messaging
 
@@ -49,15 +49,18 @@ on local network or can be manually added.
 `/contacts`  
 List known contacts (see below).
 
+`/conversations`
+List started conversations with contacts or other peers.
+
 `/<number>`  
-Select contact or peer `<number>` based on previous `/contacts` or `/peers`
-output list.
+Select conversation, contact or peer `<number>` based on the last
+`/conversations`, `/contacts` or `/peers` output list.
 
 `<message>`  
-Send `<message>` to selected contact.
+Send `<message>` to selected conversation.
 
 `/history`  
-Show message history for selected contact or peer.
+Show message history of the selected conversation.
 
 ### Add contacts
 

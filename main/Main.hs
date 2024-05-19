@@ -36,12 +36,13 @@ import System.IO
 
 import Erebos.Attach
 import Erebos.Contact
+import Erebos.Conversation
 #ifdef ENABLE_ICE_SUPPORT
 import Erebos.Discovery
 import Erebos.ICE
 #endif
 import Erebos.Identity
-import Erebos.Message
+import Erebos.Message hiding (formatMessage)
 import Erebos.Network
 import Erebos.PubKey
 import Erebos.Service
@@ -222,7 +223,7 @@ interactiveLoop st opts = runInputT inputSettings $ do
     _ <- liftIO $ do
         tzone <- getCurrentTimeZone
         watchReceivedMessages erebosHead $
-            extPrintLn . formatMessage tzone . fromStored
+            extPrintLn . formatDirectMessage tzone . fromStored
 
     server <- liftIO $ do
         startServer (optServer opts) erebosHead extPrintLn $
@@ -264,6 +265,7 @@ interactiveLoop st opts = runInputT inputSettings $ do
                             PeerIdentityRef wref _ -> "<" ++ BC.unpack (showRefDigest $ wrDigest wref) ++ ">"
                             PeerIdentityUnknown _  -> "<unknown>"
                         SelectedContact contact -> return $ T.unpack $ contactName contact
+                        SelectedConversation conv -> return $ T.unpack $ conversationName conv
             input <- getInputLines $ pname ++ "> "
             let (CommandM cmd, line) = case input of
                     '/':rest -> let (scmd, args) = dropWhile isSpace <$> span (\c -> isAlphaNum c || c == '-') rest
@@ -321,6 +323,7 @@ data CommandState = CommandState
 data CommandContext = NoContext
                     | SelectedPeer Peer
                     | SelectedContact Contact
+                    | SelectedConversation Conversation
 
 newtype CommandM a = CommandM (ReaderT CommandInput (StateT CommandState (ExceptT String IO)) a)
     deriving (Functor, Applicative, Monad, MonadReader CommandInput, MonadState CommandState, MonadError String)
@@ -353,15 +356,16 @@ getSelectedPeer = gets csContext >>= \case
     SelectedPeer peer -> return peer
     _ -> throwError "no peer selected"
 
-getSelectedIdentity :: CommandM ComposedIdentity
-getSelectedIdentity = gets csContext >>= \case
+getSelectedConversation :: CommandM Conversation
+getSelectedConversation = gets csContext >>= \case
     SelectedPeer peer -> peerIdentity peer >>= \case
-        PeerIdentityFull pid -> return $ toComposedIdentity pid
+        PeerIdentityFull pid -> directMessageConversation $ finalOwner pid
         _ -> throwError "incomplete peer identity"
     SelectedContact contact -> case contactIdentity contact of
-        Just cid -> return cid
+        Just cid -> directMessageConversation cid
         Nothing -> throwError "contact without erebos identity"
-    _ -> throwError "no contact or peer selected"
+    SelectedConversation conv -> reloadConversation conv
+    _ -> throwError "no contact, peer or conversation selected"
 
 commands :: [(String, Command)]
 commands =
@@ -377,6 +381,7 @@ commands =
     , ("contact-add", cmdContactAdd)
     , ("contact-accept", cmdContactAccept)
     , ("contact-reject", cmdContactReject)
+    , ("conversations", cmdConversations)
 #ifdef ENABLE_ICE_SUPPORT
     , ("discovery-init", cmdDiscoveryInit)
     , ("discovery", cmdDiscovery)
@@ -433,22 +438,19 @@ cmdSelectContext n = join (asks ciContextOptions) >>= \ctxs -> if
 cmdSend :: Command
 cmdSend = void $ do
     text <- asks ciLine
-    powner <- finalOwner <$> getSelectedIdentity
-    smsg <- sendDirectMessage powner $ T.pack text
+    conv <- getSelectedConversation
+    msg <- sendMessage conv $ T.pack text
     tzone <- liftIO $ getCurrentTimeZone
-    liftIO $ putStrLn $ formatMessage tzone $ fromStored smsg
+    liftIO $ putStrLn $ formatMessage tzone msg
 
 cmdHistory :: Command
 cmdHistory = void $ do
-    ehead <- gets csHead
-    powner <- finalOwner <$> getSelectedIdentity
-
-    case find (sameIdentity powner . msgPeer) $
-            toThreadList $ lookupSharedValue $ lsShared $ headObject ehead of
-        Just thread -> do
+    conv <- getSelectedConversation
+    case conversationHistory conv of
+        thread@(_:_) -> do
             tzone <- liftIO $ getCurrentTimeZone
-            liftIO $ mapM_ (putStrLn . formatMessage tzone) $ reverse $ take 50 $ threadToList thread
-        Nothing -> do
+            liftIO $ mapM_ (putStrLn . formatMessage tzone) $ reverse $ take 50 thread
+        [] -> do
             liftIO $ putStrLn $ "<empty history>"
 
 cmdUpdateIdentity :: Command
@@ -492,6 +494,14 @@ cmdContactAccept = contactAccept =<< getSelectedPeer
 
 cmdContactReject :: Command
 cmdContactReject = contactReject =<< getSelectedPeer
+
+cmdConversations :: Command
+cmdConversations = do
+    conversations <- lookupConversations
+    set <- asks ciSetContextOptions
+    set $ map SelectedConversation conversations
+    forM_ (zip [1..] conversations) $ \(i :: Int, conv) -> do
+        liftIO $ putStrLn $ "[" ++ show i ++ "] " ++ T.unpack (conversationName conv)
 
 #ifdef ENABLE_ICE_SUPPORT
 

@@ -97,6 +97,7 @@ library
         Erebos.Channel
         Erebos.Chatroom
         Erebos.Contact
+        Erebos.Conversation
         Erebos.Identity
         Erebos.Message
         Erebos.Network
