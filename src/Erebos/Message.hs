@@ -127,7 +127,7 @@ toThreadList (DirectMessageThreads _ threads) = threads
 instance Storable MessageState where
     store' MessageState {..} = storeRec $ do
         mapM_ (storeRef "PREV") msPrev
-        mapM_ (storeRef "peer") $ idDataF msPeer
+        mapM_ (storeRef "peer") $ idExtDataF msPeer
         mapM_ (storeRef "ready") msReady
         mapM_ (storeRef "sent") msSent
         mapM_ (storeRef "received") msReceived
