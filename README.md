@@ -62,6 +62,9 @@ Send `<message>` to selected conversation.
 `/history`  
 Show message history of the selected conversation.
 
+`/details`
+Show information about the selected conversations, contact or peer.
+
 ### Add contacts
 
 To ensure the identity of the contact and prevent man-in-the-middle attack,

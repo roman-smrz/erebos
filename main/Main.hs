@@ -382,6 +382,7 @@ commands =
     , ("contact-accept", cmdContactAccept)
     , ("contact-reject", cmdContactReject)
     , ("conversations", cmdConversations)
+    , ("details", cmdDetails)
 #ifdef ENABLE_ICE_SUPPORT
     , ("discovery-init", cmdDiscoveryInit)
     , ("discovery", cmdDiscovery)
@@ -502,6 +503,66 @@ cmdConversations = do
     set $ map SelectedConversation conversations
     forM_ (zip [1..] conversations) $ \(i :: Int, conv) -> do
         liftIO $ putStrLn $ "[" ++ show i ++ "] " ++ T.unpack (conversationName conv)
+
+cmdDetails :: Command
+cmdDetails = do
+    gets csContext >>= \case
+        SelectedPeer peer -> do
+            liftIO $ putStr $ unlines
+                [ "Network peer:"
+                , "  " <> show (peerAddress peer)
+                ]
+            peerIdentity peer >>= \case
+                PeerIdentityUnknown _ -> liftIO $ do
+                    putStrLn $ "unknown identity"
+                PeerIdentityRef wref _ -> liftIO $ do
+                    putStrLn $ "Identity ref:"
+                    putStrLn $ "  " <> BC.unpack (showRefDigest $ wrDigest wref)
+                PeerIdentityFull pid -> printContactOrIdentityDetails pid
+
+        SelectedContact contact -> do
+            printContactDetails contact
+
+        SelectedConversation conv -> do
+            case conversationPeer conv of
+                Just pid -> printContactOrIdentityDetails pid
+                Nothing -> liftIO $ putStrLn $ "(conversation without peer)"
+
+        NoContext -> liftIO $ putStrLn "nothing selected"
+  where
+    printContactOrIdentityDetails cid = do
+        contacts <- fromSetBy (comparing contactName) . lookupSharedValue . lsShared . fromStored <$> getLocalHead
+        case find (maybe False (sameIdentity cid) . contactIdentity) contacts of
+            Just contact -> printContactDetails contact
+            Nothing -> printIdentityDetails cid
+
+    printContactDetails contact = liftIO $ do
+        putStrLn $ "Contact:"
+        prefix <- case contactCustomName contact of
+            Just name -> do
+                putStrLn $ "  " <> T.unpack name
+                return $ Just "alias of"
+            Nothing -> do
+                return $ Nothing
+
+        case contactIdentity contact of
+            Just cid -> do
+                printIdentityDetailsBody prefix cid
+            Nothing -> do
+                putStrLn $ "  (without erebos identity)"
+
+    printIdentityDetails identity = liftIO $ do
+        putStrLn $ "Identity:"
+        printIdentityDetailsBody Nothing identity
+
+    printIdentityDetailsBody prefix identity = do
+        forM_ (zip (False : repeat True) $ unfoldOwners identity) $ \(owned, cpid) -> do
+            putStrLn $ unwords $ concat
+                [ [ "  " ]
+                , if owned then [ "owned by" ] else maybeToList prefix
+                , [ maybe "<unnamed>" T.unpack (idName cpid) ]
+                , map (BC.unpack . showRefDigest . refDigest . storedRef) $ idExtDataF cpid
+                ]
 
 #ifdef ENABLE_ICE_SUPPORT
 
