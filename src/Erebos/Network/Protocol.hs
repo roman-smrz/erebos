@@ -3,6 +3,7 @@ module Erebos.Network.Protocol (
     transportToObject,
     TransportHeader(..),
     TransportHeaderItem(..),
+    SecurityRequirement(..),
 
     WaitingRef(..),
     WaitingRefCallback,
@@ -93,6 +94,11 @@ data TransportHeaderItem
 newtype Cookie = Cookie ByteString
     deriving (Eq, Show)
 
+data SecurityRequirement = PlaintextOnly
+                         | PlaintextAllowed
+                         | EncryptedOnly
+    deriving (Eq, Ord)
+
 isHeaderItemAcknowledged :: TransportHeaderItem -> Bool
 isHeaderItemAcknowledged = \case
     Acknowledged {} -> False
@@ -165,10 +171,10 @@ data GlobalState addr = (Eq addr, Show addr) => GlobalState
 data Connection addr = Connection
     { cGlobalState :: GlobalState addr
     , cAddress :: addr
-    , cDataUp :: Flow (Bool, TransportPacket PartialObject) (Bool, TransportPacket Ref, [TransportHeaderItem])
-    , cDataInternal :: Flow (Bool, TransportPacket Ref, [TransportHeaderItem]) (Bool, TransportPacket PartialObject)
+    , cDataUp :: Flow (Bool, TransportPacket PartialObject) (SecurityRequirement, TransportPacket Ref, [TransportHeaderItem])
+    , cDataInternal :: Flow (SecurityRequirement, TransportPacket Ref, [TransportHeaderItem]) (Bool, TransportPacket PartialObject)
     , cChannel :: TVar ChannelState
-    , cSecureOutQueue :: TQueue (Bool, TransportPacket Ref, [TransportHeaderItem])
+    , cSecureOutQueue :: TQueue (SecurityRequirement, TransportPacket Ref, [TransportHeaderItem])
     , cMaxInFlightPackets :: TVar Int
     , cReservedPackets :: TVar Int
     , cSentPackets :: TVar [SentPacket]
@@ -180,7 +186,7 @@ data Connection addr = Connection
 connAddress :: Connection addr -> addr
 connAddress = cAddress
 
-connData :: Connection addr -> Flow (Bool, TransportPacket PartialObject) (Bool, TransportPacket Ref, [TransportHeaderItem])
+connData :: Connection addr -> Flow (Bool, TransportPacket PartialObject) (SecurityRequirement, TransportPacket Ref, [TransportHeaderItem])
 connData = cDataUp
 
 connGetChannel :: Connection addr -> STM ChannelState
@@ -734,13 +740,13 @@ processOutgoing gs@GlobalState {..} = do
                     | isJust mbch = do
                         acks <- readTVar cToAcknowledge
                         if null acks then retry
-                                     else return ((True, TransportPacket (TransportHeader []) [], []), Nothing)
+                                     else return ((EncryptedOnly, TransportPacket (TransportHeader []) [], []), Nothing)
                     | otherwise = retry
 
             ((secure, packet@(TransportPacket (TransportHeader hitems) content), plainAckedBy), mbReserved) <-
                 checkOutstanding <|> checkDataInternal <|> checkAcknowledgements
 
-            when (isNothing mbch && secure) $ do
+            when (isNothing mbch && secure >= EncryptedOnly) $ do
                 writeTQueue cSecureOutQueue (secure, packet, plainAckedBy)
 
             acknowledge <- case mbch of
@@ -759,16 +765,17 @@ processOutgoing gs@GlobalState {..} = do
                                  [] -> return ()
                                  xs -> sequence_ $ map (streamAccepted conn) xs
 
-                mbs <- case mbch of
-                    Just ch -> do
+                mbs <- case (secure, mbch) of
+                    (PlaintextOnly, _)          -> return $ Just (BL.toStrict plain, plainAckedBy)
+                    (PlaintextAllowed, Nothing) -> return $ Just (BL.toStrict plain, plainAckedBy)
+                    (_, Just ch) -> do
                         runExceptT (channelEncrypt ch $ BL.toStrict $ 0x00 `BL.cons` plain) >>= \case
                             Right (ctext, counter) -> do
                                 let isAcked = any isHeaderItemAcknowledged hitems
                                 return $ Just (0x80 `B.cons` ctext, if isAcked then [ AcknowledgedSingle $ fromIntegral counter ] else [])
                             Left err -> do atomically $ gLog $ "Failed to encrypt data: " ++ err
                                            return Nothing
-                    Nothing | secure    -> return Nothing
-                            | otherwise -> return $ Just (BL.toStrict plain, plainAckedBy)
+                    (EncryptedOnly, Nothing)    -> return Nothing
 
                 case mbs of
                     Just (bs, ackedBy) -> do

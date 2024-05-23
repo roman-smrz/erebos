@@ -108,7 +108,7 @@ defaultServerOptions = ServerOptions
 data Peer = Peer
     { peerAddress :: PeerAddress
     , peerServer_ :: Server
-    , peerConnection :: TVar (Either [(Bool, TransportPacket Ref, [TransportHeaderItem])] (Connection PeerAddress))
+    , peerConnection :: TVar (Either [(SecurityRequirement, TransportPacket Ref, [TransportHeaderItem])] (Connection PeerAddress))
     , peerIdentityVar :: TVar PeerIdentity
     , peerStorage_ :: Storage
     , peerInStorage :: PartialStorage
@@ -391,13 +391,17 @@ instance MonadFail PacketHandler where
 runPacketHandler :: Bool -> Peer -> PacketHandler () -> STM ()
 runPacketHandler secure peer@Peer {..} act = do
     let logd = writeTQueue $ serverErrorLog peerServer_
-    runExceptT (flip execStateT (PacketHandlerState peer [] [] []) $ unPacketHandler act) >>= \case
+    runExceptT (flip execStateT (PacketHandlerState peer [] [] [] False) $ unPacketHandler act) >>= \case
         Left err -> do
             logd $ "Error in handling packet from " ++ show peerAddress ++ ": " ++ err
         Right ph -> do
             when (not $ null $ phHead ph) $ do
                 let packet = TransportPacket (TransportHeader $ phHead ph) (phBody ph)
-                sendToPeerS' secure peer (phAckedBy ph) packet
+                    secreq = case (secure, phPlaintextReply ph) of
+                                  (True, _) -> EncryptedOnly
+                                  (False, False) -> PlaintextAllowed
+                                  (False, True) -> PlaintextOnly
+                sendToPeerS' secreq peer (phAckedBy ph) packet
 
 liftSTM :: STM a -> PacketHandler a
 liftSTM = PacketHandler . lift . lift
@@ -416,6 +420,7 @@ data PacketHandlerState = PacketHandlerState
     , phHead :: [TransportHeaderItem]
     , phAckedBy :: [TransportHeaderItem]
     , phBody :: [Ref]
+    , phPlaintextReply :: Bool
     }
 
 addHeader :: TransportHeaderItem -> PacketHandler ()
@@ -426,6 +431,9 @@ addAckedBy hs = modify $ \ph -> ph { phAckedBy = foldr appendDistinct (phAckedBy
 
 addBody :: Ref -> PacketHandler ()
 addBody r = modify $ \ph -> ph { phBody = r `appendDistinct` phBody ph }
+
+keepPlaintextReply :: PacketHandler ()
+keepPlaintextReply = modify $ \ph -> ph { phPlaintextReply = True }
 
 openStream :: PacketHandler RawStreamWriter
 openStream = do
@@ -489,6 +497,11 @@ handlePacket identity secure peer chanSvc svcs (TransportHeader headers) prefs =
                         partialRefFromDigest (peerInStorage peer) dgst
                     addHeader $ DataResponse dgst
                     addAckedBy [ Acknowledged dgst, Rejected dgst ]
+
+                    -- Plaintext request may indicate the peer has restarted/changed or
+                    -- otherwise lost the channel, so keep the reply plaintext as well.
+                    when (not secure) keepPlaintextReply
+
                     let bytes = lazyLoadBytes mref
                     -- TODO: MTU
                     if (secure && BL.length bytes > 500)
@@ -762,17 +775,17 @@ sendToPeerList peer parts = do
         ackedBy = concat [[ Acknowledged r, Rejected r, DataRequest r ] | r <- dgsts ]
     liftIO $ atomically $ sendToPeerS peer ackedBy packet
 
-sendToPeerS' :: Bool -> Peer -> [TransportHeaderItem] -> TransportPacket Ref -> STM ()
+sendToPeerS' :: SecurityRequirement -> Peer -> [TransportHeaderItem] -> TransportPacket Ref -> STM ()
 sendToPeerS' secure Peer {..} ackedBy packet = do
     readTVar peerConnection >>= \case
         Left xs -> writeTVar peerConnection $ Left $ (secure, packet, ackedBy) : xs
         Right conn -> writeFlow (connData conn) (secure, packet, ackedBy)
 
 sendToPeerS :: Peer -> [TransportHeaderItem] -> TransportPacket Ref -> STM ()
-sendToPeerS = sendToPeerS' True
+sendToPeerS = sendToPeerS' EncryptedOnly
 
 sendToPeerPlain :: Peer -> [TransportHeaderItem] -> TransportPacket Ref -> STM ()
-sendToPeerPlain = sendToPeerS' False
+sendToPeerPlain = sendToPeerS' PlaintextAllowed
 
 sendToPeerWith :: forall s m. (Service s, MonadIO m, MonadError String m) => Peer -> (ServiceState s -> ExceptT String IO (Maybe s, ServiceState s)) -> m ()
 sendToPeerWith peer fobj = do
