@@ -473,9 +473,9 @@ handlePacket identity secure peer chanSvc svcs (TransportHeader headers) prefs =
             [ [ storedRef sidentity ]
             , map storedRef $ idUpdates identity
             , case ochannel of
-                   ChannelOurRequest _ req  -> [ storedRef req ]
-                   ChannelOurAccept _ acc _ -> [ storedRef acc ]
-                   _                        -> []
+                   ChannelOurRequest req  -> [ storedRef req ]
+                   ChannelOurAccept acc _ -> [ storedRef acc ]
+                   _                      -> []
             ]
 
     runPacketHandler secure peer $ do
@@ -483,7 +483,7 @@ handlePacket identity secure peer chanSvc svcs (TransportHeader headers) prefs =
         forM_ headers $ \case
             Acknowledged dgst -> do
                 liftSTM (getPeerChannel peer) >>= \case
-                    ChannelOurAccept _ acc ch | refDigest (storedRef acc) == dgst -> do
+                    ChannelOurAccept acc ch | refDigest (storedRef acc) == dgst -> do
                         liftSTM $ finalizedChannel peer ch identity
                     _ -> return ()
 
@@ -552,22 +552,22 @@ handlePacket identity secure peer chanSvc svcs (TransportHeader headers) prefs =
                     _ -> return ()
 
             TrChannelRequest dgst -> do
-                let process cookie = do
+                let process = do
                         addHeader $ Acknowledged dgst
                         wref <- newWaitingRef dgst $ handleChannelRequest peer identity
-                        liftSTM $ setPeerChannel peer $ ChannelPeerRequest cookie wref
+                        liftSTM $ setPeerChannel peer $ ChannelPeerRequest wref
                     reject = addHeader $ Rejected dgst
 
                 liftSTM (getPeerChannel peer) >>= \case
                     ChannelNone {} -> return ()
                     ChannelCookieWait {} -> return ()
-                    ChannelCookieReceived cookie -> process $ Just cookie
-                    ChannelCookieConfirmed cookie -> process $ Just cookie
-                    ChannelOurRequest mbcookie our | dgst < refDigest (storedRef our) -> process mbcookie
-                                                   | otherwise -> reject
-                    ChannelPeerRequest mbcookie _ -> process mbcookie
+                    ChannelCookieReceived {} -> process
+                    ChannelCookieConfirmed {} -> process
+                    ChannelOurRequest our | dgst < refDigest (storedRef our) -> process
+                                          | otherwise -> reject
+                    ChannelPeerRequest {} -> process
                     ChannelOurAccept {} -> reject
-                    ChannelEstablished {} -> process Nothing
+                    ChannelEstablished {} -> process
 
             TrChannelAccept dgst -> do
                 let process = do
@@ -580,8 +580,8 @@ handlePacket identity secure peer chanSvc svcs (TransportHeader headers) prefs =
                     ChannelCookieConfirmed {} -> reject
                     ChannelOurRequest {} -> process
                     ChannelPeerRequest {} -> process
-                    ChannelOurAccept _ our _ | dgst < refDigest (storedRef our) -> process
-                                             | otherwise -> addHeader $ Rejected dgst
+                    ChannelOurAccept our _ | dgst < refDigest (storedRef our) -> process
+                                           | otherwise -> addHeader $ Rejected dgst
                     ChannelEstablished {} -> process
 
             ServiceType _ -> return ()
@@ -617,10 +617,10 @@ setupChannel identity peer upid = do
             ]
     liftIO $ atomically $ do
         getPeerChannel peer >>= \case
-            ChannelCookieConfirmed cookie -> do
+            ChannelCookieConfirmed -> do
                 sendToPeerPlain peer [ Acknowledged reqref, Rejected reqref ] $
                     TransportPacket (TransportHeader hitems) [storedRef req]
-                setPeerChannel peer $ ChannelOurRequest (Just cookie) req
+                setPeerChannel peer $ ChannelOurRequest req
             _ -> return ()
 
 handleChannelRequest :: Peer -> UnifiedIdentity -> Ref -> WaitingRefCallback
@@ -629,8 +629,8 @@ handleChannelRequest peer identity req = do
         (acc, ch) <- flip runReaderT (peerStorage peer) $ acceptChannelRequest identity upid (wrappedLoad req)
         liftIO $ atomically $ do
             getPeerChannel peer >>= \case
-                ChannelPeerRequest mbcookie wr | wrDigest wr == refDigest req -> do
-                    setPeerChannel peer $ ChannelOurAccept mbcookie acc ch
+                ChannelPeerRequest wr | wrDigest wr == refDigest req -> do
+                    setPeerChannel peer $ ChannelOurAccept acc ch
                     let accref = refDigest $ storedRef acc
                         header = TrChannelAccept accref
                         ackedBy = [ Acknowledged accref, Rejected accref ]
