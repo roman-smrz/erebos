@@ -176,3 +176,52 @@ test ManyStreams:
 			send "test-message-send 1 $ref"
 			expect /test-message-send done/
 			expect /test-message-received blob 100[2-4] $ref/ from p2
+
+
+test Reconnection:
+	spawn as p1
+	with p1:
+		send "create-identity Device1"
+		send "start-server"
+
+	node n
+	local:
+		spawn as p2 on n
+		send "create-identity Device2" to p2
+		send "start-server" to p2
+
+		expect from p1:
+			/peer 1 addr ${p2.node.ip} 29665/
+			/peer 1 id Device2/
+		expect from p2:
+			/peer 1 addr ${p1.node.ip} 29665/
+			/peer 1 id Device1/
+
+		with p1:
+			send "store blob"
+			send "message1"
+			send ""
+			expect /store-done (blake2#[0-9a-f]*)/ from p1 capture message
+
+			send "test-message-send 1 $message"
+			expect /test-message-send done/
+			expect /test-message-received blob [0-9]+ $message/ from p2
+
+	local:
+		spawn as p2 on n
+		send "start-server" to p2
+		send "peer-add ${p1.node.ip}" to p2
+
+		expect from p2:
+			/peer 1 addr ${p1.node.ip} 29665/
+			/peer 1 id Device1/
+
+		with p1:
+			send "store blob"
+			send "message2"
+			send ""
+			expect /store-done (blake2#[0-9a-f]*)/ from p1 capture message
+
+			send "test-message-send 1 $message"
+			expect /test-message-send done/
+			expect /test-message-received blob [0-9]+ $message/ from p2
