@@ -112,10 +112,29 @@ import Erebos.Storage.Internal
 type Storage = Storage' Complete
 type PartialStorage = Storage' Partial
 
+storageVersion :: String
+storageVersion = "0.1"
+
 openStorage :: FilePath -> IO Storage
-openStorage path = do
-    createDirectoryIfMissing True $ path ++ "/objects"
-    createDirectoryIfMissing True $ path ++ "/heads"
+openStorage path = modifyIOError annotate $ do
+    let versionPath = path </> "erebos-storage"
+    doesFileExist versionPath >>= \case
+        True -> readFile versionPath >>= \case
+            content | (ver:_) <- lines content, ver == storageVersion -> return ()
+                    | otherwise -> fail "unsupported storage version"
+        False -> do
+            doesDirectoryExist path >>= \case
+                True -> do
+                    listDirectory path >>= \case
+                        contents@(_:_) | "objects" `notElem` contents || "heads" `notElem` contents
+                            -> fail "directory is neither empty, nor an existing erebos storage"
+                        _ -> return ()
+                False -> do
+                    createDirectoryIfMissing True $ path
+            writeFile versionPath $ storageVersion <> "\n"
+
+    createDirectoryIfMissing True $ path </> "objects"
+    createDirectoryIfMissing True $ path </> "heads"
     watchers <- newMVar ([], WatchList 1 [])
     refgen <- newMVar =<< HT.new
     refroots <- newMVar =<< HT.new
@@ -125,6 +144,8 @@ openStorage path = do
         , stRefGeneration = refgen
         , stRefRoots = refroots
         }
+  where
+    annotate e = annotateIOError e "failed to open storage" Nothing (Just path)
 
 memoryStorage' :: IO (Storage' c')
 memoryStorage' = do
