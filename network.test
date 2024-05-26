@@ -201,12 +201,19 @@ test Reconnection:
 			send "store blob"
 			send "message1"
 			send ""
-			expect /store-done (blake2#[0-9a-f]*)/ from p1 capture message
+			expect /store-done (blake2#[0-9a-f]*)/ capture message
 
 			send "test-message-send 1 $message"
 			expect /test-message-send done/
 			expect /test-message-received blob [0-9]+ $message/ from p2
 
+			send "peer-list"
+			expect /peer-list-item 1 addr ${p2.node.ip} 29665 id Device2/
+			local:
+				expect /peer-list-(.*)/ capture done
+				guard (done == "done")
+
+	# Restart process on node 'n'
 	local:
 		spawn as p2 on n
 		send "start-server" to p2
@@ -220,8 +227,100 @@ test Reconnection:
 			send "store blob"
 			send "message2"
 			send ""
-			expect /store-done (blake2#[0-9a-f]*)/ from p1 capture message
+			expect /store-done (blake2#[0-9a-f]*)/ capture message
 
 			send "test-message-send 1 $message"
 			expect /test-message-send done/
 			expect /test-message-received blob [0-9]+ $message/ from p2
+
+		# Drop and re-add peer p2:
+		with p1:
+			send "peer-list"
+			expect /peer-list-item 1 addr ${p2.node.ip} 29665 id Device2/
+			local:
+				expect /peer-list-(.*)/ capture done
+				guard (done == "done")
+
+			send "peer-drop 1"
+			send "peer-list"
+			local:
+				expect /peer-list-(.*)/ capture done
+				guard (done == "done")
+
+			send "peer-add ${p2.node.ip}"
+			expect /peer 2 addr ${p2.node.ip} 29665/
+			expect /peer 2 id Device2/
+
+			send "peer-list"
+			expect /peer-list-item 2 addr ${p2.node.ip} 29665 id Device2/
+			local:
+				expect /peer-list-(.*)/ capture done
+				guard (done == "done")
+
+			send "store blob"
+			send "message3"
+			send ""
+			expect /store-done (blake2#[0-9a-f]*)/ capture message
+
+			send "test-message-send 2 $message"
+			expect /test-message-send done/
+			expect /test-message-received blob [0-9]+ $message/ from p2
+
+		# Drop on both sides and re-add:
+		with p2:
+			send "peer-list"
+			expect /peer-list-item 1 addr ${p1.node.ip} 29665 id Device1/
+			local:
+				expect /peer-list-(.*)/ capture done
+				guard (done == "done")
+
+			send "peer-drop 1"
+			send "peer-list"
+			local:
+				expect /peer-list-(.*)/ capture done
+				guard (done == "done")
+
+		with p1:
+			send "peer-list"
+			expect /peer-list-item 2 addr ${p2.node.ip} 29665 id Device2/
+			local:
+				expect /peer-list-(.*)/ capture done
+				guard (done == "done")
+
+			send "peer-drop 2"
+			send "peer-list"
+			local:
+				expect /peer-list-(.*)/ capture done
+				guard (done == "done")
+
+		send "peer-add ${p1.node.ip}" to p2
+
+		with p2:
+			expect /peer 2 addr ${p1.node.ip} 29665/ from p2
+			expect /peer 2 id Device1/ from p2
+
+			send "peer-list"
+			expect /peer-list-item 2 addr ${p1.node.ip} 29665 id Device1/
+			local:
+				expect /peer-list-(.*)/ capture done
+				guard (done == "done")
+
+			send "store blob"
+			send "message4"
+			send ""
+			expect /store-done (blake2#[0-9a-f]*)/ capture message
+
+			send "test-message-send 2 $message"
+			expect /test-message-send done/
+
+			with p1:
+				expect /peer 3 addr ${p2.node.ip} 29665/
+				expect /peer 3 id Device2/
+
+				send "peer-list"
+				expect /peer-list-item 3 addr ${p2.node.ip} 29665 id Device2/
+				local:
+					expect /peer-list-(.*)/ capture done
+					guard (done == "done")
+
+				expect /test-message-received blob [0-9]+ $message/
