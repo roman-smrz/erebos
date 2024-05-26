@@ -281,7 +281,9 @@ interactiveLoop st opts = runInputT inputSettings $ do
                 { ciServer = server
                 , ciLine = line
                 , ciPrint = extPrintLn
-                , ciPeers = liftIO $ readMVar peers
+                , ciPeers = liftIO $ modifyMVar peers $ \ps -> do
+                    ps' <- filterM (fmap not . isPeerDropped . fst) ps
+                    return (ps', ps')
                 , ciContextOptions = liftIO $ readMVar contextOptions
                 , ciSetContextOptions = \ctxs -> liftIO $ modifyMVar_ contextOptions $ const $ return ctxs
                 }
@@ -372,6 +374,7 @@ commands =
     [ ("history", cmdHistory)
     , ("peers", cmdPeers)
     , ("peer-add", cmdPeerAdd)
+    , ("peer-drop", cmdPeerDrop)
     , ("send", cmdSend)
     , ("update-identity", cmdUpdateIdentity)
     , ("attach", cmdAttach)
@@ -422,6 +425,11 @@ cmdPeerAdd = void $ do
         [] -> throwError "missing peer address"
     addr:_ <- liftIO $ getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just hostname) (Just port)
     liftIO $ serverPeer server (addrAddress addr)
+
+cmdPeerDrop :: Command
+cmdPeerDrop = do
+    dropPeer =<< getSelectedPeer
+    modify $ \s -> s { csContext = NoContext }
 
 showPeer :: PeerIdentity -> PeerAddress -> String
 showPeer pidentity paddr =

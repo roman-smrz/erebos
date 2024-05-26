@@ -246,6 +246,8 @@ commands = map (T.pack *** id)
     , ("start-server", cmdStartServer)
     , ("stop-server", cmdStopServer)
     , ("peer-add", cmdPeerAdd)
+    , ("peer-drop", cmdPeerDrop)
+    , ("peer-list", cmdPeerList)
     , ("test-message-send", cmdTestMessageSend)
     , ("shared-state-get", cmdSharedStateGet)
     , ("shared-state-wait", cmdSharedStateWait)
@@ -409,6 +411,29 @@ cmdPeerAdd = do
                             (p:_) -> p
     addr:_ <- liftIO $ getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just host) (Just port)
     void $ liftIO $ serverPeer rsServer (addrAddress addr)
+
+cmdPeerDrop :: Command
+cmdPeerDrop = do
+    [spidx] <- asks tiParams
+    peer <- getPeer spidx
+    liftIO $ dropPeer peer
+
+cmdPeerList :: Command
+cmdPeerList = do
+    Just RunningServer {..} <- gets tsServer
+    peers <- liftIO $ getCurrentPeerList rsServer
+    tpeers <- liftIO $ readMVar rsPeers
+    forM_ peers $ \peer -> do
+        Just (n, _) <- return $ find ((peer==).snd) . snd $ tpeers
+        mbpid <- peerIdentity peer
+        cmdOut $ unwords $ concat
+            [ [ "peer-list-item", show n ]
+            , [ "addr", show (peerAddress peer) ]
+            , case mbpid of PeerIdentityFull pid -> ("id":) $ map (maybe "<unnamed>" T.unpack . idName) (unfoldOwners pid)
+                            _ -> []
+            ]
+    cmdOut "peer-list-done"
+
 
 cmdTestMessageSend :: Command
 cmdTestMessageSend = do

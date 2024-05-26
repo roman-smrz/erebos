@@ -20,6 +20,7 @@ module Erebos.Network.Protocol (
     connData,
     connGetChannel,
     connSetChannel,
+    connClose,
 
     RawStreamReader, RawStreamWriter,
     connAddWriteStream,
@@ -44,6 +45,7 @@ import Data.ByteString (ByteString)
 import Data.ByteString qualified as B
 import Data.ByteString.Char8 qualified as BC
 import Data.ByteString.Lazy qualified as BL
+import Data.Function
 import Data.List
 import Data.Maybe
 import Data.Text (Text)
@@ -184,6 +186,9 @@ data Connection addr = Connection
     , cOutStreams :: TVar [(Word8, Stream)]
     }
 
+instance Eq (Connection addr) where
+    (==) = (==) `on` cChannel
+
 connAddress :: Connection addr -> addr
 connAddress = cAddress
 
@@ -196,6 +201,12 @@ connGetChannel Connection {..} = readTVar cChannel
 connSetChannel :: Connection addr -> ChannelState -> STM ()
 connSetChannel Connection {..} ch = do
     writeTVar cChannel ch
+
+connClose :: Connection addr -> STM ()
+connClose conn@Connection {..} = do
+    let GlobalState {..} = cGlobalState
+    writeTVar cChannel ChannelClosed
+    writeTVar gConnections . filter (/=conn) =<< readTVar gConnections
 
 connAddWriteStream :: Connection addr -> STM (Either String (TransportHeaderItem, RawStreamWriter, IO ()))
 connAddWriteStream conn@Connection {..} = do
@@ -380,6 +391,7 @@ data ChannelState = ChannelNone
                   | ChannelPeerRequest WaitingRef
                   | ChannelOurAccept (Stored ChannelAccept) Channel
                   | ChannelEstablished Channel
+                  | ChannelClosed
 
 data ReservedToSend = ReservedToSend
     { rsAckedBy :: Maybe (TransportHeaderItem -> Bool)

@@ -125,6 +125,10 @@ Reject device attachment request or verification code of selected peer.
 `/peer-add <host> [<port>]`  
 Manually add network peer with given hostname or IP address.
 
+`/peer-drop`  
+Drop the currently selected peer. Afterwards, the connection can be
+re-established by either side.
+
 `/update-identity`  
 Interactively update current identity information
 
