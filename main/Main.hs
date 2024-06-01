@@ -236,17 +236,21 @@ interactiveLoop st opts = runInputT inputSettings $ do
         peer <- getNextPeerChange server
         peerIdentity peer >>= \case
             pid@(PeerIdentityFull _) -> do
+                dropped <- isPeerDropped peer
                 let shown = showPeer pid $ peerAddress peer
-                let update [] = ([(peer, shown)], Nothing)
-                    update ((p,s):ps) | p == peer = ((peer, shown) : ps, Just s)
-                                      | otherwise = first ((p,s):) $ update ps
+                let update [] = ([(peer, shown)], (Nothing, "NEW"))
+                    update ((p,s):ps)
+                        | p == peer && dropped = (ps, (Nothing, "DEL"))
+                        | p == peer = ((peer, shown) : ps, (Just s, "UPD"))
+                        | otherwise = first ((p,s):) $ update ps
                 let ctxUpdate n [] = ([SelectedPeer peer], n)
                     ctxUpdate n (ctx:ctxs)
                         | SelectedPeer p <- ctx, p == peer = (ctx:ctxs, n)
                         | otherwise = first (ctx:) $ ctxUpdate (n + 1) ctxs
-                op <- modifyMVar peers (return . update)
+                (op, updateType) <- modifyMVar peers (return . update)
+                let updateType' = if dropped then "DEL" else updateType
                 idx <- modifyMVar contextOptions (return . ctxUpdate (1 :: Int))
-                when (Just shown /= op) $ extPrint $ "[" <> show idx <> "] PEER " <> shown
+                when (Just shown /= op) $ extPrint $ "[" <> show idx <> "] PEER " <> updateType' <> " " <> shown
             _ -> return ()
 
     let getInputLines prompt = do

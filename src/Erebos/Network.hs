@@ -342,12 +342,17 @@ startServer opt serverOrigHead logd' serverServices = do
                                             _ -> return ()
                                 Nothing -> return ()
 
-                            forever $ do
-                                (secure, TransportPacket header objs) <- readFlowIO $ connData conn
-                                prefs <- forM objs $ storeObject $ peerInStorage peer
-                                identity <- readMVar serverIdentity_
-                                let svcs = map someServiceID serverServices
-                                handlePacket identity secure peer chanSvc svcs header prefs
+                            let peerLoop = readFlowIO (connData conn) >>= \case
+                                    Just (secure, TransportPacket header objs) -> do
+                                        prefs <- forM objs $ storeObject $ peerInStorage peer
+                                        identity <- readMVar serverIdentity_
+                                        let svcs = map someServiceID serverServices
+                                        handlePacket identity secure peer chanSvc svcs header prefs
+                                        peerLoop
+                                    Nothing -> do
+                                        dropPeer peer
+                                        atomically $ writeTChan serverChanPeer peer
+                            peerLoop
 
                     ReceivedAnnounce addr _ -> do
                         void $ serverPeer' server addr
