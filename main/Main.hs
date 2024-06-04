@@ -292,9 +292,12 @@ interactiveLoop st opts = runInputT inputSettings $ do
                 , ciSetContextOptions = \ctxs -> liftIO $ modifyMVar_ contextOptions $ const $ return ctxs
                 }
             case res of
-                 Right cstate' -> return cstate'
-                 Left err -> do lift $ lift $ extPrint $ "Error: " ++ err
-                                return cstate
+                Right cstate'
+                    | csQuit cstate' -> mzero
+                    | otherwise      -> return cstate'
+                Left err -> do
+                    lift $ lift $ extPrint $ "Error: " ++ err
+                    return cstate
 
     let loop (Just cstate) = runMaybeT (process cstate) >>= loop
         loop Nothing = return ()
@@ -305,6 +308,7 @@ interactiveLoop st opts = runInputT inputSettings $ do
         , csIceSessions = []
 #endif
         , csIcePeer = Nothing
+        , csQuit = False
         }
 
 
@@ -324,6 +328,7 @@ data CommandState = CommandState
     , csIceSessions :: [IceSession]
 #endif
     , csIcePeer :: Maybe Peer
+    , csQuit :: Bool
     }
 
 data CommandContext = NoContext
@@ -399,6 +404,7 @@ commands =
     , ("ice-connect", cmdIceConnect)
     , ("ice-send", cmdIceSend)
 #endif
+    , ("quit", cmdQuit)
     ]
 
 commandCompletion :: CompletionFunc IO
@@ -649,3 +655,6 @@ cmdIceSend = void $ do
     liftIO $ serverPeerIce server s
 
 #endif
+
+cmdQuit :: Command
+cmdQuit = modify $ \s -> s { csQuit = True }

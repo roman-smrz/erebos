@@ -40,6 +40,9 @@ followed by command name and parameters (if any) separated by spaces. When
 a conversation is selected, message to send there is entered directly on
 the command prompt.
 
+The session can be terminated either by end-of-input (typically `Ctrl-d`) or
+using the `/quit` command.
+
 ### Messaging
 
 `/peers`  
@@ -131,6 +134,9 @@ re-established by either side.
 
 `/update-identity`  
 Interactively update current identity information
+
+`/quit`  
+Quit the erebos tool.
 
 
 Storage
