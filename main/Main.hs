@@ -214,11 +214,53 @@ interactiveLoop st opts = runInputT inputSettings $ do
     erebosHead <- liftIO $ loadLocalStateHead st
     outputStrLn $ T.unpack $ displayIdentity $ headLocalIdentity erebosHead
 
-    haveTerminalUI >>= \case True -> return ()
-                             False -> error "Requires terminal"
+    tui <- haveTerminalUI
     extPrint <- getExternalPrint
     let extPrintLn str = extPrint $ case reverse str of ('\n':_) -> str
                                                         _ -> str ++ "\n";
+
+    let getInputLinesTui eprompt = do
+            prompt <- case eprompt of
+                Left cstate -> do
+                    pname <- case csContext cstate of
+                        NoContext -> return ""
+                        SelectedPeer peer -> peerIdentity peer >>= return . \case
+                            PeerIdentityFull pid -> maybe "<unnamed>" T.unpack $ idName $ finalOwner pid
+                            PeerIdentityRef wref _ -> "<" ++ BC.unpack (showRefDigest $ wrDigest wref) ++ ">"
+                            PeerIdentityUnknown _  -> "<unknown>"
+                        SelectedContact contact -> return $ T.unpack $ contactName contact
+                        SelectedConversation conv -> return $ T.unpack $ conversationName conv
+                    return $ pname ++ "> "
+                Right prompt -> return prompt
+            Just input <- lift $ getInputLine prompt
+            case reverse input of
+                 _ | all isSpace input -> getInputLinesTui eprompt
+                 '\\':rest -> (reverse ('\n':rest) ++) <$> getInputLinesTui (Right ">> ")
+                 _         -> return input
+
+        getInputCommandTui cstate = do
+            input <- getInputLinesTui cstate
+            let (CommandM cmd, line) = case input of
+                    '/':rest -> let (scmd, args) = dropWhile isSpace <$> span (\c -> isAlphaNum c || c == '-') rest
+                                 in if not (null scmd) && all isDigit scmd
+                                       then (cmdSelectContext, scmd)
+                                       else (fromMaybe (cmdUnknown scmd) $ lookup scmd commands, args)
+                    _        -> (cmdSend, input)
+            return (cmd, line)
+
+        getInputLinesPipe = do
+            lift (getInputLine "") >>= \case
+                Just input -> return input
+                Nothing -> liftIO $ forever $ threadDelay 100000000
+
+        getInputCommandPipe _ = do
+            input <- getInputLinesPipe
+            let (scmd, args) = dropWhile isSpace <$> span (\c -> isAlphaNum c || c == '-') input
+            let (CommandM cmd, line) = (fromMaybe (cmdUnknown scmd) $ lookup scmd commands, args)
+            return (cmd, line)
+
+    let getInputCommand = if tui then getInputCommandTui . Left
+                                 else getInputCommandPipe
 
     _ <- liftIO $ do
         tzone <- getCurrentTimeZone
@@ -250,36 +292,15 @@ interactiveLoop st opts = runInputT inputSettings $ do
                 (op, updateType) <- modifyMVar peers (return . update)
                 let updateType' = if dropped then "DEL" else updateType
                 idx <- modifyMVar contextOptions (return . ctxUpdate (1 :: Int))
-                when (Just shown /= op) $ extPrint $ "[" <> show idx <> "] PEER " <> updateType' <> " " <> shown
+                when (Just shown /= op) $ extPrintLn $ "[" <> show idx <> "] PEER " <> updateType' <> " " <> shown
             _ -> return ()
-
-    let getInputLines prompt = do
-            Just input <- lift $ getInputLine prompt
-            case reverse input of
-                 _ | all isSpace input -> getInputLines prompt
-                 '\\':rest -> (reverse ('\n':rest) ++) <$> getInputLines ">> "
-                 _         -> return input
 
     let process :: CommandState -> MaybeT (InputT IO) CommandState
         process cstate = do
-            pname <- case csContext cstate of
-                        NoContext -> return ""
-                        SelectedPeer peer -> peerIdentity peer >>= return . \case
-                            PeerIdentityFull pid -> maybe "<unnamed>" T.unpack $ idName $ finalOwner pid
-                            PeerIdentityRef wref _ -> "<" ++ BC.unpack (showRefDigest $ wrDigest wref) ++ ">"
-                            PeerIdentityUnknown _  -> "<unknown>"
-                        SelectedContact contact -> return $ T.unpack $ contactName contact
-                        SelectedConversation conv -> return $ T.unpack $ conversationName conv
-            input <- getInputLines $ pname ++ "> "
-            let (CommandM cmd, line) = case input of
-                    '/':rest -> let (scmd, args) = dropWhile isSpace <$> span (\c -> isAlphaNum c || c == '-') rest
-                                 in if not (null scmd) && all isDigit scmd
-                                       then (cmdSelectContext $ read scmd, args)
-                                       else (fromMaybe (cmdUnknown scmd) $ lookup scmd commands, args)
-                    _        -> (cmdSend, input)
+            (cmd, line) <- getInputCommand cstate
             h <- liftIO (reloadHead $ csHead cstate) >>= \case
                 Just h  -> return h
-                Nothing -> do lift $ lift $ extPrint "current head deleted"
+                Nothing -> do lift $ lift $ extPrintLn "current head deleted"
                               mzero
             res <- liftIO $ runExceptT $ flip execStateT cstate { csHead = h } $ runReaderT cmd CommandInput
                 { ciServer = server
@@ -296,7 +317,7 @@ interactiveLoop st opts = runInputT inputSettings $ do
                     | csQuit cstate' -> mzero
                     | otherwise      -> return cstate'
                 Left err -> do
-                    lift $ lift $ extPrint $ "Error: " ++ err
+                    lift $ lift $ extPrintLn $ "Error: " ++ err
                     return cstate
 
     let loop (Just cstate) = runMaybeT (process cstate) >>= loop
@@ -404,6 +425,7 @@ commands =
     , ("ice-connect", cmdIceConnect)
     , ("ice-send", cmdIceSend)
 #endif
+    , ("select", cmdSelectContext)
     , ("quit", cmdQuit)
     ]
 
@@ -449,10 +471,12 @@ showPeer pidentity paddr =
                     PeerIdentityFull pid   -> T.unpack $ displayIdentity pid
      in name ++ " [" ++ show paddr ++ "]"
 
-cmdSelectContext :: Int -> Command
-cmdSelectContext n = join (asks ciContextOptions) >>= \ctxs -> if
-    | n > 0, (ctx : _) <- drop (n - 1) ctxs -> modify $ \s -> s { csContext = ctx }
-    | otherwise -> throwError "invalid index"
+cmdSelectContext :: Command
+cmdSelectContext = do
+    n <- read <$> asks ciLine
+    join (asks ciContextOptions) >>= \ctxs -> if
+        | n > 0, (ctx : _) <- drop (n - 1) ctxs -> modify $ \s -> s { csContext = ctx }
+        | otherwise -> throwError "invalid index"
 
 cmdSend :: Command
 cmdSend = void $ do
