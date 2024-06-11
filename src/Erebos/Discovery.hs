@@ -4,6 +4,7 @@ module Erebos.Discovery (
 ) where
 
 import Control.Concurrent
+import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
 
