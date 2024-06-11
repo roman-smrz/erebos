@@ -418,6 +418,7 @@ commands =
     [ ("history", cmdHistory)
     , ("peers", cmdPeers)
     , ("peer-add", cmdPeerAdd)
+    , ("peer-add-public", cmdPeerAddPublic)
     , ("peer-drop", cmdPeerDrop)
     , ("send", cmdSend)
     , ("update-identity", cmdUpdateIdentity)
@@ -471,6 +472,12 @@ cmdPeerAdd = void $ do
         [] -> throwError "missing peer address"
     addr:_ <- liftIO $ getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just hostname) (Just port)
     liftIO $ serverPeer server (addrAddress addr)
+
+cmdPeerAddPublic :: Command
+cmdPeerAddPublic = do
+    server <- asks ciServer
+    addr:_ <- liftIO $ getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just "discovery1.erebosprotocol.net") (Just (show discoveryPort))
+    void $ liftIO $ serverPeer server (addrAddress addr)
 
 cmdPeerDrop :: Command
 cmdPeerDrop = do
