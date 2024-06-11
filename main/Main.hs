@@ -20,9 +20,10 @@ import Data.Char
 import Data.List
 import Data.Maybe
 import Data.Ord
-import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
-import qualified Data.Text.IO as T
+import Data.Text (Text)
+import Data.Text qualified as T
+import Data.Text.Encoding qualified as T
+import Data.Text.IO qualified as T
 import Data.Time.LocalTime
 import Data.Typeable
 
@@ -58,6 +59,7 @@ import Version
 data Options = Options
     { optServer :: ServerOptions
     , optServices :: [ServiceOption]
+    , optDmBotEcho :: Maybe Text
     , optShowHelp :: Bool
     , optShowVersion :: Bool
     }
@@ -73,6 +75,7 @@ defaultOptions :: Options
 defaultOptions = Options
     { optServer = defaultServerOptions
     , optServices = availableServices
+    , optDmBotEcho = Nothing
     , optShowHelp = False
     , optShowVersion = False
     }
@@ -101,6 +104,9 @@ options =
     , Option ['s'] ["silent"]
         (NoArg (so $ \opts -> opts { serverLocalDiscovery = False }))
         "do not send announce packets for local discovery"
+    , Option [] ["dm-bot-echo"]
+        (ReqArg (\prefix -> \opts -> opts { optDmBotEcho = Just (T.pack prefix) }) "<prefix>")
+        "automatically reply to direct messages with the same text prefixed with <prefix>"
     , Option ['h'] ["help"]
         (NoArg $ \opts -> opts { optShowHelp = True })
         "show this help and exit"
@@ -185,7 +191,7 @@ main = do
                     serviceDesc ServiceOption {..} = padService ("  " <> soptName) <> soptDescription
 
                     padTo n str = str <> replicate (n - length str) ' '
-                    padOpt = padTo 28
+                    padOpt = padTo 37
                     padService = padTo 16
 
                 if | optShowHelp opts -> putStr $ usageInfo header options <> unlines
@@ -264,8 +270,16 @@ interactiveLoop st opts = runInputT inputSettings $ do
 
     _ <- liftIO $ do
         tzone <- getCurrentTimeZone
-        watchReceivedMessages erebosHead $
-            extPrintLn . formatDirectMessage tzone . fromStored
+        watchReceivedMessages erebosHead $ \smsg -> do
+            let msg = fromStored smsg
+            extPrintLn $ formatDirectMessage tzone msg
+            case optDmBotEcho opts of
+                Nothing -> return ()
+                Just prefix -> do
+                    res <- runExceptT $ flip runReaderT erebosHead $ sendDirectMessage (msgFrom msg) (prefix <> msgText msg)
+                    case res of
+                        Right reply -> extPrintLn $ formatDirectMessage tzone $ fromStored reply
+                        Left err -> extPrintLn $ "Failed to send dm echo: " <> err
 
     server <- liftIO $ do
         startServer (optServer opts) erebosHead extPrintLn $
