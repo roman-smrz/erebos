@@ -1,5 +1,12 @@
 # Revision history for erebos
 
+## 0.1.4 -- 2024-06-11
+
+* Added `/conversations` command to list and select conversations
+* Added `/details` command for info about selected conversation
+* Handle peer reconnection after its restart
+* Support non-interactive mode without tty
+
 ## 0.1.3 -- 2024-05-05
 
 * Enable/disable network services by command-line parameters

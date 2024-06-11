@@ -1,7 +1,7 @@
 Cabal-Version:       2.2
 
 Name:                erebos
-Version:             0.1.3
+Version:             0.1.4
 Synopsis:            Decentralized messaging and synchronization
 Description:
     Library and simple CLI interface implementing the Erebos identity
