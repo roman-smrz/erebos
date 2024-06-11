@@ -43,6 +43,31 @@ the command prompt.
 The session can be terminated either by end-of-input (typically `Ctrl-d`) or
 using the `/quit` command.
 
+### Example
+
+Start `erebos` CLI and create new identity:
+```
+Name: Some Name
+Device: First device
+Some Name / First device
+> 
+```
+
+Add public peer:
+```
+> /peer-add-public
+[1] PEER NEW <unnamed> [37.221.243.57 29665]
+[1] PEER UPD discovery1.erebosprotocol.net [37.221.243.57 29665]
+```
+
+Select the peer and send it a message, the public server just responds with automatic echo message:
+```
+> /1
+discovery1.erebosprotocol.net> hello
+[18:55] Some Name: hello
+[18:55] discovery1.erebosprotocol.net: Echo: hello
+```
+
 ### Messaging
 
 `/peers`  
@@ -52,7 +77,7 @@ on local network or can be manually added.
 `/contacts`  
 List known contacts (see below).
 
-`/conversations`
+`/conversations`  
 List started conversations with contacts or other peers.
 
 `/<number>`  
@@ -65,7 +90,7 @@ Send `<message>` to selected conversation.
 `/history`  
 Show message history of the selected conversation.
 
-`/details`
+`/details`  
 Show information about the selected conversations, contact or peer.
 
 ### Add contacts
