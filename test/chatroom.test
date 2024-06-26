@@ -10,8 +10,8 @@ test ChatroomSetup:
 
 		send "chatroom-list-local"
 
-		expect /chatroom-list-item ([a-z0-9#]+) first/ capture first
-		expect /chatroom-list-item [a-z0-9#]+ second/
+		expect /chatroom-list-item ([a-z0-9#]+) first sub true/ capture first
+		expect /chatroom-list-item [a-z0-9#]+ second sub true/
 		local:
 			expect /chatroom-list-(.*)/ capture done
 			guard (done == "done")
@@ -34,16 +34,37 @@ test ChatroomSetup:
 
 	for p in [ p2, p3 ]:
 		with p:
-			expect /chatroom-watched-added [a-z0-9#]+ first/
-			expect /chatroom-watched-added [a-z0-9#]+ second/
+			expect /chatroom-watched-added [a-z0-9#]+ first sub false/
+			expect /chatroom-watched-added [a-z0-9#]+ second sub false/
+
+	# Subscribe and unsubscribe
+
+	with p1:
+		send "chatroom-unsubscribe $first"
+		expect /chatroom-watched-updated [a-z0-9#]+ first sub false .*/
+
+		send "chatroom-subscribe $first"
+		expect /chatroom-watched-updated [a-z0-9#]+ first sub true .*/
 
 	with p2:
 		send "chatroom-list-local"
-		expect /chatroom-list-item [a-z0-9#]+ first/
-		expect /chatroom-list-item [a-z0-9#]+ second/
+		expect /chatroom-list-item ([a-z0-9#]+) first sub false/ capture p2_first
+		expect /chatroom-list-item ([a-z0-9#]+) second sub false/ capture p2_second
 		local:
 			expect /chatroom-list-(.*)/ capture done
 			guard (done == "done")
+
+		send "chatroom-subscribe $p2_first"
+		send "chatroom-subscribe $p2_second"
+
+		expect /chatroom-watched-updated [a-z0-9#]+ first sub true .*/
+		expect /chatroom-watched-updated [a-z0-9#]+ second sub true .*/
+
+		send "chatroom-unsubscribe $p2_first"
+		send "chatroom-unsubscribe $p2_second"
+
+		expect /chatroom-watched-updated [a-z0-9#]+ first sub false .*/
+		expect /chatroom-watched-updated [a-z0-9#]+ second sub false .*/
 
 	# Create and sync additional chatrooms
 
@@ -56,9 +77,9 @@ test ChatroomSetup:
 
 	for p in [ p1, p2, p3 ]:
 		with p:
-			expect /chatroom-watched-added [a-z0-9#]+ third/
-			expect /chatroom-watched-added [a-z0-9#]+ fourth/
-			expect /chatroom-watched-added [a-z0-9#]+ fifth/
+			expect /chatroom-watched-added [a-z0-9#]+ third sub [a-z]+/
+			expect /chatroom-watched-added [a-z0-9#]+ fourth sub [a-z]+/
+			expect /chatroom-watched-added [a-z0-9#]+ fifth sub [a-z]+/
 
 	# Update chatroom name
 
@@ -90,7 +111,7 @@ test ChatroomMessages:
 
 	for p in [ p1 ]:
 		with p:
-			expect /chatroom-watched-added $room room/
+			expect /chatroom-watched-added [a-z0-9#]+ room sub [a-z]+/
 
 	send "chatroom-message-send $room message1" to p1
 	expect /chatroom-message-new $room from Owner1 text message1/ from p1

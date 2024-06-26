@@ -12,6 +12,7 @@ import Control.Monad.State
 
 import Crypto.Random
 
+import Data.Bool
 import Data.ByteString qualified as B
 import Data.ByteString.Char8 qualified as BC
 import Data.ByteString.Lazy qualified as BL
@@ -271,6 +272,8 @@ commands = map (T.pack *** id)
     , ("chatroom-list-local", cmdChatroomListLocal)
     , ("chatroom-watch-local", cmdChatroomWatchLocal)
     , ("chatroom-set-name", cmdChatroomSetName)
+    , ("chatroom-subscribe", cmdChatroomSubscribe)
+    , ("chatroom-unsubscribe", cmdChatroomUnsubscribe)
     , ("chatroom-message-send", cmdChatroomMessageSend)
     ]
 
@@ -655,7 +658,7 @@ cmdChatroomWatchLocal = do
             AddedChatroom room -> outLine out $ unwords $ "chatroom-watched-added" : chatroomInfo room
             RemovedChatroom room -> outLine out $ unwords $ "chatroom-watched-removed" : chatroomInfo room
             UpdatedChatroom oldroom room -> do
-                when (any (not . null . rsdRoom . fromStored) (roomStateData room)) $ do
+                when (any ((\rsd -> not (null (rsdRoom rsd)) || not (null (rsdSubscribe rsd))) . fromStored) (roomStateData room)) $ do
                     outLine out $ unwords $ concat
                         [ [ "chatroom-watched-updated" ], chatroomInfo room
                         , [ "old" ], map (show . refDigest . storedRef) (roomStateData oldroom)
@@ -674,7 +677,20 @@ chatroomInfo :: ChatroomState -> [String]
 chatroomInfo room =
     [ show . refDigest . storedRef . head . filterAncestors . concatMap storedRoots . toComponents $ room
     , maybe "<unnamed>" T.unpack $ roomName =<< roomStateRoom room
+    , "sub " <> bool "false" "true" (roomStateSubscribe room)
     ]
+
+cmdChatroomSubscribe :: Command
+cmdChatroomSubscribe = do
+    [ cid ] <- asks tiParams
+    to <- getChatroomStateData cid
+    void $ chatroomSetSubscribe to True
+
+cmdChatroomUnsubscribe :: Command
+cmdChatroomUnsubscribe = do
+    [ cid ] <- asks tiParams
+    to <- getChatroomStateData cid
+    void $ chatroomSetSubscribe to False
 
 cmdChatroomMessageSend :: Command
 cmdChatroomMessageSend = do

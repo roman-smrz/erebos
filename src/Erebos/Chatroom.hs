@@ -10,6 +10,7 @@ module Erebos.Chatroom (
     listChatrooms,
     findChatroomByRoomData,
     findChatroomByStateData,
+    chatroomSetSubscribe,
     getMessagesSinceState,
 
     ChatroomSetChange(..),
@@ -27,6 +28,7 @@ import Control.Monad
 import Control.Monad.Except
 import Control.Monad.IO.Class
 
+import Data.Bool
 import Data.IORef
 import Data.List
 import Data.Maybe
@@ -178,6 +180,7 @@ chatroomMessageByStateData lookupData msg = void $ findAndUpdateChatroomState $ 
         mergeSorted . (:[]) <$> mstore ChatroomStateData
             { rsdPrev = roomStateData cstate
             , rsdRoom = []
+            , rsdSubscribe = Just True
             , rsdMessages = [ mdata ]
             }
 
@@ -185,6 +188,7 @@ chatroomMessageByStateData lookupData msg = void $ findAndUpdateChatroomState $ 
 data ChatroomStateData = ChatroomStateData
     { rsdPrev :: [Stored ChatroomStateData]
     , rsdRoom :: [Stored (Signed ChatroomData)]
+    , rsdSubscribe :: Maybe Bool
     , rsdMessages :: [Stored (Signed ChatMessageData)]
     }
 
@@ -192,6 +196,7 @@ data ChatroomState = ChatroomState
     { roomStateData :: [Stored ChatroomStateData]
     , roomStateRoom :: Maybe Chatroom
     , roomStateMessageData :: [Stored (Signed ChatMessageData)]
+    , roomStateSubscribe :: Bool
     , roomStateMessages :: [ChatMessage]
     }
 
@@ -199,11 +204,13 @@ instance Storable ChatroomStateData where
     store' ChatroomStateData {..} = storeRec $ do
         forM_ rsdPrev $ storeRef "PREV"
         forM_ rsdRoom $ storeRef "room"
+        forM_ rsdSubscribe $ storeInt "subscribe" . bool @Int 0 1
         forM_ rsdMessages $ storeRef "msg"
 
     load' = loadRec $ do
         rsdPrev <- loadRefs "PREV"
         rsdRoom <- loadRefs "room"
+        rsdSubscribe <- fmap ((/=) @Int 0) <$> loadMbInt "subscribe"
         rsdMessages <- loadRefs "msg"
         return ChatroomStateData {..}
 
@@ -216,6 +223,7 @@ instance Mergeable ChatroomState where
             roomStateMessageData = filterAncestors $ concat $ flip findProperty roomStateData $ \case
                 ChatroomStateData {..} | null rsdMessages -> Nothing
                                        | otherwise        -> Just rsdMessages
+            roomStateSubscribe = fromMaybe False $ findPropertyFirst rsdSubscribe roomStateData
             roomStateMessages = threadToList $ concatMap (rsdMessages . fromStored) roomStateData
          in ChatroomState {..}
 
@@ -232,6 +240,7 @@ createChatroom rdName rdDescription = do
     cstate <- mergeSorted . (:[]) <$> mstore ChatroomStateData
         { rsdPrev = []
         , rsdRoom = [ rdata ]
+        , rsdSubscribe = Just True
         , rsdMessages = []
         }
 
@@ -278,6 +287,7 @@ updateChatroomByStateData lookupData newName newDesc = findAndUpdateChatroomStat
         mergeSorted . (:[]) <$> mstore ChatroomStateData
             { rsdPrev = roomStateData cstate
             , rsdRoom = [ rdata ]
+            , rsdSubscribe = Just True
             , rsdMessages = []
             }
 
@@ -297,6 +307,19 @@ findChatroomByRoomData cdata = findChatroom $
 
 findChatroomByStateData :: MonadHead LocalState m => Stored ChatroomStateData -> m (Maybe ChatroomState)
 findChatroomByStateData cdata = findChatroom $ any (cdata `precedesOrEquals`) . roomStateData
+
+chatroomSetSubscribe
+    :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
+    => Stored ChatroomStateData -> Bool -> m ()
+chatroomSetSubscribe lookupData subscribe = void $ findAndUpdateChatroomState $ \cstate -> do
+    guard $ any (lookupData `precedesOrEquals`) $ roomStateData cstate
+    Just $ do
+        mergeSorted . (:[]) <$> mstore ChatroomStateData
+            { rsdPrev = roomStateData cstate
+            , rsdRoom = []
+            , rsdSubscribe = Just subscribe
+            , rsdMessages = []
+            }
 
 getMessagesSinceState :: ChatroomState -> ChatroomState -> [ChatMessage]
 getMessagesSinceState cur old = takeWhile notOld (roomStateMessages cur)
@@ -394,7 +417,7 @@ instance Service ChatroomService where
                     upd set (roomInfo :: Stored (Signed ChatroomData)) = do
                         let currentRoots = storedRoots roomInfo
                             isCurrentRoom = any ((`intersectsSorted` currentRoots) . storedRoots) .
-                                concatMap (rsdRoom . fromStored) . roomStateData
+                                maybe [] roomData . roomStateRoom
 
                         let prev = concatMap roomStateData $ filter isCurrentRoom rooms
                             prevRoom = concatMap (rsdRoom . fromStored) prev
@@ -406,6 +429,7 @@ instance Service ChatroomService where
                             sdata <- mstore ChatroomStateData
                                 { rsdPrev = prev
                                 , rsdRoom = room
+                                , rsdSubscribe = Nothing
                                 , rsdMessages = []
                                 }
                             storeSetAddComponent sdata set
