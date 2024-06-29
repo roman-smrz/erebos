@@ -154,6 +154,234 @@ test Storage:
 
 test StorageWatcher:
 	spawn as p1
+	spawn as p2 on p1.node
+
+	send to p1:
+		"store rec"
+		"text:n 1"
+		""
+	expect from p1:
+		/store-done (blake2#[0-9a-f]*)/ capture r1
+
+	send to p1:
+		"store rec"
+		"text:n 2"
+		""
+	expect from p1:
+		/store-done (blake2#[0-9a-f]*)/ capture r2
+
+	send to p1:
+		"store rec"
+		"text:n 3"
+		""
+	expect from p1:
+		/store-done (blake2#[0-9a-f]*)/ capture r3
+
+	send to p1:
+		"store rec"
+		"text:n 4"
+		""
+	expect from p1:
+		/store-done (blake2#[0-9a-f]*)/ capture r4
+
+	let tid1 = "00000000-0000-0000-0000-000000000001"
+	let tid2 = "00000000-0000-0000-0000-000000000002"
+
+	# Watch head from multiple processes
+
+	send "head-create $tid1 $r1" to p1
+	expect /head-create-done $tid1 ([0-9a-f-]+)/ from p1 capture hid1
+
+	send "head-watch $tid1 $hid1" to p1
+	send "head-watch $tid1 $hid1" to p2
+
+	expect /head-watch-done $tid1 $hid1 ([0-9]+)/ from p1 capture w1_1
+	expect /head-watch-done $tid1 $hid1 ([0-9]+)/ from p2 capture w2_1
+
+	local:
+		expect /head-watch-cb $w1_1 (blake2#[0-9a-f]+)/ from p1 capture new
+		guard (new == r1)
+
+	local:
+		expect /head-watch-cb $w2_1 (blake2#[0-9a-f]+)/ from p2 capture new
+		guard (new == r1)
+
+	send "head-replace $tid1 $hid1 $r2 $r1" to p1
+	expect /head-replace-fail $tid1 $hid1 $r2 $r1 $r1/ from p1
+
+	send "head-replace $tid1 $hid1 $r1 $r2" to p1
+	expect /head-replace-done $tid1 $hid1 $r1 $r2/ from p1
+
+	local:
+		expect /head-watch-cb $w1_1 (blake2#[0-9a-f]+)/ from p1 capture new
+		guard (new == r2)
+
+	local:
+		expect /head-watch-cb $w2_1 (blake2#[0-9a-f]+)/ from p2 capture new
+		guard (new == r2)
+
+	# Watch distinct heads and head types
+
+	send "head-create $tid1 $r1" to p1
+	expect /head-create-done $tid1 ([0-9a-f-]+)/ from p1 capture hid1_2
+
+	send "head-create $tid2 $r2" to p1
+	expect /head-create-done $tid2 ([0-9a-f-]+)/ from p1 capture hid2
+
+	send "head-watch $tid1 $hid1_2" to p1
+	send "head-watch $tid1 $hid1_2" to p2
+	send "head-watch $tid2 $hid2" to p1
+	send "head-watch $tid2 $hid2" to p2
+
+	expect /head-watch-done $tid1 $hid1_2 ([0-9]+)/ from p1 capture w1_1_2
+	expect /head-watch-done $tid1 $hid1_2 ([0-9]+)/ from p2 capture w2_1_2
+	expect /head-watch-done $tid2 $hid2 ([0-9]+)/ from p1 capture w1_2
+	expect /head-watch-done $tid2 $hid2 ([0-9]+)/ from p2 capture w2_2
+
+	local:
+		expect /head-watch-cb $w1_1_2 (blake2#[0-9a-f]+)/ from p1 capture new
+		guard (new == r1)
+
+	local:
+		expect /head-watch-cb $w2_1_2 (blake2#[0-9a-f]+)/ from p2 capture new
+		guard (new == r1)
+
+	local:
+		expect /head-watch-cb $w1_2 (blake2#[0-9a-f]+)/ from p1 capture new
+		guard (new == r2)
+
+	local:
+		expect /head-watch-cb $w2_2 (blake2#[0-9a-f]+)/ from p2 capture new
+		guard (new == r2)
+
+	send "head-replace $tid1 $hid1_2 $r1 $r2" to p1
+	expect /head-replace-done $tid1 $hid1_2 $r1 $r2/ from p1
+
+	local:
+		expect /head-watch-cb ([0-9]+) (blake2#[0-9a-f]+)/ from p1 capture w, new
+		guard (w == w1_1_2)
+		guard (new == r2)
+
+	local:
+		expect /head-watch-cb ([0-9]+) (blake2#[0-9a-f]+)/ from p2 capture w, new
+		guard (w == w2_1_2)
+		guard (new == r2)
+
+	send "head-replace $tid2 $hid2 $r2 $r3" to p1
+	expect /head-replace-done $tid2 $hid2 $r2 $r3/ from p1
+
+	local:
+		expect /head-watch-cb ([0-9]+) (blake2#[0-9a-f]+)/ from p1 capture w, new
+		guard (w == w1_2)
+		guard (new == r3)
+
+	local:
+		expect /head-watch-cb ([0-9]+) (blake2#[0-9a-f]+)/ from p2 capture w, new
+		guard (w == w2_2)
+		guard (new == r3)
+
+	# Unwatch head
+
+	send "head-unwatch $w1_1_2" to p1
+	expect /head-unwatch-done $w1_1_2/ from p1
+
+	send "head-unwatch $w1_2" to p1
+	expect /head-unwatch-done $w1_2/ from p1
+
+	send "head-replace $tid2 $hid2 $r3 $r4" to p1
+	expect /head-replace-done $tid2 $hid2 $r3 $r4/ from p1
+
+	send "head-replace $tid1 $hid1_2 $r2 $r1" to p1
+	expect /head-replace-done $tid1 $hid1_2 $r2 $r1/ from p1
+
+	send "head-replace $tid1 $hid1 $r2 $r3" to p1
+	expect /head-replace-done $tid1 $hid1 $r2 $r3/ from p1
+
+	local:
+		expect /head-watch-cb $w2_2 (blake2#[0-9a-f]+)/ from p2 capture new
+		guard (new == r4)
+
+	local:
+		expect /head-watch-cb $w2_1_2 (blake2#[0-9a-f]+)/ from p2 capture new
+		guard (new == r1)
+
+	local:
+		expect /head-watch-cb $w2_1 (blake2#[0-9a-f]+)/ from p2 capture new
+		guard (new == r3)
+
+	local:
+		expect /head-watch-cb ([0-9]+) (blake2#[0-9a-f]+)/ from p1 capture w, new
+		guard (w == w1_1)
+		guard (new == r3)
+
+	# Multiple watchers on the same head
+
+	send "head-watch $tid1 $hid1" to p1
+	expect /head-watch-done $tid1 $hid1 ([0-9]+)/ from p1 capture w1_1b
+
+	local:
+		expect /head-watch-cb $w1_1b (blake2#[0-9a-f]+)/ from p1 capture new
+		guard (new == r3)
+
+	send "head-watch $tid1 $hid1" to p1
+	expect /head-watch-done $tid1 $hid1 ([0-9]+)/ from p1 capture w1_1c
+
+	local:
+		expect /head-watch-cb $w1_1c (blake2#[0-9a-f]+)/ from p1 capture new
+		guard (new == r3)
+
+	send "head-replace $tid1 $hid1 $r3 $r4" to p1
+	expect /head-replace-done $tid1 $hid1 $r3 $r4/ from p1
+
+	local:
+		expect /head-watch-cb $w1_1 (blake2#[0-9a-f]+)/ from p1 capture new
+		guard (new == r4)
+
+	local:
+		expect /head-watch-cb $w1_1b (blake2#[0-9a-f]+)/ from p1 capture new
+		guard (new == r4)
+
+	local:
+		expect /head-watch-cb $w1_1c (blake2#[0-9a-f]+)/ from p1 capture new
+		guard (new == r4)
+
+	local:
+		expect /head-watch-cb $w2_1 (blake2#[0-9a-f]+)/ from p2 capture new
+		guard (new == r4)
+
+	for w in [ w1_1, w1_1c ]:
+		send "head-unwatch $w" to p1
+		expect /head-unwatch-done $w/ from p1
+
+	send "head-replace $tid1 $hid1 $r4 $r1" to p1
+	expect /head-replace-done $tid1 $hid1 $r4 $r1/ from p1
+
+	send "head-replace $tid1 $hid1 $r1 $r2" to p1
+	expect /head-replace-done $tid1 $hid1 $r1 $r2/ from p1
+
+	local:
+		expect /head-watch-cb ([0-9]+) (blake2#[0-9a-f]+)/ from p2 capture w, new
+		guard (w == w2_1)
+		guard (new == r1)
+
+	local:
+		expect /head-watch-cb ([0-9]+) (blake2#[0-9a-f]+)/ from p2 capture w, new
+		guard (w == w2_1)
+		guard (new == r2)
+
+	local:
+		expect /head-watch-cb ([0-9]+) (blake2#[0-9a-f]+)/ from p1 capture w, new
+		guard (w == w1_1b)
+		guard (new == r1)
+
+	local:
+		expect /head-watch-cb ([0-9]+) (blake2#[0-9a-f]+)/ from p1 capture w, new
+		guard (w == w1_1b)
+		guard (new == r2)
+
+
+test SharedStateWatcher:
+	spawn as p1
 	spawn as p2
 	send "create-identity Device1 Owner" to p1
 	send "create-identity Device2" to p2
