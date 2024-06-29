@@ -117,21 +117,26 @@ storageVersion = "0.1"
 
 openStorage :: FilePath -> IO Storage
 openStorage path = modifyIOError annotate $ do
-    let versionPath = path </> "erebos-storage"
-    doesFileExist versionPath >>= \case
-        True -> readFile versionPath >>= \case
-            content | (ver:_) <- lines content, ver == storageVersion -> return ()
-                    | otherwise -> fail "unsupported storage version"
+    let versionFileName = "erebos-storage"
+    let versionPath = path </> versionFileName
+    let writeVersionFile = writeFile versionPath $ storageVersion <> "\n"
+
+    doesDirectoryExist path >>= \case
+        True -> do
+            listDirectory path >>= \case
+                files@(_:_)
+                    | versionFileName `elem` files -> do
+                        readFile versionPath >>= \case
+                            content | (ver:_) <- lines content, ver == storageVersion -> return ()
+                                    | otherwise -> fail "unsupported storage version"
+
+                    | "objects" `notElem` files || "heads" `notElem` files -> do
+                        fail "directory is neither empty, nor an existing erebos storage"
+
+                _ -> writeVersionFile
         False -> do
-            doesDirectoryExist path >>= \case
-                True -> do
-                    listDirectory path >>= \case
-                        contents@(_:_) | "objects" `notElem` contents || "heads" `notElem` contents
-                            -> fail "directory is neither empty, nor an existing erebos storage"
-                        _ -> return ()
-                False -> do
-                    createDirectoryIfMissing True $ path
-            writeFile versionPath $ storageVersion <> "\n"
+            createDirectoryIfMissing True $ path
+            writeVersionFile
 
     createDirectoryIfMissing True $ path </> "objects"
     createDirectoryIfMissing True $ path </> "heads"
