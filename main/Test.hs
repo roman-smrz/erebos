@@ -23,6 +23,7 @@ import Data.Text qualified as T
 import Data.Text.Encoding
 import Data.Text.IO qualified as T
 import Data.Typeable
+import Data.UUID qualified as U
 
 import Network.Socket
 
@@ -51,6 +52,8 @@ import Test.Service
 data TestState = TestState
     { tsHead :: Maybe (Head LocalState)
     , tsServer :: Maybe RunningServer
+    , tsWatchedHeads :: [ ( Int, WatchedHead ) ]
+    , tsWatchedHeadNext :: Int
     , tsWatchedLocalIdentity :: Maybe WatchedHead
     , tsWatchedSharedIdentity :: Maybe WatchedHead
     }
@@ -65,6 +68,8 @@ initTestState :: TestState
 initTestState = TestState
     { tsHead = Nothing
     , tsServer = Nothing
+    , tsWatchedHeads = []
+    , tsWatchedHeadNext = 1
     , tsWatchedLocalIdentity = Nothing
     , tsWatchedSharedIdentity = Nothing
     }
@@ -243,6 +248,10 @@ commands = map (T.pack *** id)
     , ("stored-roots", cmdStoredRoots)
     , ("stored-set-add", cmdStoredSetAdd)
     , ("stored-set-list", cmdStoredSetList)
+    , ("head-create", cmdHeadCreate)
+    , ("head-replace", cmdHeadReplace)
+    , ("head-watch", cmdHeadWatch)
+    , ("head-unwatch", cmdHeadUnwatch)
     , ("create-identity", cmdCreateIdentity)
     , ("start-server", cmdStartServer)
     , ("stop-server", cmdStopServer)
@@ -320,6 +329,58 @@ cmdStoredSetList = do
     forM_ items $ \item -> do
         cmdOut $ "stored-set-item" ++ concatMap ((' ':) . show . refDigest . storedRef) item
     cmdOut $ "stored-set-done"
+
+cmdHeadCreate :: Command
+cmdHeadCreate = do
+    [ ttid, tref ] <- asks tiParams
+    st <- asks tiStorage
+    Just tid <- return $ fromUUID <$> U.fromText ttid
+    Just ref <- liftIO $ readRef st (encodeUtf8 tref)
+
+    h <- storeHeadRaw st tid ref
+    cmdOut $ unwords $ [ "head-create-done", show (toUUID tid), show (toUUID h) ]
+
+cmdHeadReplace :: Command
+cmdHeadReplace = do
+    [ ttid, thid, told, tnew ] <- asks tiParams
+    st <- asks tiStorage
+    Just tid <- return $ fmap fromUUID $ U.fromText ttid
+    Just hid <- return $ fmap fromUUID $ U.fromText thid
+    Just old <- liftIO $ readRef st (encodeUtf8 told)
+    Just new <- liftIO $ readRef st (encodeUtf8 tnew)
+
+    replaceHeadRaw st tid hid old new >>= cmdOut . unwords . \case
+        Left Nothing  -> [ "head-replace-fail", T.unpack ttid, T.unpack thid, T.unpack told, T.unpack tnew ]
+        Left (Just r) -> [ "head-replace-fail", T.unpack ttid, T.unpack thid, T.unpack told, T.unpack tnew, show (refDigest r) ]
+        Right _       -> [ "head-replace-done", T.unpack ttid, T.unpack thid, T.unpack told, T.unpack tnew ]
+
+cmdHeadWatch :: Command
+cmdHeadWatch = do
+    [ ttid, thid ] <- asks tiParams
+    st <- asks tiStorage
+    Just tid <- return $ fmap fromUUID $ U.fromText ttid
+    Just hid <- return $ fmap fromUUID $ U.fromText thid
+
+    out <- asks tiOutput
+    wid <- gets tsWatchedHeadNext
+
+    watched <- liftIO $ watchHeadRaw st tid hid id $ \r -> do
+        outLine out $ unwords [ "head-watch-cb", show wid, show $ refDigest r ]
+
+    modify $ \s -> s
+        { tsWatchedHeads = ( wid, watched ) : tsWatchedHeads s
+        , tsWatchedHeadNext = wid + 1
+        }
+
+    cmdOut $ unwords $ [ "head-watch-done", T.unpack ttid, T.unpack thid, show wid ]
+
+cmdHeadUnwatch :: Command
+cmdHeadUnwatch = do
+    [ twid ] <- asks tiParams
+    let wid = read (T.unpack twid)
+    Just watched <- lookup wid <$> gets tsWatchedHeads
+    liftIO $ unwatchHead watched
+    cmdOut $ unwords [ "head-unwatch-done", show wid ]
 
 initTestHead :: Head LocalState -> Command
 initTestHead h = do

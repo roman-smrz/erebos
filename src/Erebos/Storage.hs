@@ -21,9 +21,11 @@ module Erebos.Storage (
     headId, headStorage, headRef, headObject, headStoredObject,
     loadHeads, loadHead, reloadHead,
     storeHead, replaceHead, updateHead, updateHead_,
+    loadHeadRaw, storeHeadRaw, replaceHeadRaw,
 
     WatchedHead,
     watchHead, watchHeadWith, unwatchHead,
+    watchHeadRaw,
 
     MonadStorage(..),
 
@@ -62,7 +64,6 @@ module Erebos.Storage (
 ) where
 
 import Control.Applicative
-import Control.Arrow
 import Control.Concurrent
 import Control.Exception
 import Control.Monad
@@ -72,6 +73,7 @@ import Control.Monad.Writer
 
 import Crypto.Hash
 
+import Data.Bifunctor
 import Data.ByteString (ByteString)
 import qualified Data.ByteArray as BA
 import qualified Data.ByteString as B
@@ -436,57 +438,70 @@ loadHeads Storage { stBacking = StorageMemory { memHeads = theads } } = liftIO $
     catMaybes . map toHead <$> readMVar theads
 
 loadHead :: forall a m. (HeadType a, MonadIO m) => Storage -> HeadID -> m (Maybe (Head a))
-loadHead s@(Storage { stBacking = StorageDir { dirPath = spath }}) hid = liftIO $ do
+loadHead st hid = fmap (Head hid . wrappedLoad) <$> loadHeadRaw st (headTypeID @a Proxy) hid
+
+loadHeadRaw :: forall m. MonadIO m => Storage -> HeadTypeID -> HeadID -> m (Maybe Ref)
+loadHeadRaw s@(Storage { stBacking = StorageDir { dirPath = spath }}) tid hid = liftIO $ do
     handleJust (guard . isDoesNotExistError) (const $ return Nothing) $ do
-        (h:_) <- BC.lines <$> B.readFile (headPath spath (headTypeID @a Proxy) hid)
+        (h:_) <- BC.lines <$> B.readFile (headPath spath tid hid)
         Just ref <- readRef s h
-        return $ Just $ Head hid $ wrappedLoad ref
-loadHead Storage { stBacking = StorageMemory { memHeads = theads } } hid = liftIO $ do
-    fmap (Head hid . wrappedLoad) . lookup (headTypeID @a Proxy, hid) <$> readMVar theads
+        return $ Just ref
+loadHeadRaw Storage { stBacking = StorageMemory { memHeads = theads } } tid hid = liftIO $ do
+    lookup (tid, hid) <$> readMVar theads
 
 reloadHead :: (HeadType a, MonadIO m) => Head a -> m (Maybe (Head a))
 reloadHead (Head hid (Stored (Ref st _) _)) = loadHead st hid
 
 storeHead :: forall a m. MonadIO m => HeadType a => Storage -> a -> m (Head a)
-storeHead st obj = liftIO $ do
+storeHead st obj = do
     let tid = headTypeID @a Proxy
-    hid <- HeadID <$> U.nextRandom
     stored <- wrappedStore st obj
+    hid <- storeHeadRaw st tid (storedRef stored)
+    return $ Head hid stored
+
+storeHeadRaw :: forall m. MonadIO m => Storage -> HeadTypeID -> Ref -> m HeadID
+storeHeadRaw st tid ref = liftIO $ do
+    hid <- HeadID <$> U.nextRandom
     case stBacking st of
          StorageDir { dirPath = spath } -> do
              Right () <- writeFileChecked (headPath spath tid hid) Nothing $
-                 showRef (storedRef stored) `B.append` BC.singleton '\n'
+                 showRef ref `B.append` BC.singleton '\n'
              return ()
          StorageMemory { memHeads = theads } -> do
-             modifyMVar_ theads $ return . (((tid, hid), storedRef stored) :)
-    return $ Head hid stored
+             modifyMVar_ theads $ return . (((tid, hid), ref) :)
+    return hid
 
 replaceHead :: forall a m. (HeadType a, MonadIO m) => Head a -> Stored a -> m (Either (Maybe (Head a)) (Head a))
 replaceHead prev@(Head hid pobj) stored' = liftIO $ do
     let st = headStorage prev
         tid = headTypeID @a Proxy
     stored <- copyStored st stored'
+    bimap (fmap $ Head hid . wrappedLoad) (const $ Head hid stored) <$>
+        replaceHeadRaw st tid hid (storedRef pobj) (storedRef stored)
+
+replaceHeadRaw :: forall m. MonadIO m => Storage -> HeadTypeID -> HeadID -> Ref -> Ref -> m (Either (Maybe Ref) Ref)
+replaceHeadRaw st tid hid prev new = liftIO $ do
     case stBacking st of
          StorageDir { dirPath = spath } -> do
              let filename = headPath spath tid hid
                  showRefL r = showRef r `B.append` BC.singleton '\n'
 
-             writeFileChecked filename (Just $ showRefL $ headRef prev) (showRefL $ storedRef stored) >>= \case
+             writeFileChecked filename (Just $ showRefL prev) (showRefL new) >>= \case
                  Left Nothing -> return $ Left Nothing
                  Left (Just bs) -> do Just oref <- readRef st $ BC.takeWhile (/='\n') bs
-                                      return $ Left $ Just $ Head hid $ wrappedLoad oref
-                 Right () -> return $ Right $ Head hid stored
+                                      return $ Left $ Just oref
+                 Right () -> return $ Right new
 
          StorageMemory { memHeads = theads, memWatchers = twatch } -> do
              res <- modifyMVar theads $ \hs -> do
                  ws <- map wlFun . filter ((==(tid, hid)) . wlHead) . wlList <$> readMVar twatch
                  return $ case partition ((==(tid, hid)) . fst) hs of
                      ([] , _  ) -> (hs, Left Nothing)
-                     ((_, r):_, hs') | r == storedRef pobj -> (((tid, hid), storedRef stored) : hs',
-                                                                  Right (Head hid stored, ws))
-                                     | otherwise -> (hs, Left $ Just $ Head hid $ wrappedLoad r)
+                     ((_, r):_, hs') | r == prev -> (((tid, hid), new) : hs',
+                                                                  Right (new, ws))
+                                     | otherwise -> (hs, Left $ Just r)
              case res of
-                  Right (h, ws) -> mapM_ ($ headRef h) ws >> return (Right h)
+                  Right (r, ws) -> mapM_ ($ r) ws >> return (Right r)
                   Left x -> return $ Left x
 
 updateHead :: (HeadType a, MonadIO m) => Head a -> (Stored a -> m (Stored a, b)) -> m (Maybe (Head a), b)
@@ -507,19 +522,22 @@ watchHead :: forall a. HeadType a => Head a -> (Head a -> IO ()) -> IO WatchedHe
 watchHead h = watchHeadWith h id
 
 watchHeadWith :: forall a b. (HeadType a, Eq b) => Head a -> (Head a -> b) -> (b -> IO ()) -> IO WatchedHead
-watchHeadWith oh@(Head hid (Stored (Ref st _) _)) sel cb = do
+watchHeadWith (Head hid (Stored (Ref st _) _)) sel cb = do
+    watchHeadRaw st (headTypeID @a Proxy) hid (sel . Head hid . wrappedLoad) cb
+
+watchHeadRaw :: forall b. Eq b => Storage -> HeadTypeID -> HeadID -> (Ref -> b) -> (b -> IO ()) -> IO WatchedHead
+watchHeadRaw st tid hid sel cb = do
     memo <- newEmptyMVar
-    let tid = headTypeID @a Proxy
-        addWatcher wl = (wl', WatchedHead st (wlNext wl) memo)
+    let addWatcher wl = (wl', WatchedHead st (wlNext wl) memo)
             where wl' = wl { wlNext = wlNext wl + 1
                            , wlList = WatchListItem
                                { wlID = wlNext wl
                                , wlHead = (tid, hid)
                                , wlFun = \r -> do
-                                   let x = sel $ Head hid $ wrappedLoad r
+                                   let x = sel r
                                    modifyMVar_ memo $ \prev -> do
-                                       when (x /= prev) $ cb x
-                                       return x
+                                       when (Just x /= prev) $ cb x
+                                       return $ Just x
                                } : wlList wl
                            }
 
@@ -531,8 +549,8 @@ watchHeadWith oh@(Head hid (Stored (Ref st _) _)) sel cb = do
                      inotify <- initINotify
                      void $ addWatch inotify [Move] (BC.pack $ headTypePath spath tid) $ \case
                          MovedIn { filePath = fpath } | Just ihid <- HeadID <$> U.fromASCIIBytes fpath -> do
-                             loadHead @a st ihid >>= \case
-                                 Just h -> mapM_ ($ headRef h) . map wlFun . filter ((== (tid, ihid)) . wlHead) . wlList . snd =<< readMVar mvar
+                             loadHeadRaw st tid ihid >>= \case
+                                 Just ref -> mapM_ ($ ref) . map wlFun . filter ((== (tid, ihid)) . wlHead) . wlList . snd =<< readMVar mvar
                                  Nothing -> return ()
                          _ -> return ()
                      return $ (tid, inotify) : ilist
@@ -540,8 +558,8 @@ watchHeadWith oh@(Head hid (Stored (Ref st _) _)) sel cb = do
 
          StorageMemory { memWatchers = mvar } -> modifyMVar mvar $ return . addWatcher
 
-    cur <- sel . maybe oh id <$> reloadHead oh
-    cb cur
+    cur <- fmap sel <$> loadHeadRaw st tid hid
+    maybe (return ()) cb cur
     putMVar memo cur
 
     return watched
