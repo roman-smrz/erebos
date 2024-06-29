@@ -1,5 +1,3 @@
-{-# LANGUAGE CPP #-}
-
 module Erebos.Storage.Internal where
 
 import Codec.Compression.Zlib
@@ -38,8 +36,8 @@ import System.INotify (INotify)
 import System.IO
 import System.IO.Error
 import System.IO.Unsafe (unsafePerformIO)
-import System.Posix.Files
-import System.Posix.IO
+
+import Erebos.Storage.Platform
 
 
 data Storage' c = Storage
@@ -230,16 +228,7 @@ refPath spath rdgst = intercalate "/" [spath, "objects", BC.unpack alg, pref, re
 openLockFile :: FilePath -> IO Handle
 openLockFile path = do
     createDirectoryIfMissing True (takeDirectory path)
-    fd <- retry 10 $
-#if MIN_VERSION_unix(2,8,0)
-        openFd path WriteOnly defaultFileFlags
-            { creat = Just $ unionFileModes ownerReadMode ownerWriteMode
-            , exclusive = True
-            }
-#else
-        openFd path WriteOnly (Just $ unionFileModes ownerReadMode ownerWriteMode) (defaultFileFlags { exclusive = True })
-#endif
-    fdToHandle fd
+    retry 10 $ createFileExclusive path
   where
     retry :: Int -> IO a -> IO a
     retry 0 act = act
@@ -249,34 +238,34 @@ openLockFile path = do
 writeFileOnce :: FilePath -> BL.ByteString -> IO ()
 writeFileOnce file content = bracket (openLockFile locked)
     hClose $ \h -> do
-        fileExist file >>= \case
-            True  -> removeLink locked
+        doesFileExist file >>= \case
+            True  -> removeFile locked
             False -> do BL.hPut h content
                         hFlush h
-                        rename locked file
+                        renameFile locked file
     where locked = file ++ ".lock"
 
 writeFileChecked :: FilePath -> Maybe ByteString -> ByteString -> IO (Either (Maybe ByteString) ())
 writeFileChecked file prev content = bracket (openLockFile locked)
     hClose $ \h -> do
-        (prev,) <$> fileExist file >>= \case
+        (prev,) <$> doesFileExist file >>= \case
             (Nothing, True) -> do
                 current <- B.readFile file
-                removeLink locked
+                removeFile locked
                 return $ Left $ Just current
             (Nothing, False) -> do B.hPut h content
                                    hFlush h
-                                   rename locked file
+                                   renameFile locked file
                                    return $ Right ()
             (Just expected, True) -> do
                 current <- B.readFile file
                 if current == expected then do B.hPut h content
                                                hFlush h
-                                               rename locked file
+                                               renameFile locked file
                                                return $ return ()
-                                       else do removeLink locked
+                                       else do removeFile locked
                                                return $ Left $ Just current
             (Just _, False) -> do
-                removeLink locked
+                removeFile locked
                 return $ Left Nothing
     where locked = file ++ ".lock"
