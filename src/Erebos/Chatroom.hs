@@ -16,7 +16,9 @@ module Erebos.Chatroom (
     ChatroomSetChange(..),
     watchChatrooms,
 
-    ChatMessage, cmsgFrom, cmsgReplyTo, cmsgTime, cmsgText, cmsgLeave,
+    ChatMessage,
+    cmsgFrom, cmsgReplyTo, cmsgTime, cmsgText, cmsgLeave,
+    cmsgRoom, cmsgRoomData,
     ChatMessageData(..),
     chatroomMessageByStateData,
 
@@ -29,6 +31,7 @@ import Control.Monad.Except
 import Control.Monad.IO.Class
 
 import Data.Bool
+import Data.Either
 import Data.IORef
 import Data.List
 import Data.Maybe
@@ -111,6 +114,11 @@ data ChatMessage = ChatMessage
     { cmsgData :: Stored (Signed ChatMessageData)
     }
 
+validateSingleMessage :: Stored (Signed ChatMessageData) -> Maybe ChatMessage
+validateSingleMessage sdata = do
+    guard $ fromStored sdata `isSignedBy` idKeyMessage (mdFrom (fromSigned sdata))
+    return $ ChatMessage sdata
+
 cmsgFrom :: ChatMessage -> ComposedIdentity
 cmsgFrom = mdFrom . fromSigned . cmsgData
 
@@ -125,6 +133,12 @@ cmsgText = mdText . fromSigned . cmsgData
 
 cmsgLeave :: ChatMessage -> Bool
 cmsgLeave = mdLeave . fromSigned . cmsgData
+
+cmsgRoom :: ChatMessage -> Maybe Chatroom
+cmsgRoom = either (const Nothing) Just . runExcept . validateChatroom . cmsgRoomData
+
+cmsgRoomData :: ChatMessage -> [ Stored (Signed ChatroomData) ]
+cmsgRoomData = concat . findProperty ((\case [] -> Nothing; xs -> Just xs) . mdRoom . fromStored . signedData) . (: []) . cmsgData
 
 instance Storable ChatMessageData where
     store' ChatMessageData {..} = storeRec $ do
@@ -152,12 +166,10 @@ threadToList thread = helper S.empty $ thread
     helper :: S.Set (Stored (Signed ChatMessageData)) -> [Stored (Signed ChatMessageData)] -> [ChatMessage]
     helper seen msgs
         | msg : msgs' <- filter (`S.notMember` seen) $ reverse $ sortBy (comparing cmpView) msgs =
-            messageFromData msg : helper (S.insert msg seen) (msgs' ++ mdPrev (fromSigned msg))
+            maybe id (:) (validateSingleMessage msg) $
+               helper (S.insert msg seen) (msgs' ++ mdPrev (fromSigned msg))
         | otherwise = []
     cmpView msg = (zonedTimeToUTC $ mdTime $ fromSigned msg, msg)
-
-    messageFromData :: Stored (Signed ChatMessageData) -> ChatMessage
-    messageFromData sdata = ChatMessage { cmsgData = sdata }
 
 chatroomMessageByStateData
     :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
@@ -170,7 +182,9 @@ chatroomMessageByStateData lookupData msg = void $ findAndUpdateChatroomState $ 
         time <- liftIO getZonedTime
         mdata <- mstore =<< sign secret =<< mstore ChatMessageData
             { mdPrev = roomStateMessageData cstate
-            , mdRoom = []
+            , mdRoom = if null (roomStateMessageData cstate)
+                          then maybe [] roomData (roomStateRoom cstate)
+                          else []
             , mdFrom = self
             , mdReplyTo = Nothing
             , mdTime = time
@@ -365,13 +379,18 @@ makeChatroomDiff [] ys = map (AddedChatroom . snd) ys
 data ChatroomService = ChatroomService
     { chatRoomQuery :: Bool
     , chatRoomInfo :: [Stored (Signed ChatroomData)]
+    , chatRoomSubscribe :: [Stored (Signed ChatroomData)]
+    , chatRoomUnsubscribe :: [Stored (Signed ChatroomData)]
     , chatRoomMessage :: [Stored (Signed ChatMessageData)]
     }
+    deriving (Eq)
 
 emptyPacket :: ChatroomService
 emptyPacket = ChatroomService
     { chatRoomQuery = False
     , chatRoomInfo = []
+    , chatRoomSubscribe = []
+    , chatRoomUnsubscribe = []
     , chatRoomMessage = []
     }
 
@@ -379,17 +398,22 @@ instance Storable ChatroomService where
     store' ChatroomService {..} = storeRec $ do
         when  chatRoomQuery $ storeEmpty "room-query"
         forM_ chatRoomInfo $ storeRef "room-info"
+        forM_ chatRoomSubscribe $ storeRef "room-subscribe"
+        forM_ chatRoomUnsubscribe $ storeRef "room-unsubscribe"
         forM_ chatRoomMessage $ storeRef "room-message"
 
     load' = loadRec $ do
         chatRoomQuery <- isJust <$> loadMbEmpty "room-query"
         chatRoomInfo <- loadRefs "room-info"
+        chatRoomSubscribe <- loadRefs "room-subscribe"
+        chatRoomUnsubscribe <- loadRefs "room-unsubscribe"
         chatRoomMessage <- loadRefs "room-message"
         return ChatroomService {..}
 
 data PeerState = PeerState
     { psSendRoomUpdates :: Bool
     , psLastList :: [(Stored ChatroomStateData, ChatroomState)]
+    , psSubscribedTo :: [ Stored (Signed ChatroomData) ] -- least root for each room
     }
 
 instance Service ChatroomService where
@@ -399,6 +423,7 @@ instance Service ChatroomService where
     emptyServiceState _ = PeerState
         { psSendRoomUpdates = False
         , psLastList = []
+        , psSubscribedTo = []
         }
 
     serviceHandler spacket = do
@@ -420,7 +445,7 @@ instance Service ChatroomService where
                                 maybe [] roomData . roomStateRoom
 
                         let prev = concatMap roomStateData $ filter isCurrentRoom rooms
-                            prevRoom = concatMap (rsdRoom . fromStored) prev
+                            prevRoom = filterAncestors $ concat $ findProperty ((\case [] -> Nothing; xs -> Just xs) . rsdRoom) prev
                             room = filterAncestors $ (roomInfo : ) prevRoom
 
                         -- update local state only if we got roomInfo not present there
@@ -436,6 +461,51 @@ instance Service ChatroomService where
                           else return set
                 foldM upd roomSet chatRoomInfo
 
+        forM_ chatRoomSubscribe $ \subscribeData -> do
+            mbRoomState <- findChatroomByRoomData subscribeData
+            forM_ mbRoomState $ \roomState ->
+                forM (roomStateRoom roomState) $ \room -> do
+                    let leastRoot = head . filterAncestors . concatMap storedRoots . roomData $ room
+                    svcModify $ \ps -> ps { psSubscribedTo = leastRoot : psSubscribedTo ps }
+                    replyPacket emptyPacket
+                        { chatRoomMessage = roomStateMessageData roomState
+                        }
+
+        forM_ chatRoomUnsubscribe $ \unsubscribeData -> do
+            mbRoomState <- findChatroomByRoomData unsubscribeData
+            forM_ (mbRoomState >>= roomStateRoom) $ \room -> do
+                let leastRoot = head . filterAncestors . concatMap storedRoots . roomData $ room
+                svcModify $ \ps -> ps { psSubscribedTo = filter (/= leastRoot) (psSubscribedTo ps) }
+
+        when (not (null chatRoomMessage)) $ do
+            updateLocalHead_ $ updateSharedState_ $ \roomSet -> do
+                let rooms = fromSetBy (comparing $ roomName <=< roomStateRoom) roomSet
+                    upd set (msgData :: Stored (Signed ChatMessageData))
+                        | Just msg <- validateSingleMessage msgData = do
+                            let roomInfo = cmsgRoomData msg
+                                currentRoots = filterAncestors $ concatMap storedRoots roomInfo
+                                isCurrentRoom = any ((`intersectsSorted` currentRoots) . storedRoots) .
+                                    maybe [] roomData . roomStateRoom
+
+                            let prevData = concatMap roomStateData $ filter isCurrentRoom rooms
+                                prev = mergeSorted prevData
+                                prevMessages = roomStateMessageData prev
+                                messages = filterAncestors $ msgData : prevMessages
+
+                            -- update local state only if subscribed and we got some new messages
+                            if roomStateSubscribe prev && messages /= prevMessages
+                              then do
+                                sdata <- mstore ChatroomStateData
+                                    { rsdPrev = prevData
+                                    , rsdRoom = []
+                                    , rsdSubscribe = Nothing
+                                    , rsdMessages = messages
+                                    }
+                                storeSetAddComponent sdata set
+                              else return set
+                        | otherwise = return set
+                foldM upd roomSet chatRoomMessage
+
     serviceNewPeer = do
         replyPacket emptyPacket { chatRoomQuery = True }
 
@@ -447,11 +517,50 @@ syncChatroomsToPeer set = do
     ps@PeerState {..} <- svcGet
     when psSendRoomUpdates $ do
         let curList = chatroomSetToList set
-        updates <- fmap (concat . catMaybes) $
-            forM (makeChatroomDiff psLastList curList) $ return . \case
+            diff = makeChatroomDiff psLastList curList
+
+        roomUpdates <- fmap (concat . catMaybes) $
+            forM diff $ return . \case
                 AddedChatroom room -> roomData <$> roomStateRoom room
                 RemovedChatroom {} -> Nothing
-                UpdatedChatroom _ room -> roomData <$> roomStateRoom room
-        when (not $ null updates) $ do
-            replyPacket $ emptyPacket { chatRoomInfo = updates }
+                UpdatedChatroom oldroom room
+                    | roomStateData oldroom /= roomStateData room -> roomData <$> roomStateRoom room
+                    | otherwise -> Nothing
+
+        (subscribe, unsubscribe) <- fmap (partitionEithers . concat . catMaybes) $
+            forM diff $ return . \case
+                AddedChatroom room
+                    | roomStateSubscribe room
+                    -> map Left . roomData <$> roomStateRoom room
+                RemovedChatroom oldroom
+                    | roomStateSubscribe oldroom
+                    -> map Right . roomData <$> roomStateRoom oldroom
+                UpdatedChatroom oldroom room
+                    | roomStateSubscribe oldroom /= roomStateSubscribe room
+                    -> map (if roomStateSubscribe room then Left else Right) . roomData <$> roomStateRoom room
+                _ -> Nothing
+
+        messages <- fmap concat $ do
+            let leastRootFor = head . filterAncestors . concatMap storedRoots . roomData
+            forM diff $ return . \case
+                AddedChatroom rstate
+                    | Just room <- roomStateRoom rstate
+                    , leastRootFor room `elem` psSubscribedTo
+                    -> roomStateMessageData rstate
+                UpdatedChatroom oldstate rstate
+                    | Just room <- roomStateRoom rstate
+                    , leastRootFor room `elem` psSubscribedTo
+                    , roomStateMessageData oldstate /= roomStateMessageData rstate
+                    -> roomStateMessageData rstate
+                _ -> []
+
+        let packet = emptyPacket
+                { chatRoomInfo = roomUpdates
+                , chatRoomSubscribe = subscribe
+                , chatRoomUnsubscribe = unsubscribe
+                , chatRoomMessage = messages
+                }
+
+        when (packet /= emptyPacket) $ do
+            replyPacket packet
         svcSet $ ps { psLastList = curList }

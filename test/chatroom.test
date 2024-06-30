@@ -98,25 +98,144 @@ test ChatroomSetup:
 
 test ChatroomMessages:
 	spawn as p1
+	spawn as p2
 
 	send "create-identity Device1 Owner1" to p1
+	send "create-identity Device2 Owner2" to p2
 
-	for p in [ p1 ]:
+	for p in [ p1, p2 ]:
 		with p:
 			send "chatroom-watch-local"
 			send "start-server"
 
-	send "chatroom-create room" to p1
-	expect /chatroom-create-done ([a-z0-9#]+) room.*/ from p1 capture room
+	send "chatroom-create first_room" to p1
+	expect /chatroom-create-done ([a-z0-9#]+) first_room.*/ from p1 capture room1_p1
 
-	for p in [ p1 ]:
-		with p:
-			expect /chatroom-watched-added [a-z0-9#]+ room sub [a-z]+/
+	expect /chatroom-watched-added [a-z0-9#]+ first_room sub true/ from p1
+	expect /chatroom-watched-added ([a-z0-9#]+) first_room sub false/ from p2 capture room1_p2
 
-	send "chatroom-message-send $room message1" to p1
-	expect /chatroom-message-new $room from Owner1 text message1/ from p1
+	send "chatroom-message-send $room1_p1 message1" to p1
+	expect /chatroom-message-new $room1_p1 room first_room from Owner1 text message1/ from p1
 
-	send "chatroom-message-send $room message2" to p1
+	send "chatroom-message-send $room1_p1 message2" to p1
 	local:
-		expect /chatroom-message-new $room from Owner1 text (.*)/ from p1 capture msg
+		expect /chatroom-message-new $room1_p1 room first_room from Owner1 text (.*)/ from p1 capture msg
 		guard (msg == "message2")
+
+	# Subscribe to chatroom
+
+	send "chatroom-subscribe $room1_p2" to p2
+	expect /chatroom-watched-updated [a-z0-9#]+ first_room sub true .*/ from p2
+	with p2:
+		expect /chatroom-message-new $room1_p2 room first_room from Owner1 text (.*)/ capture msg
+		guard (msg == "message1")
+	with p2:
+		expect /chatroom-message-new $room1_p2 room first_room from Owner1 text (.*)/ capture msg
+		guard (msg == "message2")
+
+	send "chatroom-message-send $room1_p2 message3" to p2
+	for p in [ p1, p2 ]:
+		with p:
+			expect /chatroom-message-new [a-z0-9#]+ room first_room from Owner2 text message3/
+
+	send "chatroom-message-send $room1_p1 message4" to p1
+	for p in [ p1, p2 ]:
+		with p:
+			expect /chatroom-message-new [a-z0-9#]+ room first_room from Owner1 text message4/
+
+	# Multiple rooms
+
+	send "chatroom-create second_room" to p1
+	expect /chatroom-create-done ([a-z0-9#]+) second_room.*/ from p1 capture room2_p1
+
+	send "chatroom-create third_room" to p2
+	expect /chatroom-create-done ([a-z0-9#]+) third_room.*/ from p2 capture room3_p2
+
+	expect /chatroom-watched-added $room2_p1 second_room sub true/ from p1
+	expect /chatroom-watched-added $room3_p2 third_room sub true/ from p2
+	expect /chatroom-watched-added ([a-z0-9#]+) second_room sub false/ from p2 capture room2_p2
+	expect /chatroom-watched-added ([a-z0-9#]+) third_room sub false/ from p1 capture room3_p1
+
+	spawn as p3
+	send "create-identity Device3 Owner3" to p3
+	send "chatroom-watch-local" to p3
+	send "start-server" to p3
+	expect /chatroom-watched-added ([a-z0-9#]+) first_room sub false/  from p3 capture room1_p3
+	expect /chatroom-watched-added ([a-z0-9#]+) second_room sub false/ from p3 capture room2_p3
+	expect /chatroom-watched-added ([a-z0-9#]+) third_room sub false/  from p3 capture room3_p3
+
+	with p3:
+		for room in [ room1_p3, room2_p3, room3_p3 ]:
+			send "chatroom-subscribe $room"
+			expect /chatroom-watched-updated $room [a-z_]+ sub true .*/
+		for i in [1..4]:
+			expect /chatroom-message-new $room1_p3 room first_room from Owner. text (.*)/ capture message
+			guard (message == "message$i")
+
+	with p2:
+		send "chatroom-message-send $room2_p2 msg_r2_1"
+		send "chatroom-message-send $room2_p2 msg_r2_2"
+		send "chatroom-message-send $room2_p2 msg_r2_3"
+		expect /chatroom-message-new $room2_p2 room second_room from Owner2 text msg_r2_1/
+		expect /chatroom-message-new $room2_p2 room second_room from Owner2 text msg_r2_2/
+		expect /chatroom-message-new $room2_p2 room second_room from Owner2 text msg_r2_3/
+
+		send "chatroom-message-send $room3_p2 msg_r3_1"
+		send "chatroom-message-send $room3_p2 msg_r3_2"
+		send "chatroom-message-send $room3_p2 msg_r3_3"
+		expect /chatroom-message-new $room3_p2 room third_room from Owner2 text msg_r3_1/
+		expect /chatroom-message-new $room3_p2 room third_room from Owner2 text msg_r3_2/
+		expect /chatroom-message-new $room3_p2 room third_room from Owner2 text msg_r3_3/
+
+	with p1:
+		local:
+			expect /chatroom-message-new [a-z0-9#]+ room ([a-z_]+) from Owner2 text ([a-z0-9_]+)/ capture room, message
+			guard (room == "second_room")
+			guard (message == "msg_r2_1")
+		local:
+			expect /chatroom-message-new [a-z0-9#]+ room ([a-z_]+) from Owner2 text ([a-z0-9_]+)/ capture room, message
+			guard (room == "second_room")
+			guard (message == "msg_r2_2")
+		local:
+			expect /chatroom-message-new [a-z0-9#]+ room ([a-z_]+) from Owner2 text ([a-z0-9_]+)/ capture room, message
+			guard (room == "second_room")
+			guard (message == "msg_r2_3")
+
+	with p3:
+		expect /chatroom-message-new $room2_p3 room second_room from Owner2 text msg_r2_1/
+		expect /chatroom-message-new $room2_p3 room second_room from Owner2 text msg_r2_2/
+		expect /chatroom-message-new $room2_p3 room second_room from Owner2 text msg_r2_3/
+		expect /chatroom-message-new $room3_p3 room third_room from Owner2 text msg_r3_1/
+		expect /chatroom-message-new $room3_p3 room third_room from Owner2 text msg_r3_2/
+		expect /chatroom-message-new $room3_p3 room third_room from Owner2 text msg_r3_3/
+
+	# Unsubscribe
+
+	send "chatroom-unsubscribe $room1_p1" to p1
+	expect /chatroom-watched-updated $room1_p1 [a-z_]+ sub false .*/ from p1
+	send "chatroom-unsubscribe $room1_p3" to p3
+	expect /chatroom-watched-updated $room1_p3 [a-z_]+ sub false .*/ from p3
+	send "chatroom-unsubscribe $room2_p3" to p3
+	expect /chatroom-watched-updated $room2_p3 [a-z_]+ sub false .*/ from p3
+
+	with p2:
+		send  "chatroom-message-send $room1_p2 msg_r1_4"
+		expect /chatroom-message-new $room1_p2 room first_room from Owner2 text msg_r1_4/
+
+		send  "chatroom-message-send $room2_p2 msg_r2_4"
+		expect /chatroom-message-new $room2_p2 room second_room from Owner2 text msg_r2_4/
+
+		send  "chatroom-message-send $room3_p2 msg_r3_4"
+		expect /chatroom-message-new $room3_p2 room third_room from Owner2 text msg_r3_4/
+
+	with p1:
+		local:
+			expect /chatroom-message-new [a-z0-9#]+ room ([a-z_]+) from Owner2 text ([a-z0-9_]+)/ capture room, message
+			guard (room == "second_room")
+			guard (message == "msg_r2_4")
+
+	with p3:
+		local:
+			expect /chatroom-message-new [a-z0-9#]+ room ([a-z_]+) from Owner2 text ([a-z0-9_]+)/ capture room, message
+			guard (room == "third_room")
+			guard (message == "msg_r3_4")

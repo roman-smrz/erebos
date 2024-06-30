@@ -726,10 +726,11 @@ cmdChatroomWatchLocal = do
                         , [ "new" ], map (show . refDigest . storedRef) (roomStateData room)
                         ]
                 when (any (not . null . rsdMessages . fromStored) (roomStateData room)) $ do
-                    forM_ (getMessagesSinceState room oldroom) $ \msg -> do
+                    forM_ (reverse $ getMessagesSinceState room oldroom) $ \msg -> do
                         outLine out $ unwords $ concat
                             [ [ "chatroom-message-new" ]
                             , [ show . refDigest . storedRef . head . filterAncestors . concatMap storedRoots . toComponents $ room ]
+                            , [ "room", maybe "<unnamed>" T.unpack $ roomName =<< cmsgRoom msg ]
                             , [ "from", maybe "<unnamed>" T.unpack $ idName $ cmsgFrom msg ]
                             , maybe [] (("text":) . (:[]) . T.unpack) $ cmsgText msg
                             ]
