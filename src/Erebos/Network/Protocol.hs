@@ -440,7 +440,7 @@ erebosNetworkProtocol initialIdentity gLog gDataFlow gControlFlow = do
     mStorage <- memoryStorage
     gStorage <- derivePartialStorage mStorage
 
-    startTime <- getTime MonotonicRaw
+    startTime <- getTime Monotonic
     gNowVar <- newTVarIO startTime
     gNextTimeout <- newTVarIO startTime
     gInitConfig <- store mStorage $ (Rec [] :: Object)
@@ -448,7 +448,7 @@ erebosNetworkProtocol initialIdentity gLog gDataFlow gControlFlow = do
     let gs = GlobalState {..}
 
     let signalTimeouts = forever $ do
-            now <- getTime MonotonicRaw
+            now <- getTime Monotonic
             next <- atomically $ do
                 writeTVar gNowVar now
                 readTVar gNextTimeout
@@ -715,7 +715,7 @@ reservePacket conn@Connection {..} = do
 resendBytes :: Connection addr -> Maybe ReservedToSend -> SentPacket -> IO ()
 resendBytes Connection {..} reserved sp = do
     let GlobalState {..} = cGlobalState
-    now <- getTime MonotonicRaw
+    now <- getTime Monotonic
     atomically $ do
         when (isJust reserved) $ do
             modifyTVar' cReservedPackets (subtract 1)
