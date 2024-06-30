@@ -142,7 +142,7 @@ openStorage path = modifyIOError annotate $ do
 
     createDirectoryIfMissing True $ path </> "objects"
     createDirectoryIfMissing True $ path </> "heads"
-    watchers <- newMVar ([], WatchList 1 [])
+    watchers <- newMVar (Nothing, [], WatchList 1 [])
     refgen <- newMVar =<< HT.new
     refroots <- newMVar =<< HT.new
     return $ Storage
@@ -542,19 +542,21 @@ watchHeadRaw st tid hid sel cb = do
                            }
 
     watched <- case stBacking st of
-         StorageDir { dirPath = spath, dirWatchers = mvar } -> modifyMVar mvar $ \(ilist, wl) -> do
-             ilist' <- case lookup tid ilist of
-                 Just _ -> return ilist
-                 Nothing -> do
-                     inotify <- initINotify
-                     void $ addWatch inotify [Move] (BC.pack $ headTypePath spath tid) $ \case
+         StorageDir { dirPath = spath, dirWatchers = mvar } -> modifyMVar mvar $ \(mbmanager, ilist, wl) -> do
+             manager <- maybe initINotify return mbmanager
+             ilist' <- case tid `elem` ilist of
+                 True -> return ilist
+                 False -> do
+                     void $ addWatch manager [ Move ] (BC.pack $ headTypePath spath tid) $ \case
                          MovedIn { filePath = fpath } | Just ihid <- HeadID <$> U.fromASCIIBytes fpath -> do
                              loadHeadRaw st tid ihid >>= \case
-                                 Just ref -> mapM_ ($ ref) . map wlFun . filter ((== (tid, ihid)) . wlHead) . wlList . snd =<< readMVar mvar
+                                 Just ref -> do
+                                     (_, _, iwl) <- readMVar mvar
+                                     mapM_ ($ ref) . map wlFun . filter ((== (tid, ihid)) . wlHead) . wlList $ iwl
                                  Nothing -> return ()
                          _ -> return ()
-                     return $ (tid, inotify) : ilist
-             return $ first (ilist',) $ addWatcher wl
+                     return $ tid : ilist
+             return $ first ( Just manager, ilist', ) $ addWatcher wl
 
          StorageMemory { memWatchers = mvar } -> modifyMVar mvar $ return . addWatcher
 

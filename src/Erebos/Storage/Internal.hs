@@ -60,7 +60,7 @@ showParentStorage Storage { stParent = Just st } = "@" ++ show st
 
 data StorageBacking c
          = StorageDir { dirPath :: FilePath
-                      , dirWatchers :: MVar ([(HeadTypeID, INotify)], WatchList c)
+                      , dirWatchers :: MVar ( Maybe INotify, [ HeadTypeID ], WatchList c )
                       }
          | StorageMemory { memHeads :: MVar [((HeadTypeID, HeadID), Ref' c)]
                          , memObjs :: MVar (Map RefDigest BL.ByteString)
