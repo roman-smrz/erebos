@@ -103,8 +103,8 @@ import qualified Data.UUID as U
 import qualified Data.UUID.V4 as U
 
 import System.Directory
+import System.FSNotify
 import System.FilePath
-import System.INotify
 import System.IO.Error
 import System.IO.Unsafe
 
@@ -543,12 +543,12 @@ watchHeadRaw st tid hid sel cb = do
 
     watched <- case stBacking st of
          StorageDir { dirPath = spath, dirWatchers = mvar } -> modifyMVar mvar $ \(mbmanager, ilist, wl) -> do
-             manager <- maybe initINotify return mbmanager
+             manager <- maybe startManager return mbmanager
              ilist' <- case tid `elem` ilist of
                  True -> return ilist
                  False -> do
-                     void $ addWatch manager [ Move ] (BC.pack $ headTypePath spath tid) $ \case
-                         MovedIn { filePath = fpath } | Just ihid <- HeadID <$> U.fromASCIIBytes fpath -> do
+                     void $ watchDir manager (headTypePath spath tid) (const True) $ \case
+                         Added { eventPath = fpath } | Just ihid <- HeadID <$> U.fromString (takeFileName fpath) -> do
                              loadHeadRaw st tid ihid >>= \case
                                  Just ref -> do
                                      (_, _, iwl) <- readMVar mvar

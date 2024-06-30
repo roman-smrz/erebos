@@ -31,8 +31,8 @@ import Data.UUID (UUID)
 import Foreign.Storable (peek)
 
 import System.Directory
+import System.FSNotify (WatchManager)
 import System.FilePath
-import System.INotify (INotify)
 import System.IO
 import System.IO.Error
 import System.IO.Unsafe (unsafePerformIO)
@@ -60,7 +60,7 @@ showParentStorage Storage { stParent = Just st } = "@" ++ show st
 
 data StorageBacking c
          = StorageDir { dirPath :: FilePath
-                      , dirWatchers :: MVar ( Maybe INotify, [ HeadTypeID ], WatchList c )
+                      , dirWatchers :: MVar ( Maybe WatchManager, [ HeadTypeID ], WatchList c )
                       }
          | StorageMemory { memHeads :: MVar [((HeadTypeID, HeadID), Ref' c)]
                          , memObjs :: MVar (Map RefDigest BL.ByteString)
