@@ -301,10 +301,11 @@ startServer opt serverOrigHead logd' serverServices = do
 
             forkServerThread server $ forever $ do
                 (paddr, msg) <- readFlowIO serverRawPath
-                case paddr of
-                    DatagramAddress addr -> void $ S.sendTo sock msg addr
+                handle (\(e :: IOException) -> atomically . logd $ "failed to send packet to " ++ show paddr ++ ": " ++ show e) $ do
+                    case paddr of
+                        DatagramAddress addr -> void $ S.sendTo sock msg addr
 #ifdef ENABLE_ICE_SUPPORT
-                    PeerIceSession ice   -> iceSend ice msg
+                        PeerIceSession ice   -> iceSend ice msg
 #endif
 
             forkServerThread server $ forever $ do
@@ -922,6 +923,9 @@ getBroadcastAddresses port = do
             w <- peekElemOff ptr i
             if w == 0 then return []
                       else (SockAddrInet port w:) <$> parse (i + 1)
-    addrs <- parse 0
-    cFree ptr
-    return addrs
+    if ptr == nullPtr
+      then return []
+      else do
+        addrs <- parse 0
+        cFree ptr
+        return addrs

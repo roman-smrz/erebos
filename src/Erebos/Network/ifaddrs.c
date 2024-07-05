@@ -1,5 +1,7 @@
 #include "ifaddrs.h"
 
+#ifndef _WIN32
+
 #include <arpa/inet.h>
 #include <ifaddrs.h>
 #include <net/if.h>
@@ -39,3 +41,51 @@ uint32_t * broadcast_addresses(void)
 	ret[count] = 0;
 	return ret;
 }
+
+#else // _WIN32
+
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
+#pragma comment(lib, "ws2_32.lib")
+
+uint32_t * broadcast_addresses(void)
+{
+	uint32_t * ret = NULL;
+	SOCKET wsock = INVALID_SOCKET;
+
+	struct WSAData wsaData;
+	if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
+		return NULL;
+
+	wsock = WSASocket(AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, 0);
+	if (wsock == INVALID_SOCKET)
+		goto cleanup;
+
+	INTERFACE_INFO InterfaceList[32];
+	unsigned long nBytesReturned;
+
+	if (WSAIoctl(wsock, SIO_GET_INTERFACE_LIST, 0, 0,
+				InterfaceList, sizeof(InterfaceList),
+				&nBytesReturned, 0, 0) == SOCKET_ERROR)
+		goto cleanup;
+
+	int numInterfaces = nBytesReturned / sizeof(INTERFACE_INFO);
+
+	size_t capacity = 16, count = 0;
+	ret = malloc(sizeof(uint32_t) * capacity);
+
+	for (int i = 0; i < numInterfaces && count < capacity - 1; i++)
+		if (InterfaceList[i].iiFlags & IFF_BROADCAST)
+			ret[count++] = InterfaceList[i].iiBroadcastAddress.AddressIn.sin_addr.s_addr;
+
+	ret[count] = 0;
+cleanup:
+	if (wsock != INVALID_SOCKET)
+		closesocket(wsock);
+	WSACleanup();
+
+	return ret;
+}
+
+#endif
