@@ -37,6 +37,7 @@ import System.IO
 
 import Erebos.Attach
 import Erebos.Contact
+import Erebos.Chatroom
 import Erebos.Conversation
 #ifdef ENABLE_ICE_SUPPORT
 import Erebos.Discovery
@@ -425,6 +426,8 @@ commands =
     , ("attach", cmdAttach)
     , ("attach-accept", cmdAttachAccept)
     , ("attach-reject", cmdAttachReject)
+    , ("chatrooms", cmdChatrooms)
+    , ("chatroom-create-public", cmdChatroomCreatePublic)
     , ("contacts", cmdContacts)
     , ("contact-add", cmdContactAdd)
     , ("contact-accept", cmdContactAccept)
@@ -529,6 +532,30 @@ cmdAttachAccept = attachAccept =<< getSelectedPeer
 
 cmdAttachReject :: Command
 cmdAttachReject = attachReject =<< getSelectedPeer
+
+cmdChatrooms :: Command
+cmdChatrooms = do
+    chatrooms <- listChatrooms
+    forM_ chatrooms $ \case
+        rstate | Just room <- roomStateRoom rstate -> do
+            liftIO $ T.putStrLn $ T.concat
+                [ fromMaybe (T.pack "<unnamed>") $ roomName room
+                ]
+        _ -> return ()
+
+cmdChatroomCreatePublic :: Command
+cmdChatroomCreatePublic = do
+    name <- asks ciLine >>= \case
+        line | not (null line) -> return $ T.pack line
+        _ -> liftIO $ do
+            T.putStr $ T.pack "Name: "
+            hFlush stdout
+            T.getLine
+
+    void $ createChatroom
+        (if T.null name then Nothing else Just name)
+        Nothing
+
 
 cmdContacts :: Command
 cmdContacts = do

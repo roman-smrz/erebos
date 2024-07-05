@@ -93,6 +93,19 @@ Show message history of the selected conversation.
 `/details`  
 Show information about the selected conversations, contact or peer.
 
+### Chatrooms
+
+Currently only public unmoderated chatrooms are supported, which means that any
+network peer is allowed to read and post to the chatroom. Individual messages
+are signed, so message author can not be forged.
+
+`/chatrooms`
+: List known chatrooms.
+
+`/chatroom-create-public [<name>]`
+: Create public unmoderated chatroom. Room name can be passed as command
+  argument or entered interactively.
+
 ### Add contacts
 
 To ensure the identity of the contact and prevent man-in-the-middle attack,
