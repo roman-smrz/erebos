@@ -87,6 +87,8 @@ availableServices =
         True "attach (to) other devices"
     , ServiceOption "sync" (someService @SyncService Proxy)
         True "synchronization with attached devices"
+    , ServiceOption "chatroom" (someService @ChatroomService Proxy)
+        True "chatrooms with multiple participants"
     , ServiceOption "contact" (someService @ContactService Proxy)
         True "create contacts with network peers"
     , ServiceOption "dm" (someService @DirectMessage Proxy)
