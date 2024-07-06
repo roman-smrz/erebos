@@ -20,7 +20,8 @@ module Erebos.Chatroom (
     cmsgFrom, cmsgReplyTo, cmsgTime, cmsgText, cmsgLeave,
     cmsgRoom, cmsgRoomData,
     ChatMessageData(..),
-    chatroomMessageByStateData,
+    sendChatroomMessage,
+    sendChatroomMessageByStateData,
 
     ChatroomService(..),
 ) where
@@ -171,10 +172,15 @@ threadToList thread = helper S.empty $ thread
         | otherwise = []
     cmpView msg = (zonedTimeToUTC $ mdTime $ fromSigned msg, msg)
 
-chatroomMessageByStateData
+sendChatroomMessage
+    :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
+    => ChatroomState -> Text -> m ()
+sendChatroomMessage rstate msg = sendChatroomMessageByStateData (head $ roomStateData rstate) msg
+
+sendChatroomMessageByStateData
     :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
     => Stored ChatroomStateData -> Text -> m ()
-chatroomMessageByStateData lookupData msg = void $ findAndUpdateChatroomState $ \cstate -> do
+sendChatroomMessageByStateData lookupData msg = void $ findAndUpdateChatroomState $ \cstate -> do
     guard $ any (lookupData `precedesOrEquals`) $ roomStateData cstate
     Just $ do
         self <- finalOwner . localIdentity . fromStored <$> getLocalHead

@@ -506,9 +506,11 @@ cmdSend :: Command
 cmdSend = void $ do
     text <- asks ciLine
     conv <- getSelectedConversation
-    msg <- sendMessage conv $ T.pack text
-    tzone <- liftIO $ getCurrentTimeZone
-    liftIO $ putStrLn $ formatMessage tzone msg
+    sendMessage conv (T.pack text) >>= \case
+        Just msg -> do
+            tzone <- liftIO $ getCurrentTimeZone
+            liftIO $ putStrLn $ formatMessage tzone msg
+        Nothing -> return ()
 
 cmdHistory :: Command
 cmdHistory = void $ do
@@ -535,13 +537,11 @@ cmdAttachReject = attachReject =<< getSelectedPeer
 
 cmdChatrooms :: Command
 cmdChatrooms = do
-    chatrooms <- listChatrooms
-    forM_ chatrooms $ \case
-        rstate | Just room <- roomStateRoom rstate -> do
-            liftIO $ T.putStrLn $ T.concat
-                [ fromMaybe (T.pack "<unnamed>") $ roomName room
-                ]
-        _ -> return ()
+    conversations <- return . catMaybes =<< mapM chatroomConversation =<< listChatrooms
+    set <- asks ciSetContextOptions
+    set $ map SelectedConversation conversations
+    forM_ (zip [1..] conversations) $ \(i :: Int, conv) -> do
+        liftIO $ putStrLn $ "[" ++ show i ++ "] " ++ T.unpack (conversationName conv)
 
 cmdChatroomCreatePublic :: Command
 cmdChatroomCreatePublic = do

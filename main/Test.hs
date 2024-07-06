@@ -758,4 +758,4 @@ cmdChatroomMessageSend :: Command
 cmdChatroomMessageSend = do
     [cid, msg] <- asks tiParams
     to <- getChatroomStateData cid
-    void $ chatroomMessageByStateData to msg
+    void $ sendChatroomMessageByStateData to msg
