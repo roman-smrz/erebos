@@ -24,6 +24,7 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as T
 import Data.Text.IO qualified as T
+import Data.Time.Format
 import Data.Time.LocalTime
 import Data.Typeable
 
@@ -238,6 +239,7 @@ interactiveLoop st opts = runInputT inputSettings $ do
                             PeerIdentityRef wref _ -> "<" ++ BC.unpack (showRefDigest $ wrDigest wref) ++ ">"
                             PeerIdentityUnknown _  -> "<unknown>"
                         SelectedContact contact -> return $ T.unpack $ contactName contact
+                        SelectedChatroom rstate -> return $ T.unpack $ fromMaybe (T.pack "<unnamed>") $ roomName =<< roomStateRoom rstate
                         SelectedConversation conv -> return $ T.unpack $ conversationName conv
                     return $ pname ++ "> "
                 Right prompt -> return prompt
@@ -290,6 +292,7 @@ interactiveLoop st opts = runInputT inputSettings $ do
 
     peers <- liftIO $ newMVar []
     contextOptions <- liftIO $ newMVar []
+    chatroomSetVar <- liftIO $ newEmptyMVar
 
     void $ liftIO $ forkIO $ void $ forever $ do
         peer <- getNextPeerChange server
@@ -328,6 +331,8 @@ interactiveLoop st opts = runInputT inputSettings $ do
                     return (ps', ps')
                 , ciContextOptions = liftIO $ readMVar contextOptions
                 , ciSetContextOptions = \ctxs -> liftIO $ modifyMVar_ contextOptions $ const $ return ctxs
+                , ciContextOptionsVar = contextOptions
+                , ciChatroomSetVar = chatroomSetVar
                 }
             case res of
                 Right cstate'
@@ -346,6 +351,7 @@ interactiveLoop st opts = runInputT inputSettings $ do
         , csIceSessions = []
 #endif
         , csIcePeer = Nothing
+        , csWatchChatrooms = Nothing
         , csQuit = False
         }
 
@@ -357,6 +363,8 @@ data CommandInput = CommandInput
     , ciPeers :: CommandM [(Peer, String)]
     , ciContextOptions :: CommandM [CommandContext]
     , ciSetContextOptions :: [CommandContext] -> Command
+    , ciContextOptionsVar :: MVar [ CommandContext ]
+    , ciChatroomSetVar :: MVar (Set ChatroomState)
     }
 
 data CommandState = CommandState
@@ -366,12 +374,14 @@ data CommandState = CommandState
     , csIceSessions :: [IceSession]
 #endif
     , csIcePeer :: Maybe Peer
+    , csWatchChatrooms :: Maybe WatchedHead
     , csQuit :: Bool
     }
 
 data CommandContext = NoContext
                     | SelectedPeer Peer
                     | SelectedContact Contact
+                    | SelectedChatroom ChatroomState
                     | SelectedConversation Conversation
 
 newtype CommandM a = CommandM (ReaderT CommandInput (StateT CommandState (ExceptT String IO)) a)
@@ -413,6 +423,10 @@ getSelectedConversation = gets csContext >>= \case
     SelectedContact contact -> case contactIdentity contact of
         Just cid -> directMessageConversation cid
         Nothing -> throwError "contact without erebos identity"
+    SelectedChatroom rstate ->
+        chatroomConversation rstate >>= \case
+            Just conv -> return conv
+            Nothing -> throwError "invalid chatroom"
     SelectedConversation conv -> reloadConversation conv
     _ -> throwError "no contact, peer or conversation selected"
 
@@ -537,13 +551,67 @@ cmdAttachAccept = attachAccept =<< getSelectedPeer
 cmdAttachReject :: Command
 cmdAttachReject = attachReject =<< getSelectedPeer
 
+watchChatroomsForCli :: (String -> IO ()) -> Head LocalState -> MVar (Set ChatroomState) -> MVar [ CommandContext ] -> IO WatchedHead
+watchChatroomsForCli eprint h chatroomSetVar contextVar = do
+    let ctxUpdate updateType (idx :: Int) rstate = \case
+            SelectedChatroom rstate' : rest
+                | currentRoots <- filterAncestors (concatMap storedRoots $ roomStateData rstate)
+                , any ((`intersectsSorted` currentRoots) . storedRoots) $ roomStateData rstate'
+                -> do
+                    eprint $ "[" <> show idx <> "] CHATROOM " <> updateType <> " " <> name
+                    return (SelectedChatroom rstate : rest)
+            selected : rest
+                -> do
+                    (selected : ) <$> ctxUpdate updateType (idx + 1) rstate rest
+            []
+                -> do
+                    eprint $ "[" <> show idx <> "] CHATROOM " <> updateType <> " " <> name
+                    return [ SelectedChatroom rstate ]
+          where
+            name = maybe "<unnamed>" T.unpack $ roomName =<< roomStateRoom rstate
+
+    watchChatrooms h $ \set -> \case
+        Nothing -> putMVar chatroomSetVar set
+        Just diff -> do
+            modifyMVar_ chatroomSetVar $ return . const set
+            forM_ diff $ \case
+                AddedChatroom rstate -> modifyMVar_ contextVar $ ctxUpdate "NEW" 1 rstate
+                RemovedChatroom rstate -> modifyMVar_ contextVar $ ctxUpdate "DEL" 1 rstate
+                UpdatedChatroom oldroom rstate -> do
+                    when (any ((\rsd -> not (null (rsdRoom rsd))) . fromStored) (roomStateData rstate)) $ do
+                        modifyMVar_ contextVar $ ctxUpdate "UPD" 1 rstate
+                    when (any (not . null . rsdMessages . fromStored) (roomStateData rstate)) $ do
+                        tzone <- getCurrentTimeZone
+                        forM_ (reverse $ getMessagesSinceState rstate oldroom) $ \msg -> do
+                            eprint $ concat $
+                                [ maybe "<unnamed>" T.unpack $ roomName =<< cmsgRoom msg
+                                , formatTime defaultTimeLocale " [%H:%M] " $ utcToLocalTime tzone $ zonedTimeToUTC $ cmsgTime msg
+                                , maybe "<unnamed>" T.unpack $ idName $ cmsgFrom msg
+                                , ": "
+                                , maybe "<no message>" T.unpack $ cmsgText msg
+                                ]
+
+ensureWatchedChatrooms :: Command
+ensureWatchedChatrooms = do
+    gets csWatchChatrooms >>= \case
+        Nothing -> do
+            eprint <- asks ciPrint
+            h <- gets csHead
+            chatroomSetVar <- asks ciChatroomSetVar
+            contextVar <- asks ciContextOptionsVar
+            watched <- liftIO $ watchChatroomsForCli eprint h chatroomSetVar contextVar
+            modify $ \s -> s { csWatchChatrooms = Just watched }
+        Just _ -> return ()
+
 cmdChatrooms :: Command
 cmdChatrooms = do
-    conversations <- return . catMaybes =<< mapM chatroomConversation =<< listChatrooms
+    ensureWatchedChatrooms
+    chatroomSetVar <- asks ciChatroomSetVar
+    chatroomList <- fromSetBy (comparing roomStateData) <$> liftIO (readMVar chatroomSetVar)
     set <- asks ciSetContextOptions
-    set $ map SelectedConversation conversations
-    forM_ (zip [1..] conversations) $ \(i :: Int, conv) -> do
-        liftIO $ putStrLn $ "[" ++ show i ++ "] " ++ T.unpack (conversationName conv)
+    set $ map SelectedChatroom chatroomList
+    forM_ (zip [1..] chatroomList) $ \(i :: Int, rstate) -> do
+        liftIO $ putStrLn $ "[" ++ show i ++ "] " ++ maybe "<unnamed>" T.unpack (roomName =<< roomStateRoom rstate)
 
 cmdChatroomCreatePublic :: Command
 cmdChatroomCreatePublic = do
@@ -554,6 +622,7 @@ cmdChatroomCreatePublic = do
             hFlush stdout
             T.getLine
 
+    ensureWatchedChatrooms
     void $ createChatroom
         (if T.null name then Nothing else Just name)
         Nothing
@@ -614,6 +683,9 @@ cmdDetails = do
 
         SelectedContact contact -> do
             printContactDetails contact
+
+        SelectedChatroom rstate -> do
+            liftIO $ putStrLn $ "Chatroom: " <> (T.unpack $ fromMaybe (T.pack "<unnamed>") $ roomName =<< roomStateRoom rstate)
 
         SelectedConversation conv -> do
             case conversationPeer conv of
@@ -732,3 +804,10 @@ cmdIceSend = void $ do
 
 cmdQuit :: Command
 cmdQuit = modify $ \s -> s { csQuit = True }
+
+
+intersectsSorted :: Ord a => [a] -> [a] -> Bool
+intersectsSorted (x:xs) (y:ys) | x < y     = intersectsSorted xs (y:ys)
+                               | x > y     = intersectsSorted (x:xs) ys
+                               | otherwise = True
+intersectsSorted _ _ = False
