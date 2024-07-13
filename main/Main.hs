@@ -61,6 +61,7 @@ import Version
 data Options = Options
     { optServer :: ServerOptions
     , optServices :: [ServiceOption]
+    , optChatroomAutoSubscribe :: Maybe Int
     , optDmBotEcho :: Maybe Text
     , optShowHelp :: Bool
     , optShowVersion :: Bool
@@ -77,6 +78,7 @@ defaultOptions :: Options
 defaultOptions = Options
     { optServer = defaultServerOptions
     , optServices = availableServices
+    , optChatroomAutoSubscribe = Nothing
     , optDmBotEcho = Nothing
     , optShowHelp = False
     , optShowVersion = False
@@ -108,6 +110,9 @@ options =
     , Option ['s'] ["silent"]
         (NoArg (so $ \opts -> opts { serverLocalDiscovery = False }))
         "do not send announce packets for local discovery"
+    , Option [] ["chatroom-auto-subscribe"]
+        (ReqArg (\count -> \opts -> opts { optChatroomAutoSubscribe = Just (read count) }) "<count>")
+        "automatically subscribe for up to <count> chatrooms"
     , Option [] ["dm-bot-echo"]
         (ReqArg (\prefix -> \opts -> opts { optDmBotEcho = Just (T.pack prefix) }) "<prefix>")
         "automatically reply to direct messages with the same text prefixed with <prefix>"
@@ -286,13 +291,17 @@ interactiveLoop st opts = runInputT inputSettings $ do
                         Right reply -> extPrintLn $ formatDirectMessage tzone $ fromStored reply
                         Left err -> extPrintLn $ "Failed to send dm echo: " <> err
 
-    server <- liftIO $ do
-        startServer (optServer opts) erebosHead extPrintLn $
-            map soptService $ filter soptEnabled $ optServices opts
-
     peers <- liftIO $ newMVar []
     contextOptions <- liftIO $ newMVar []
     chatroomSetVar <- liftIO $ newEmptyMVar
+
+    watched <- case optChatroomAutoSubscribe opts of
+        auto@(Just _) -> fmap Just $ liftIO $ watchChatroomsForCli extPrintLn erebosHead chatroomSetVar contextOptions auto
+        Nothing       -> return Nothing
+
+    server <- liftIO $ do
+        startServer (optServer opts) erebosHead extPrintLn $
+            map soptService $ filter soptEnabled $ optServices opts
 
     void $ liftIO $ forkIO $ void $ forever $ do
         peer <- getNextPeerChange server
@@ -326,6 +335,7 @@ interactiveLoop st opts = runInputT inputSettings $ do
                 { ciServer = server
                 , ciLine = line
                 , ciPrint = extPrintLn
+                , ciOptions = opts
                 , ciPeers = liftIO $ modifyMVar peers $ \ps -> do
                     ps' <- filterM (fmap not . isPeerDropped . fst) ps
                     return (ps', ps')
@@ -351,7 +361,7 @@ interactiveLoop st opts = runInputT inputSettings $ do
         , csIceSessions = []
 #endif
         , csIcePeer = Nothing
-        , csWatchChatrooms = Nothing
+        , csWatchChatrooms = watched
         , csQuit = False
         }
 
@@ -360,6 +370,7 @@ data CommandInput = CommandInput
     { ciServer :: Server
     , ciLine :: String
     , ciPrint :: String -> IO ()
+    , ciOptions :: Options
     , ciPeers :: CommandM [(Peer, String)]
     , ciContextOptions :: CommandM [CommandContext]
     , ciSetContextOptions :: [CommandContext] -> Command
@@ -551,8 +562,10 @@ cmdAttachAccept = attachAccept =<< getSelectedPeer
 cmdAttachReject :: Command
 cmdAttachReject = attachReject =<< getSelectedPeer
 
-watchChatroomsForCli :: (String -> IO ()) -> Head LocalState -> MVar (Set ChatroomState) -> MVar [ CommandContext ] -> IO WatchedHead
-watchChatroomsForCli eprint h chatroomSetVar contextVar = do
+watchChatroomsForCli :: (String -> IO ()) -> Head LocalState -> MVar (Set ChatroomState) -> MVar [ CommandContext ] -> Maybe Int -> IO WatchedHead
+watchChatroomsForCli eprint h chatroomSetVar contextVar autoSubscribe = do
+    subscribedNumVar <- newEmptyMVar
+
     let ctxUpdate updateType (idx :: Int) rstate = \case
             SelectedChatroom rstate' : rest
                 | currentRoots <- filterAncestors (concatMap storedRoots $ roomStateData rstate)
@@ -571,12 +584,33 @@ watchChatroomsForCli eprint h chatroomSetVar contextVar = do
             name = maybe "<unnamed>" T.unpack $ roomName =<< roomStateRoom rstate
 
     watchChatrooms h $ \set -> \case
-        Nothing -> putMVar chatroomSetVar set
+        Nothing -> do
+            let chatroomList = fromSetBy (comparing roomStateData) set
+                (subscribed, notSubscribed) = partition roomStateSubscribe chatroomList
+                subscribedNum = length subscribed
+
+            putMVar chatroomSetVar set
+            putMVar subscribedNumVar subscribedNum
+
+            case autoSubscribe of
+                Nothing -> return ()
+                Just num -> do
+                    forM_ (take (num - subscribedNum) notSubscribed) $ \rstate -> do
+                        (runExceptT $ flip runReaderT h $ chatroomSetSubscribe (head $ roomStateData rstate) True) >>= \case
+                             Right () -> return ()
+                             Left err -> eprint err
+
         Just diff -> do
             modifyMVar_ chatroomSetVar $ return . const set
             forM_ diff $ \case
-                AddedChatroom rstate -> modifyMVar_ contextVar $ ctxUpdate "NEW" 1 rstate
-                RemovedChatroom rstate -> modifyMVar_ contextVar $ ctxUpdate "DEL" 1 rstate
+                AddedChatroom rstate -> do
+                    modifyMVar_ contextVar $ ctxUpdate "NEW" 1 rstate
+                    modifyMVar_ subscribedNumVar $ return . if roomStateSubscribe rstate then (+ 1) else id
+
+                RemovedChatroom rstate -> do
+                    modifyMVar_ contextVar $ ctxUpdate "DEL" 1 rstate
+                    modifyMVar_ subscribedNumVar $ return . if roomStateSubscribe rstate then subtract 1 else id
+
                 UpdatedChatroom oldroom rstate -> do
                     when (any ((\rsd -> not (null (rsdRoom rsd))) . fromStored) (roomStateData rstate)) $ do
                         modifyMVar_ contextVar $ ctxUpdate "UPD" 1 rstate
@@ -590,6 +624,9 @@ watchChatroomsForCli eprint h chatroomSetVar contextVar = do
                                 , ": "
                                 , maybe "<no message>" T.unpack $ cmsgText msg
                                 ]
+                    modifyMVar_ subscribedNumVar $ return
+                        . (if roomStateSubscribe rstate then (+ 1) else id)
+                        . (if roomStateSubscribe oldroom then subtract 1 else id)
 
 ensureWatchedChatrooms :: Command
 ensureWatchedChatrooms = do
@@ -599,7 +636,8 @@ ensureWatchedChatrooms = do
             h <- gets csHead
             chatroomSetVar <- asks ciChatroomSetVar
             contextVar <- asks ciContextOptionsVar
-            watched <- liftIO $ watchChatroomsForCli eprint h chatroomSetVar contextVar
+            autoSubscribe <- asks $ optChatroomAutoSubscribe . ciOptions
+            watched <- liftIO $ watchChatroomsForCli eprint h chatroomSetVar contextVar autoSubscribe
             modify $ \s -> s { csWatchChatrooms = Just watched }
         Just _ -> return ()
 
