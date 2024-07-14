@@ -526,7 +526,13 @@ cmdSelectContext :: Command
 cmdSelectContext = do
     n <- read <$> asks ciLine
     join (asks ciContextOptions) >>= \ctxs -> if
-        | n > 0, (ctx : _) <- drop (n - 1) ctxs -> modify $ \s -> s { csContext = ctx }
+        | n > 0, (ctx : _) <- drop (n - 1) ctxs -> do
+            modify $ \s -> s { csContext = ctx }
+            case ctx of
+                SelectedChatroom rstate -> do
+                    when (not (roomStateSubscribe rstate)) $ do
+                        chatroomSetSubscribe (head $ roomStateData rstate) True
+                _ -> return ()
         | otherwise -> throwError "invalid index"
 
 cmdSend :: Command
