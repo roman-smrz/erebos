@@ -434,7 +434,12 @@ instance Service ChatroomService where
 
     serviceHandler spacket = do
         let ChatroomService {..} = fromStored spacket
+
+        previouslyUpdated <- psSendRoomUpdates <$> svcGet
         svcModify $ \s -> s { psSendRoomUpdates = True }
+
+        when (not previouslyUpdated) $ do
+            syncChatroomsToPeer . lookupSharedValue . lsShared . fromStored =<< getLocalHead
 
         when chatRoomQuery $ do
             rooms <- listChatrooms
