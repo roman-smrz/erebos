@@ -1,5 +1,11 @@
 # Revision history for erebos
 
+## 0.1.5 -- 2024-07-16
+
+* Public chatrooms for multiple participants
+* Send keep-alive packets on idle connection
+* Windows support
+
 ## 0.1.4 -- 2024-06-11
 
 * Added `/conversations` command to list and select conversations
