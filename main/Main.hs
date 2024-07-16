@@ -295,9 +295,11 @@ interactiveLoop st opts = runInputT inputSettings $ do
     contextOptions <- liftIO $ newMVar []
     chatroomSetVar <- liftIO $ newEmptyMVar
 
-    watched <- case optChatroomAutoSubscribe opts of
-        auto@(Just _) -> fmap Just $ liftIO $ watchChatroomsForCli extPrintLn erebosHead chatroomSetVar contextOptions auto
-        Nothing       -> return Nothing
+    let autoSubscribe = optChatroomAutoSubscribe opts
+        chatroomList = fromSetBy (comparing roomStateData) . lookupSharedValue . lsShared . headObject $ erebosHead
+    watched <- if isJust autoSubscribe || any roomStateSubscribe chatroomList
+        then fmap Just $ liftIO $ watchChatroomsForCli extPrintLn erebosHead chatroomSetVar contextOptions autoSubscribe
+        else return Nothing
 
     server <- liftIO $ do
         startServer (optServer opts) erebosHead extPrintLn $
