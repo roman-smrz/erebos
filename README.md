@@ -60,12 +60,27 @@ Add public peer:
 [1] PEER UPD discovery1.erebosprotocol.net [37.221.243.57 29665]
 ```
 
-Select the peer and send it a message, the public server just responds with automatic echo message:
+Select the peer and send it a message, the public server just responds with
+automatic echo message:
 ```
 > /1
 discovery1.erebosprotocol.net> hello
 [18:55] Some Name: hello
 [18:55] discovery1.erebosprotocol.net: Echo: hello
+```
+
+List chatrooms known to the peers:
+```
+> /chatrooms
+[1] Test chatroom
+[2] Second test chatroom
+```
+
+Enter a chatroom and send a message there:
+```
+> /1
+Test chatroom> Hi
+Test chatroom [19:03] Some Name: Hi
 ```
 
 ### Messaging
@@ -99,10 +114,10 @@ Currently only public unmoderated chatrooms are supported, which means that any
 network peer is allowed to read and post to the chatroom. Individual messages
 are signed, so message author can not be forged.
 
-`/chatrooms`
+`/chatrooms`  
 : List known chatrooms.
 
-`/chatroom-create-public [<name>]`
+`/chatroom-create-public [<name>]`  
 : Create public unmoderated chatroom. Room name can be passed as command
   argument or entered interactively.
 
