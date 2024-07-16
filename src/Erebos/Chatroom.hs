@@ -161,8 +161,8 @@ instance Storable ChatMessageData where
         mdLeave <- isJust <$> loadMbEmpty "leave"
         return ChatMessageData {..}
 
-threadToList :: [Stored (Signed ChatMessageData)] -> [ChatMessage]
-threadToList thread = helper S.empty $ thread
+threadToListSince :: [ Stored (Signed ChatMessageData) ] -> [ Stored (Signed ChatMessageData) ] -> [ ChatMessage ]
+threadToListSince since thread = helper (S.fromList since) thread
   where
     helper :: S.Set (Stored (Signed ChatMessageData)) -> [Stored (Signed ChatMessageData)] -> [ChatMessage]
     helper seen msgs
@@ -244,7 +244,7 @@ instance Mergeable ChatroomState where
                 ChatroomStateData {..} | null rsdMessages -> Nothing
                                        | otherwise        -> Just rsdMessages
             roomStateSubscribe = fromMaybe False $ findPropertyFirst rsdSubscribe roomStateData
-            roomStateMessages = threadToList $ concatMap (rsdMessages . fromStored) roomStateData
+            roomStateMessages = threadToListSince [] $ concatMap (rsdMessages . fromStored) roomStateData
          in ChatroomState {..}
 
     toComponents = roomStateData
@@ -342,10 +342,7 @@ chatroomSetSubscribe lookupData subscribe = void $ findAndUpdateChatroomState $ 
             }
 
 getMessagesSinceState :: ChatroomState -> ChatroomState -> [ChatMessage]
-getMessagesSinceState cur old = takeWhile notOld (roomStateMessages cur)
-  where
-    notOld msg = cmsgData msg `notElem` roomStateMessageData old
-    -- TODO: parallel message threads
+getMessagesSinceState cur old = threadToListSince (roomStateMessageData old) (roomStateMessageData cur)
 
 
 data ChatroomSetChange = AddedChatroom ChatroomState
