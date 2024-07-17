@@ -231,8 +231,10 @@ interactiveLoop st opts = runInputT inputSettings $ do
 
     tui <- haveTerminalUI
     extPrint <- getExternalPrint
-    let extPrintLn str = extPrint $ case reverse str of ('\n':_) -> str
-                                                        _ -> str ++ "\n";
+    let extPrintLn str = do
+            let str' = case reverse str of ('\n':_) -> str
+                                           _ -> str ++ "\n";
+            extPrint $! str' -- evaluate str before calling extPrint to avoid blinking
 
     let getInputLinesTui eprompt = do
             prompt <- case eprompt of
