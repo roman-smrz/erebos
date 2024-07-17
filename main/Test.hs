@@ -501,11 +501,11 @@ cmdPeerList = do
 
 cmdTestMessageSend :: Command
 cmdTestMessageSend = do
-    [spidx, tref] <- asks tiParams
+    spidx : trefs <- asks tiParams
     st <- asks tiStorage
-    Just ref <- liftIO $ readRef st (encodeUtf8 tref)
+    Just refs <- liftIO $ fmap sequence $ mapM (readRef st . encodeUtf8) trefs
     peer <- getPeer spidx
-    sendToPeer peer $ TestMessage $ wrappedLoad ref
+    sendManyToPeer peer $ map (TestMessage . wrappedLoad) refs
     cmdOut "test-message-send done"
 
 cmdSharedStateGet :: Command
