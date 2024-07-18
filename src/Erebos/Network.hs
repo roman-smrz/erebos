@@ -535,8 +535,12 @@ handlePacket identity secure peer chanSvc svcs (TransportHeader headers) prefs =
                         liftSTM $ finalizedChannel peer ch identity
                     _ -> return ()
 
-            Rejected dgst -> do
-                logd $ "rejected by peer: " ++ show dgst
+            Rejected dgst
+                | peerRequest : _ <- mapMaybe (\case TrChannelRequest d -> Just d; _ -> Nothing) headers
+                , peerRequest < dgst
+                -> return () -- Our request was rejected due to lower priority
+
+                | otherwise -> logd $ "rejected by peer: " ++ show dgst
 
             DataRequest dgst
                 | secure || dgst `elem` plaintextRefs -> do
@@ -607,9 +611,15 @@ handlePacket identity secure peer chanSvc svcs (TransportHeader headers) prefs =
                     ChannelCookieWait {} -> return ()
                     ChannelCookieReceived {} -> process
                     ChannelCookieConfirmed {} -> process
-                    ChannelOurRequest our | dgst < refDigest (storedRef our) -> process
-                                          | otherwise -> reject
-                    ChannelPeerRequest {} -> process
+                    ChannelOurRequest our
+                        | dgst < refDigest (storedRef our) -> process
+                        | otherwise -> do
+                            -- Reject peer channel request with lower priority
+                            addHeader $ TrChannelRequest $ refDigest $ storedRef our
+                            reject
+                    ChannelPeerRequest prev
+                        | dgst == wrDigest prev -> addHeader $ Acknowledged dgst
+                        | otherwise -> process
                     ChannelOurAccept {} -> reject
                     ChannelEstablished {} -> process
                     ChannelClosed {} -> return ()
