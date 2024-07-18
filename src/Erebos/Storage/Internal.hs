@@ -241,7 +241,7 @@ writeFileOnce file content = bracket (openLockFile locked)
         doesFileExist file >>= \case
             True  -> removeFile locked
             False -> do BL.hPut h content
-                        hFlush h
+                        hClose h
                         renameFile locked file
     where locked = file ++ ".lock"
 
@@ -254,13 +254,13 @@ writeFileChecked file prev content = bracket (openLockFile locked)
                 removeFile locked
                 return $ Left $ Just current
             (Nothing, False) -> do B.hPut h content
-                                   hFlush h
+                                   hClose h
                                    renameFile locked file
                                    return $ Right ()
             (Just expected, True) -> do
                 current <- B.readFile file
                 if current == expected then do B.hPut h content
-                                               hFlush h
+                                               hClose h
                                                renameFile locked file
                                                return $ return ()
                                        else do removeFile locked
