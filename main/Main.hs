@@ -159,7 +159,7 @@ main = do
                         forM_ (signedSignature signed) $ \sig -> do
                             putStr $ "SIG "
                             BC.putStrLn $ showRef $ storedRef $ sigKey $ fromStored sig
-                    "identity" -> case validateIdentityF (wrappedLoad <$> refs) of
+                    "identity" -> case validateExtendedIdentityF (wrappedLoad <$> refs) of
                         Just identity -> do
                             let disp :: Identity m -> IO ()
                                 disp idt = do
@@ -169,7 +169,7 @@ main = do
                                     case idOwner idt of
                                          Nothing -> return ()
                                          Just owner -> do
-                                             mapM_ (putStrLn . ("OWNER " ++) . BC.unpack . showRefDigest . refDigest . storedRef) $ idDataF owner
+                                             mapM_ (putStrLn . ("OWNER " ++) . BC.unpack . showRefDigest . refDigest . storedRef) $ idExtDataF owner
                                              disp owner
                             disp identity
                         Nothing -> putStrLn $ "Identity verification failed"
