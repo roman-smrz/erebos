@@ -97,7 +97,7 @@ runTestTool st = do
             Nothing -> return ()
 
     runExceptT (evalStateT testLoop initTestState) >>= \case
-        Left x -> hPutStrLn stderr x
+        Left x -> B.hPutStr stderr $ (`BC.snoc` '\n') $ BC.pack x
         Right () -> return ()
 
 getLineMb :: MonadIO m => m (Maybe Text)
@@ -121,7 +121,7 @@ outLine :: Output -> String -> IO ()
 outLine mvar line = do
     evaluate $ foldl' (flip seq) () line
     withMVar mvar $ \() -> do
-        putStrLn line
+        B.putStr $ (`BC.snoc` '\n') $ BC.pack line
         hFlush stdout
 
 cmdOut :: String -> Command
@@ -428,7 +428,7 @@ cmdStartServer = do
 
     h <- getOrLoadHead
     rsPeers <- liftIO $ newMVar (1, [])
-    rsServer <- liftIO $ startServer defaultServerOptions h (hPutStrLn stderr)
+    rsServer <- liftIO $ startServer defaultServerOptions h (B.hPutStr stderr . (`BC.snoc` '\n') . BC.pack)
         [ someServiceAttr $ pairingAttributes (Proxy @AttachService) out rsPeers "attach"
         , someServiceAttr $ pairingAttributes (Proxy @ContactService) out rsPeers "contact"
         , someServiceAttr $ directMessageAttributes out
