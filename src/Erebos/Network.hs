@@ -671,12 +671,14 @@ setupChannel identity peer upid = do
             [ TrChannelRequest reqref
             , AnnounceSelf $ refDigest $ storedRef $ idData identity
             ]
+    let sendChannelRequest = do
+            sendToPeerPlain peer [ Acknowledged reqref, Rejected reqref ] $
+                TransportPacket (TransportHeader hitems) [storedRef req]
+            setPeerChannel peer $ ChannelOurRequest req
     liftIO $ atomically $ do
         getPeerChannel peer >>= \case
-            ChannelCookieConfirmed -> do
-                sendToPeerPlain peer [ Acknowledged reqref, Rejected reqref ] $
-                    TransportPacket (TransportHeader hitems) [storedRef req]
-                setPeerChannel peer $ ChannelOurRequest req
+            ChannelCookieReceived -> sendChannelRequest
+            ChannelCookieConfirmed -> sendChannelRequest
             _ -> return ()
 
 handleChannelRequest :: Peer -> UnifiedIdentity -> Ref -> WaitingRefCallback
