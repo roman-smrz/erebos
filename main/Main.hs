@@ -61,11 +61,16 @@ import Version
 data Options = Options
     { optServer :: ServerOptions
     , optServices :: [ServiceOption]
+    , optStorage :: StorageOption
     , optChatroomAutoSubscribe :: Maybe Int
     , optDmBotEcho :: Maybe Text
     , optShowHelp :: Bool
     , optShowVersion :: Bool
     }
+
+data StorageOption = DefaultStorage
+                   | FilesystemStorage FilePath
+                   | MemoryStorage
 
 data ServiceOption = ServiceOption
     { soptName :: String
@@ -78,6 +83,7 @@ defaultOptions :: Options
 defaultOptions = Options
     { optServer = defaultServerOptions
     , optServices = availableServices
+    , optStorage = DefaultStorage
     , optChatroomAutoSubscribe = Nothing
     , optDmBotEcho = Nothing
     , optShowHelp = False
@@ -110,6 +116,12 @@ options =
     , Option ['s'] ["silent"]
         (NoArg (so $ \opts -> opts { serverLocalDiscovery = False }))
         "do not send announce packets for local discovery"
+    , Option [] [ "storage" ]
+        (ReqArg (\path -> \opts -> opts { optStorage = FilesystemStorage path }) "<path>")
+        "use storage in <path>"
+    , Option [] [ "memory-storage" ]
+        (NoArg (\opts -> opts { optStorage = MemoryStorage }))
+        "use memory storage"
     , Option [] ["chatroom-auto-subscribe"]
         (ReqArg (\count -> \opts -> opts { optChatroomAutoSubscribe = Just (read count) }) "<count>")
         "automatically subscribe for up to <count> chatrooms"
@@ -142,8 +154,20 @@ servicesOptions = concatMap helper $ "all" : map soptName availableServices
 
 main :: IO ()
 main = do
-    st <- liftIO $ openStorage . fromMaybe "./.erebos" =<< lookupEnv "EREBOS_DIR"
-    getArgs >>= \case
+    (opts, args) <- (getOpt RequireOrder (options ++ servicesOptions) <$> getArgs) >>= \case
+        (o, args, []) -> do
+            return (foldl (flip id) defaultOptions o, args)
+        (_, _, errs) -> do
+            progName <- getProgName
+            hPutStrLn stderr $ concat errs <> "Try `" <> progName <> " --help' for more information."
+            exitFailure
+
+    st <- liftIO $ case optStorage opts of
+        DefaultStorage         -> openStorage . fromMaybe "./.erebos" =<< lookupEnv "EREBOS_DIR"
+        FilesystemStorage path -> openStorage path
+        MemoryStorage          -> memoryStorage
+
+    case args of
         ["cat-file", sref] -> do
             readRef st (BC.pack sref) >>= \case
                 Nothing -> error "ref does not exist"
@@ -193,32 +217,30 @@ main = do
 
         ["test"] -> runTestTool st
 
-        args -> case getOpt Permute (options ++ servicesOptions) args of
-            (o, [], []) -> do
-                let opts = foldl (flip id) defaultOptions o
-                    header = "Usage: erebos [OPTION...]"
-                    serviceDesc ServiceOption {..} = padService ("  " <> soptName) <> soptDescription
+        [] -> do
+            let header = "Usage: erebos [OPTION...]"
+                serviceDesc ServiceOption {..} = padService ("  " <> soptName) <> soptDescription
 
-                    padTo n str = str <> replicate (n - length str) ' '
-                    padOpt = padTo 37
-                    padService = padTo 16
+                padTo n str = str <> replicate (n - length str) ' '
+                padOpt = padTo 37
+                padService = padTo 16
 
-                if | optShowHelp opts -> putStr $ usageInfo header options <> unlines
-                      (
-                        [ padOpt "  --enable-<service>"  <> "enable network service <service>"
-                        , padOpt "  --disable-<service>" <> "disable network service <service>"
-                        , padOpt "  --enable-all"        <> "enable all network services"
-                        , padOpt "  --disable-all"       <> "disable all network services"
-                        , ""
-                        , "Available network services:"
-                        ] ++ map serviceDesc availableServices
-                      )
-                   | optShowVersion opts -> putStrLn versionLine
-                   | otherwise -> interactiveLoop st opts
-            (_, _, errs) -> do
-                progName <- getProgName
-                hPutStrLn stderr $ concat errs <> "Try `" <> progName <> " --help' for more information."
-                exitFailure
+            if | optShowHelp opts -> putStr $ usageInfo header options <> unlines
+                  (
+                    [ padOpt "  --enable-<service>"  <> "enable network service <service>"
+                    , padOpt "  --disable-<service>" <> "disable network service <service>"
+                    , padOpt "  --enable-all"        <> "enable all network services"
+                    , padOpt "  --disable-all"       <> "disable all network services"
+                    , ""
+                    , "Available network services:"
+                    ] ++ map serviceDesc availableServices
+                  )
+               | optShowVersion opts -> putStrLn versionLine
+               | otherwise -> interactiveLoop st opts
+
+        (cmdname : _) -> do
+            hPutStrLn stderr $ "Unknown command `" <> cmdname <> "'"
+            exitFailure
 
 
 inputSettings :: Settings IO
