@@ -80,6 +80,7 @@ moveKeys from to = liftIO $ do
                 return M.empty
 
         (StorageMemory { memKeys = fromKeys }, StorageMemory { memKeys = toKeys }) -> do
-            modifyMVar_ fromKeys $ \fkeys -> do
-                modifyMVar_ toKeys $ return . M.union fkeys
-                return M.empty
+            when (fromKeys /= toKeys) $ do
+                modifyMVar_ fromKeys $ \fkeys -> do
+                    modifyMVar_ toKeys $ return . M.union fkeys
+                    return M.empty
