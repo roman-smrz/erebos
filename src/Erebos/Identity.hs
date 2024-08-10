@@ -377,8 +377,9 @@ updateOwners updates orig@Identity { idOwner_ = Just owner, idUpdates_ = cupdate
 updateOwners _ orig@Identity { idOwner_ = Nothing } = orig
 
 sameIdentity :: (Foldable m, Foldable m') => Identity m -> Identity m' -> Bool
-sameIdentity x y = not $ S.null $ S.intersection (refset x) (refset y)
-    where refset idt = foldr S.insert (ancestors $ toList $ idDataF idt) (idDataF idt)
+sameIdentity x y = intersectsSorted (roots x) (roots y)
+  where
+    roots idt = uniq $ sort $ concatMap storedRoots $ toList $ idDataF idt
 
 
 unfoldOwners :: (Foldable m) => Identity m -> [ComposedIdentity]
