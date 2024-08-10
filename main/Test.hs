@@ -283,6 +283,9 @@ commands = map (T.pack *** id)
     , ("chatroom-set-name", cmdChatroomSetName)
     , ("chatroom-subscribe", cmdChatroomSubscribe)
     , ("chatroom-unsubscribe", cmdChatroomUnsubscribe)
+    , ("chatroom-members", cmdChatroomMembers)
+    , ("chatroom-join", cmdChatroomJoin)
+    , ("chatroom-leave", cmdChatroomLeave)
     , ("chatroom-message-send", cmdChatroomMessageSend)
     ]
 
@@ -732,6 +735,7 @@ cmdChatroomWatchLocal = do
                             , [ show . refDigest . storedRef . head . filterAncestors . concatMap storedRoots . toComponents $ room ]
                             , [ "room", maybe "<unnamed>" T.unpack $ roomName =<< cmsgRoom msg ]
                             , [ "from", maybe "<unnamed>" T.unpack $ idName $ cmsgFrom msg ]
+                            , if cmsgLeave msg then [ "leave" ] else []
                             , maybe [] (("text":) . (:[]) . T.unpack) $ cmsgText msg
                             ]
 
@@ -753,6 +757,26 @@ cmdChatroomUnsubscribe = do
     [ cid ] <- asks tiParams
     to <- getChatroomStateData cid
     void $ chatroomSetSubscribe to False
+
+cmdChatroomMembers :: Command
+cmdChatroomMembers = do
+    [ cid ] <- asks tiParams
+    Just chatroom <- findChatroomByStateData =<< getChatroomStateData cid
+    forM_ (chatroomMembers chatroom) $ \user -> do
+        cmdOut $ unwords [ "chatroom-members-item", maybe "<unnamed>" T.unpack $ idName user ]
+    cmdOut "chatroom-members-done"
+
+cmdChatroomJoin :: Command
+cmdChatroomJoin = do
+    [ cid ] <- asks tiParams
+    joinChatroomByStateData =<< getChatroomStateData cid
+    cmdOut "chatroom-join-done"
+
+cmdChatroomLeave :: Command
+cmdChatroomLeave = do
+    [ cid ] <- asks tiParams
+    leaveChatroomByStateData =<< getChatroomStateData cid
+    cmdOut "chatroom-leave-done"
 
 cmdChatroomMessageSend :: Command
 cmdChatroomMessageSend = do

@@ -452,6 +452,11 @@ getSelectedPeer = gets csContext >>= \case
     SelectedPeer peer -> return peer
     _ -> throwError "no peer selected"
 
+getSelectedChatroom :: CommandM ChatroomState
+getSelectedChatroom = gets csContext >>= \case
+    SelectedChatroom rstate -> return rstate
+    _ -> throwError "no chatroom selected"
+
 getSelectedConversation :: CommandM Conversation
 getSelectedConversation = gets csContext >>= \case
     SelectedPeer peer -> peerIdentity peer >>= \case
@@ -496,6 +501,9 @@ commands =
     , ("ice-connect", cmdIceConnect)
     , ("ice-send", cmdIceSend)
 #endif
+    , ("join", cmdJoin)
+    , ("leave", cmdLeave)
+    , ("members", cmdMembers)
     , ("select", cmdSelectContext)
     , ("quit", cmdQuit)
     ]
@@ -547,6 +555,19 @@ showPeer pidentity paddr =
                     PeerIdentityRef wref _ -> "<" ++ BC.unpack (showRefDigest $ wrDigest wref) ++ ">"
                     PeerIdentityFull pid   -> T.unpack $ displayIdentity pid
      in name ++ " [" ++ show paddr ++ "]"
+
+cmdJoin :: Command
+cmdJoin = joinChatroom =<< getSelectedChatroom
+
+cmdLeave :: Command
+cmdLeave = leaveChatroom =<< getSelectedChatroom
+
+cmdMembers :: Command
+cmdMembers = do
+    Just room <- findChatroomByStateData . head . roomStateData =<< getSelectedChatroom
+    forM_ (chatroomMembers room) $ \x -> do
+        liftIO $ putStrLn $ maybe "<unnamed>" T.unpack $ idName x
+
 
 cmdSelectContext :: Command
 cmdSelectContext = do
@@ -653,8 +674,8 @@ watchChatroomsForCli eprint h chatroomSetVar contextVar autoSubscribe = do
                                 [ maybe "<unnamed>" T.unpack $ roomName =<< cmsgRoom msg
                                 , formatTime defaultTimeLocale " [%H:%M] " $ utcToLocalTime tzone $ zonedTimeToUTC $ cmsgTime msg
                                 , maybe "<unnamed>" T.unpack $ idName $ cmsgFrom msg
-                                , ": "
-                                , maybe "<no message>" T.unpack $ cmsgText msg
+                                , if cmsgLeave msg then " left" else ""
+                                , maybe (if cmsgLeave msg then "" else " joined") ((": " ++) . T.unpack) $ cmsgText msg
                                 ]
                     modifyMVar_ subscribedNumVar $ return
                         . (if roomStateSubscribe rstate then (+ 1) else id)

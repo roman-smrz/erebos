@@ -121,6 +121,17 @@ are signed, so message author can not be forged.
 : Create public unmoderated chatroom. Room name can be passed as command
   argument or entered interactively.
 
+`/members`  
+: List members of the chatroom – usesers who sent any message or joined via the
+`join` command.
+
+`/join`  
+: Join chatroom without sending text message.
+
+`/leave`  
+: Leave the chatroom. User will no longer be listed as a member and erebos tool
+  will no longer collect message of this chatroom.
+
 ### Add contacts
 
 To ensure the identity of the contact and prevent man-in-the-middle attack,

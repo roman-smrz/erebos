@@ -11,6 +11,9 @@ module Erebos.Chatroom (
     findChatroomByRoomData,
     findChatroomByStateData,
     chatroomSetSubscribe,
+    chatroomMembers,
+    joinChatroom, joinChatroomByStateData,
+    leaveChatroom, leaveChatroomByStateData,
     getMessagesSinceState,
 
     ChatroomSetChange(..),
@@ -33,6 +36,8 @@ import Control.Monad.IO.Class
 
 import Data.Bool
 import Data.Either
+import Data.Foldable
+import Data.Function
 import Data.IORef
 import Data.List
 import Data.Maybe
@@ -180,23 +185,23 @@ sendChatroomMessage rstate msg = sendChatroomMessageByStateData (head $ roomStat
 sendChatroomMessageByStateData
     :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
     => Stored ChatroomStateData -> Text -> m ()
-sendChatroomMessageByStateData lookupData msg = void $ findAndUpdateChatroomState $ \cstate -> do
+sendChatroomMessageByStateData lookupData msg = sendRawChatroomMessageByStateData lookupData Nothing (Just msg) False
+
+sendRawChatroomMessageByStateData
+    :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
+    => Stored ChatroomStateData -> Maybe (Stored (Signed ChatMessageData)) -> Maybe Text -> Bool -> m ()
+sendRawChatroomMessageByStateData lookupData mdReplyTo mdText mdLeave = void $ findAndUpdateChatroomState $ \cstate -> do
     guard $ any (lookupData `precedesOrEquals`) $ roomStateData cstate
     Just $ do
-        self <- finalOwner . localIdentity . fromStored <$> getLocalHead
-        secret <- loadKey $ idKeyMessage self
-        time <- liftIO getZonedTime
-        mdata <- mstore =<< sign secret =<< mstore ChatMessageData
-            { mdPrev = roomStateMessageData cstate
-            , mdRoom = if null (roomStateMessageData cstate)
-                          then maybe [] roomData (roomStateRoom cstate)
-                          else []
-            , mdFrom = self
-            , mdReplyTo = Nothing
-            , mdTime = time
-            , mdText = Just msg
-            , mdLeave = False
-            }
+        mdFrom <- finalOwner . localIdentity . fromStored <$> getLocalHead
+        secret <- loadKey $ idKeyMessage mdFrom
+        mdTime <- liftIO getZonedTime
+        let mdPrev = roomStateMessageData cstate
+            mdRoom = if null (roomStateMessageData cstate)
+                        then maybe [] roomData (roomStateRoom cstate)
+                        else []
+
+        mdata <- mstore =<< sign secret =<< mstore ChatMessageData {..}
         mergeSorted . (:[]) <$> mstore ChatroomStateData
             { rsdPrev = roomStateData cstate
             , rsdRoom = []
@@ -340,6 +345,36 @@ chatroomSetSubscribe lookupData subscribe = void $ findAndUpdateChatroomState $ 
             , rsdSubscribe = Just subscribe
             , rsdMessages = []
             }
+
+chatroomMembers :: ChatroomState -> [ ComposedIdentity ]
+chatroomMembers ChatroomState {..} =
+    map (mdFrom . fromSigned . head) $
+    filter (any $ not . mdLeave . fromSigned) $ -- keep only users that hasn't left
+    map (filterAncestors . map snd) $ -- gather message data per each identity and filter ancestors
+    groupBy ((==) `on` fst) $ -- group on identity root
+    sortBy (comparing fst) $ -- sort by first root of identity data
+    map (\x -> ( head . filterAncestors . concatMap storedRoots . idDataF . mdFrom . fromSigned $ x, x )) $
+    toList $ ancestors $ roomStateMessageData
+
+joinChatroom
+    :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
+    => ChatroomState -> m ()
+joinChatroom rstate = joinChatroomByStateData (head $ roomStateData rstate)
+
+joinChatroomByStateData
+    :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
+    => Stored ChatroomStateData -> m ()
+joinChatroomByStateData lookupData = sendRawChatroomMessageByStateData lookupData Nothing Nothing False
+
+leaveChatroom
+    :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
+    => ChatroomState -> m ()
+leaveChatroom rstate = leaveChatroomByStateData (head $ roomStateData rstate)
+
+leaveChatroomByStateData
+    :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
+    => Stored ChatroomStateData -> m ()
+leaveChatroomByStateData lookupData = sendRawChatroomMessageByStateData lookupData Nothing Nothing True
 
 getMessagesSinceState :: ChatroomState -> ChatroomState -> [ChatMessage]
 getMessagesSinceState cur old = threadToListSince (roomStateMessageData old) (roomStateMessageData cur)
