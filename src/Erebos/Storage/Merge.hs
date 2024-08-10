@@ -97,13 +97,16 @@ storedGeneration x =
         doLookup x
 
 
+-- |Returns list of sets starting with the set of given objects and
+-- intcrementally adding parents.
 generations :: Storable a => [Stored a] -> [Set (Stored a)]
 generations = unfoldr gen . (,S.empty)
-    where gen (hs, cur) = case filter (`S.notMember` cur) $ previous =<< hs of
+    where gen (hs, cur) = case filter (`S.notMember` cur) hs of
               []    -> Nothing
               added -> let next = foldr S.insert cur added
-                        in Just (next, (added, next))
+                        in Just (next, (previous =<< added, next))
 
+-- |Returns set containing all given objects and their ancestors
 ancestors :: Storable a => [Stored a] -> Set (Stored a)
 ancestors = last . (S.empty:) . generations
 
