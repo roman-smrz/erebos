@@ -35,7 +35,6 @@ import Data.Foldable
 import Data.Function
 import Data.List
 import Data.Maybe
-import Data.Ord
 import Data.Set (Set)
 import qualified Data.Set as S
 import Data.Text (Text)
@@ -304,25 +303,18 @@ verifySignatures sidd = do
         throwError "signature verification failed"
 
 lookupProperty :: forall a m. Foldable m => (ExtendedIdentityData -> Maybe a) -> m (Stored (Signed ExtendedIdentityData)) -> Maybe a
-lookupProperty sel topHeads = findResult filteredLayers
-    where findPropHeads :: Stored (Signed ExtendedIdentityData) -> [(Stored (Signed ExtendedIdentityData), a)]
-          findPropHeads sobj | Just x <- sel $ fromSigned sobj = [(sobj, x)]
-                             | otherwise = findPropHeads =<< (eiddPrev $ fromSigned sobj)
+lookupProperty sel topHeads = findResult propHeads
+  where
+    findPropHeads :: Stored (Signed ExtendedIdentityData) -> [ Stored (Signed ExtendedIdentityData) ]
+    findPropHeads sobj | Just _ <- sel $ fromSigned sobj = [ sobj ]
+                       | otherwise = findPropHeads =<< (eiddPrev $ fromSigned sobj)
 
-          propHeads :: [(Stored (Signed ExtendedIdentityData), a)]
-          propHeads = findPropHeads =<< toList topHeads
+    propHeads :: [ Stored (Signed ExtendedIdentityData) ]
+    propHeads = filterAncestors $ findPropHeads =<< toList topHeads
 
-          historyLayers :: [Set (Stored (Signed ExtendedIdentityData))]
-          historyLayers = generations $ map fst propHeads
-
-          filteredLayers :: [[(Stored (Signed ExtendedIdentityData), a)]]
-          filteredLayers = scanl (\cur obsolete -> filter ((`S.notMember` obsolete) . fst) cur) propHeads historyLayers
-
-          findResult ([(_, x)] : _) = Just x
-          findResult ([] : _) = Nothing
-          findResult [] = Nothing
-          findResult [xs] = Just $ snd $ minimumBy (comparing fst) xs
-          findResult (_:rest) = findResult rest
+    findResult :: [ Stored (Signed ExtendedIdentityData) ] -> Maybe a
+    findResult [] = Nothing
+    findResult xs = sel $ fromSigned $ minimum xs
 
 mergeIdentity :: (MonadStorage m, MonadError String m, MonadIO m) => Identity f -> m UnifiedIdentity
 mergeIdentity idt | Just idt' <- toUnifiedIdentity idt = return idt'
