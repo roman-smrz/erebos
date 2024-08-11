@@ -891,6 +891,7 @@ processOutgoing gs@GlobalState {..} = do
                     now <- readTVar gNowVar
                     if next <= now
                       then do
+                        writeTVar cNextKeepAlive Nothing
                         identity <- fst <$> readTVar gIdentity
                         let header = TransportHeader [ AnnounceSelf $ refDigest $ storedRef $ idData identity ]
                         writeTQueue cSecureOutQueue (EncryptedOnly, TransportPacket header [], [])
