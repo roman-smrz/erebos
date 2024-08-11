@@ -1,13 +1,89 @@
 #include "ifaddrs.h"
 
-#ifndef _WIN32
-
-#include <arpa/inet.h>
-#include <ifaddrs.h>
-#include <net/if.h>
+#include <errno.h>
+#include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
-#include <sys/types.h>
+#include <string.h>
+
+#ifndef _WIN32
+#include <arpa/inet.h>
+#include <net/if.h>
+#include <ifaddrs.h>
 #include <endian.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#else
+#include <winsock2.h>
+#include <ws2ipdef.h>
+#include <ws2tcpip.h>
+#endif
+
+#define DISCOVERY_MULTICAST_GROUP "ff12:b6a4:6b1f:969:caee:acc2:5c93:73e1"
+
+uint32_t * join_multicast(int fd, size_t * count)
+{
+	size_t capacity = 16;
+	*count = 0;
+	uint32_t * interfaces = malloc(sizeof(uint32_t) * capacity);
+
+#ifdef _WIN32
+	interfaces[0] = 0;
+	*count = 1;
+#else
+	struct ifaddrs * addrs;
+	if (getifaddrs(&addrs) < 0)
+		return 0;
+
+	for (struct ifaddrs * ifa = addrs; ifa; ifa = ifa->ifa_next) {
+		if (ifa->ifa_addr && ifa->ifa_addr->sa_family == AF_INET6 &&
+				!(ifa->ifa_flags & IFF_LOOPBACK)) {
+			int idx = if_nametoindex(ifa->ifa_name);
+
+			bool seen = false;
+			for (size_t i = 0; i < *count; i++) {
+				if (interfaces[i] == idx) {
+					seen = true;
+					break;
+				}
+			}
+			if (seen)
+				continue;
+
+			if (*count + 1 >= capacity) {
+				capacity *= 2;
+				uint32_t * nret = realloc(interfaces, sizeof(uint32_t) * capacity);
+				if (nret) {
+					interfaces = nret;
+				} else {
+					free(interfaces);
+					*count = 0;
+					return NULL;
+				}
+			}
+
+			interfaces[*count] = idx;
+			(*count)++;
+		}
+	}
+
+	freeifaddrs(addrs);
+#endif
+
+	for (size_t i = 0; i < *count; i++) {
+		struct ipv6_mreq group;
+		group.ipv6mr_interface = interfaces[i];
+		inet_pton(AF_INET6, DISCOVERY_MULTICAST_GROUP, &group.ipv6mr_multiaddr);
+		int ret = setsockopt(fd, IPPROTO_IPV6, IPV6_ADD_MEMBERSHIP,
+				(const void *) &group, sizeof(group));
+		if (ret < 0)
+			fprintf(stderr, "IPV6_ADD_MEMBERSHIP failed: %s\n", strerror(errno));
+	}
+
+	return interfaces;
+}
+
+#ifndef _WIN32
 
 uint32_t * broadcast_addresses(void)
 {

@@ -54,6 +54,9 @@ import GHC.Conc.Sync (unsafeIOToSTM)
 import Network.Socket hiding (ControlMessage)
 import qualified Network.Socket.ByteString as S
 
+import Foreign.C.Types
+import Foreign.Marshal.Alloc
+
 import Erebos.Channel
 #ifdef ENABLE_ICE_SUPPORT
 import Erebos.ICE
@@ -70,6 +73,9 @@ import Erebos.Storage.Merge
 
 discoveryPort :: PortNumber
 discoveryPort = 29665
+
+discoveryMulticastGroup :: HostAddress6
+discoveryMulticastGroup = tupleToHostAddress6 (0xff12, 0xb6a4, 0x6b1f, 0x0969, 0xcaee, 0xacc2, 0x5c93, 0x73e1) -- ff12:b6a4:6b1f:969:caee:acc2:5c93:73e1
 
 announceIntervalSeconds :: Int
 announceIntervalSeconds = 60
@@ -249,8 +255,6 @@ startServer opt serverOrigHead logd' serverServices = do
         either (atomically . logd) return =<< runExceptT =<<
             atomically (readTQueue serverIOActions)
 
-    broadcastAddreses <- getBroadcastAddresses discoveryPort
-
     let open addr = do
             sock <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
             putMVar serverSocket sock
@@ -261,9 +265,14 @@ startServer opt serverOrigHead logd' serverServices = do
             return sock
 
         loop sock = do
-            when (serverLocalDiscovery opt) $ forkServerThread server $ forever $ do
-                atomically $ writeFlowBulk serverControlFlow $ map (SendAnnounce . DatagramAddress) broadcastAddreses
-                threadDelay $ announceIntervalSeconds * 1000 * 1000
+            when (serverLocalDiscovery opt) $ forkServerThread server $ do
+                announceAddreses <- fmap concat $ sequence $
+                    [ map (SockAddrInet6 discoveryPort 0 discoveryMulticastGroup) <$> joinMulticast sock
+                    , getBroadcastAddresses discoveryPort
+                    ]
+                forever $ do
+                    atomically $ writeFlowBulk serverControlFlow $ map (SendAnnounce . DatagramAddress) announceAddreses
+                    threadDelay $ announceIntervalSeconds * 1000 * 1000
 
             let announceUpdate identity = do
                     st <- derivePartialStorage serverStorage
@@ -944,8 +953,18 @@ runPeerServiceOn mbservice peer handler = liftIO $ do
             logd $ "unhandled service '" ++ show (toUUID svc) ++ "'"
 
 
+foreign import ccall unsafe "Network/ifaddrs.h join_multicast" cJoinMulticast :: CInt -> Ptr CSize -> IO (Ptr Word32)
 foreign import ccall unsafe "Network/ifaddrs.h broadcast_addresses" cBroadcastAddresses :: IO (Ptr Word32)
 foreign import ccall unsafe "stdlib.h free" cFree :: Ptr Word32 -> IO ()
+
+joinMulticast :: Socket -> IO [ Word32 ]
+joinMulticast sock =
+    withFdSocket sock $ \fd ->
+    alloca $ \pcount -> do
+        ptr <- cJoinMulticast fd pcount
+        count <- fromIntegral <$> peek pcount
+        forM [ 0 .. count - 1 ] $ \i ->
+            peekElemOff ptr i
 
 getBroadcastAddresses :: PortNumber -> IO [SockAddr]
 getBroadcastAddresses port = do
