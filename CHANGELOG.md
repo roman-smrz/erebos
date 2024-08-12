@@ -1,5 +1,12 @@
 # Revision history for erebos
 
+## 0.1.6 -- 2024-08-12
+
+* Fix sending multiple data responses in a stream
+* Added `--storage`/`--memory-storage` command-line options
+* Compatibility with GHC up to 9.10
+* Local discovery with IPv6
+
 ## 0.1.5 -- 2024-07-16
 
 * Public chatrooms for multiple participants
