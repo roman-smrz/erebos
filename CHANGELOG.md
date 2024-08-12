@@ -2,6 +2,7 @@
 
 ## 0.1.6 -- 2024-08-12
 
+* Chatroom members list and join/leave commands
 * Fix sending multiple data responses in a stream
 * Added `--storage`/`--memory-storage` command-line options
 * Compatibility with GHC up to 9.10
