@@ -40,7 +40,17 @@ import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Trans
 
+import Crypto.Cipher.ChaChaPoly1305 qualified as C
+import Crypto.MAC.Poly1305 qualified as C (Auth(..), authTag)
+import Crypto.Error
+import Crypto.Random
+
+import Data.Binary
+import Data.Binary.Get
+import Data.Binary.Put
 import Data.Bits
+import Data.ByteArray (Bytes, ScrubbedBytes)
+import Data.ByteArray qualified as BA
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as B
 import Data.ByteString.Char8 qualified as BC
@@ -51,7 +61,6 @@ import Data.Maybe
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Void
-import Data.Word
 
 import System.Clock
 
@@ -103,6 +112,35 @@ data SecurityRequirement = PlaintextOnly
                          | PlaintextAllowed
                          | EncryptedOnly
     deriving (Eq, Ord)
+
+data ParsedCookie = ParsedCookie
+    { cookieNonce :: C.Nonce
+    , cookieValidity :: Word32
+    , cookieContent :: ByteString
+    , cookieMac :: C.Auth
+    }
+
+instance Eq ParsedCookie where
+    (==) = (==) `on` (\c -> ( BA.convert (cookieNonce c) :: ByteString, cookieValidity c, cookieContent c, cookieMac c ))
+
+instance Show ParsedCookie where
+    show ParsedCookie {..} = show (nonce, cookieValidity, cookieContent, mac)
+      where C.Auth mac = cookieMac
+            nonce = BA.convert cookieNonce :: ByteString
+
+instance Binary ParsedCookie where
+    put ParsedCookie {..} = do
+        putByteString $ BA.convert cookieNonce
+        putWord32be cookieValidity
+        putByteString $ BA.convert cookieMac
+        putByteString cookieContent
+
+    get = do
+        Just cookieNonce <- maybeCryptoError . C.nonce12 <$> getByteString 12
+        cookieValidity <- getWord32be
+        Just cookieMac <- maybeCryptoError . C.authTag <$> getByteString 16
+        cookieContent <- BL.toStrict <$> getRemainingLazyByteString
+        return ParsedCookie {..}
 
 isHeaderItemAcknowledged :: TransportHeaderItem -> Bool
 isHeaderItemAcknowledged = \case
@@ -168,9 +206,12 @@ data GlobalState addr = (Eq addr, Show addr) => GlobalState
     , gNextUp :: TMVar (Connection addr, (Bool, TransportPacket PartialObject))
     , gLog :: String -> STM ()
     , gStorage :: PartialStorage
+    , gStartTime :: TimeSpec
     , gNowVar :: TVar TimeSpec
     , gNextTimeout :: TVar TimeSpec
     , gInitConfig :: Ref
+    , gCookieKey :: ScrubbedBytes
+    , gCookieStartTime :: Word32
     }
 
 data Connection addr = Connection
@@ -444,10 +485,13 @@ erebosNetworkProtocol initialIdentity gLog gDataFlow gControlFlow = do
     mStorage <- memoryStorage
     gStorage <- derivePartialStorage mStorage
 
-    startTime <- getTime Monotonic
-    gNowVar <- newTVarIO startTime
-    gNextTimeout <- newTVarIO startTime
+    gStartTime <- getTime Monotonic
+    gNowVar <- newTVarIO gStartTime
+    gNextTimeout <- newTVarIO gStartTime
     gInitConfig <- store mStorage $ (Rec [] :: Object)
+
+    gCookieKey <- getRandomBytes 32
+    gCookieStartTime <- runGet getWord32host . BL.pack . BA.unpack @ScrubbedBytes <$> getRandomBytes 4
 
     let gs = GlobalState {..}
 
@@ -702,11 +746,38 @@ generateCookieHeaders Connection {..} ch = catMaybes <$> sequence [ echoHeader, 
         _ -> return Nothing
 
 createCookie :: GlobalState addr -> addr -> IO Cookie
-createCookie GlobalState {} addr = return (Cookie $ BC.pack $ show addr)
+createCookie GlobalState {..} addr = do
+    (nonceBytes :: Bytes) <- getRandomBytes 12
+    validUntil <- (fromNanoSecs (60 * 10^(9 :: Int)) +) <$> getTime Monotonic
+    let validSecondsFromStart = fromIntegral $ toNanoSecs (validUntil - gStartTime) `div` (10^(9 :: Int))
+        cookieValidity = validSecondsFromStart - gCookieStartTime
+        plainContent = BC.pack (show addr)
+    throwCryptoErrorIO $ do
+        cookieNonce <- C.nonce12 nonceBytes
+        st1 <- C.initialize gCookieKey cookieNonce
+        let st2 = C.finalizeAAD $ C.appendAAD (BL.toStrict $ runPut $ putWord32be cookieValidity) st1
+            (cookieContent, st3) = C.encrypt plainContent st2
+            cookieMac = C.finalize st3
+        return $ Cookie $ BL.toStrict $ encode $ ParsedCookie {..}
 
 verifyCookie :: GlobalState addr -> addr -> Cookie -> IO Bool
-verifyCookie GlobalState {} addr (Cookie cookie) = return $ show addr == BC.unpack cookie
+verifyCookie GlobalState {..} addr (Cookie cookie) = do
+    ctime <- getTime Monotonic
+    return $ fromMaybe False $ do
+        ( _, _, ParsedCookie {..} ) <- either (const Nothing) Just $ decodeOrFail $ BL.fromStrict cookie
+        maybeCryptoError $ do
+            st1 <- C.initialize gCookieKey cookieNonce
+            let st2 = C.finalizeAAD $ C.appendAAD (BL.toStrict $ runPut $ putWord32be cookieValidity) st1
+                (plainContent, st3) = C.decrypt cookieContent st2
+                mac = C.finalize st3
 
+                validSecondsFromStart = fromIntegral $ cookieValidity + gCookieStartTime
+                validUntil = gStartTime + fromNanoSecs (validSecondsFromStart * (10^(9 :: Int)))
+            return $ and
+                [ mac == cookieMac
+                , ctime <= validUntil
+                , show addr == BC.unpack plainContent
+                ]
 
 reservePacket :: Connection addr -> STM ReservedToSend
 reservePacket conn@Connection {..} = do
