@@ -38,6 +38,7 @@ module Erebos.Storage (
     storeEmpty, storeInt, storeNum, storeText, storeBinary, storeDate, storeUUID, storeRef, storeRawRef,
     storeMbEmpty, storeMbInt, storeMbNum, storeMbText, storeMbBinary, storeMbDate, storeMbUUID, storeMbRef, storeMbRawRef,
     storeZRef,
+    storeRecItems,
 
     Load, LoadRec,
     evalLoad,
@@ -210,23 +211,27 @@ copyRef' st ref'@(Ref _ dgst) = refFromDigest st dgst >>= \case Just ref -> retu
                       mbobj <- sequence $ copyObject' st <$> mbobj'
                       sequence $ unsafeStoreObject st <$> join mbobj
 
+copyRecItem' :: forall c c'. (StorageCompleteness c, StorageCompleteness c') => Storage' c' -> RecItem' c -> IO (c (RecItem' c'))
+copyRecItem' st = \case
+    RecEmpty -> return $ return $ RecEmpty
+    RecInt x -> return $ return $ RecInt x
+    RecNum x -> return $ return $ RecNum x
+    RecText x -> return $ return $ RecText x
+    RecBinary x -> return $ return $ RecBinary x
+    RecDate x -> return $ return $ RecDate x
+    RecUUID x -> return $ return $ RecUUID x
+    RecRef x -> fmap RecRef <$> copyRef' st x
+
 copyObject' :: forall c c'. (StorageCompleteness c, StorageCompleteness c') => Storage' c' -> Object' c -> IO (c (Object' c'))
 copyObject' _ (Blob bs) = return $ return $ Blob bs
-copyObject' st (Rec rs) = fmap Rec . sequence <$> mapM copyItem rs
-    where copyItem :: (ByteString, RecItem' c) -> IO (c (ByteString, RecItem' c'))
-          copyItem (n, item) = fmap (n,) <$> case item of
-              RecEmpty -> return $ return $ RecEmpty
-              RecInt x -> return $ return $ RecInt x
-              RecNum x -> return $ return $ RecNum x
-              RecText x -> return $ return $ RecText x
-              RecBinary x -> return $ return $ RecBinary x
-              RecDate x -> return $ return $ RecDate x
-              RecUUID x -> return $ return $ RecUUID x
-              RecRef x -> fmap RecRef <$> copyRef' st x
+copyObject' st (Rec rs) = fmap Rec . sequence <$> mapM (\( n, item ) -> fmap ( n, ) <$> copyRecItem' st item) rs
 copyObject' _ ZeroObject = return $ return ZeroObject
 
 copyRef :: forall c c' m. (StorageCompleteness c, StorageCompleteness c', MonadIO m) => Storage' c' -> Ref' c -> m (LoadResult c (Ref' c'))
 copyRef st ref' = liftIO $ returnLoadResult <$> copyRef' st ref'
+
+copyRecItem :: forall c c' m. (StorageCompleteness c, StorageCompleteness c', MonadIO m) => Storage' c' -> RecItem' c -> m (LoadResult c (RecItem' c'))
+copyRecItem st item' = liftIO $ returnLoadResult <$> copyRecItem' st item'
 
 copyObject :: forall c c'. (StorageCompleteness c, StorageCompleteness c') => Storage' c' -> Object' c -> IO (LoadResult c (Object' c'))
 copyObject st obj' = returnLoadResult <$> copyObject' st obj'
@@ -790,6 +795,12 @@ storeZRef name x = StoreRecM $ do
         return $ if isZeroRef ref then []
                                   else [(BC.pack name, RecRef ref)]
 
+storeRecItems :: StorageCompleteness c => [ ( ByteString, RecItem ) ] -> StoreRec c
+storeRecItems items = StoreRecM $ do
+    st <- ask
+    tell $ flip map items $ \( name, value ) -> do
+        value' <- copyRecItem st value
+        return [ ( name, value' ) ]
 
 loadBlob :: (ByteString -> a) -> Load a
 loadBlob f = loadCurrentObject >>= \case

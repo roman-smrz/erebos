@@ -427,3 +427,50 @@ test SharedStateWatcher:
 		send "shared-state-wait $s2" to p2
 		expect /shared-state-wait $s1/ from p2
 		expect /shared-state-wait $s2/ from p2
+
+
+test LocalStateKeepUnknown:
+	let refpat = /blake2#[0-9a-f]*/
+
+	spawn as p
+	with p:
+		send "create-identity Device"
+		send "watch-local-identity"
+		expect /local-identity Device/
+
+		send "local-state-get"
+		expect /local-state-get ($refpat)/ capture s1
+		send "load $s1"
+
+		expect /load-type rec [0-9]*/
+		expect /load-line id:r ($refpat)/ capture id1
+		local:
+			expect /load-(.*)/ capture done
+			guard (done == "done")
+
+		send:
+			"store rec"
+			"id:r $id1"
+			"TEST:i 123"
+			""
+		expect /store-done ($refpat)/ capture s2
+		send "local-state-replace $s1 $s2"
+		expect /local-state-replace-done/
+
+		send "local-state-get"
+		expect /local-state-get $s2/
+
+		send "update-local-identity Device2"
+		expect /local-identity Device2/
+
+		send "local-state-get"
+		expect /local-state-get ($refpat)/ capture s3
+		send "load $s3"
+
+		expect /load-type rec [0-9]*/
+		expect /load-line id:r ($refpat)/ capture id2
+		guard (id1 /= id2)
+		expect /load-line TEST:i 123/
+		local:
+			expect /load-(.*)/ capture done
+			guard (done == "done")

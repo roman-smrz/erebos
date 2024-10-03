@@ -22,13 +22,15 @@ module Erebos.State (
 import Control.Monad.Except
 import Control.Monad.Reader
 
+import Data.ByteString (ByteString)
+import Data.ByteString.Char8 qualified as BC
 import Data.Foldable
 import Data.Maybe
-import qualified Data.Text as T
-import qualified Data.Text.IO as T
+import Data.Text qualified as T
+import Data.Text.IO qualified as T
 import Data.Typeable
 import Data.UUID (UUID)
-import qualified Data.UUID as U
+import Data.UUID qualified as U
 
 import System.IO
 
@@ -40,6 +42,7 @@ import Erebos.Storage.Merge
 data LocalState = LocalState
     { lsIdentity :: Stored (Signed ExtendedIdentityData)
     , lsShared :: [Stored SharedState]
+    , lsOther :: [ ( ByteString, RecItem ) ]
     }
 
 data SharedState = SharedState
@@ -58,13 +61,16 @@ class Mergeable a => SharedType a where
     sharedTypeID :: proxy a -> SharedTypeID
 
 instance Storable LocalState where
-    store' st = storeRec $ do
-        storeRef "id" $ lsIdentity st
-        mapM_ (storeRef "shared") $ lsShared st
+    store' LocalState {..} = storeRec $ do
+        storeRef "id" lsIdentity
+        mapM_ (storeRef "shared") lsShared
+        storeRecItems lsOther
 
-    load' = loadRec $ LocalState
-        <$> loadRef "id"
-        <*> loadRefs "shared"
+    load' = loadRec $ do
+        lsIdentity <- loadRef "id"
+        lsShared <- loadRefs "shared"
+        lsOther <- filter ((`notElem` [ BC.pack "id", BC.pack "shared" ]) . fst) <$> loadRecItems
+        return LocalState {..}
 
 instance HeadType LocalState where
     headTypeID _ = mkHeadTypeID "1d7491a9-7bcb-4eaa-8f13-c8c4c4087e4e"
@@ -123,7 +129,8 @@ loadLocalStateHead st = loadHeads st >>= \case
             }
         storeHead st $ LocalState
             { lsIdentity = idExtData identity
-            , lsShared = [shared]
+            , lsShared = [ shared ]
+            , lsOther = []
             }
 
 localIdentity :: LocalState -> UnifiedIdentity

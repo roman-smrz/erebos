@@ -16,6 +16,7 @@ import Data.Bool
 import Data.ByteString qualified as B
 import Data.ByteString.Char8 qualified as BC
 import Data.ByteString.Lazy qualified as BL
+import Data.ByteString.Lazy.Char8 qualified as BL
 import Data.Foldable
 import Data.Ord
 import Data.Text (Text)
@@ -244,6 +245,7 @@ type Command = CommandM ()
 commands :: [(Text, Command)]
 commands = map (T.pack *** id)
     [ ("store", cmdStore)
+    , ("load", cmdLoad)
     , ("stored-generation", cmdStoredGeneration)
     , ("stored-roots", cmdStoredRoots)
     , ("stored-set-add", cmdStoredSetAdd)
@@ -259,6 +261,9 @@ commands = map (T.pack *** id)
     , ("peer-drop", cmdPeerDrop)
     , ("peer-list", cmdPeerList)
     , ("test-message-send", cmdTestMessageSend)
+    , ("local-state-get", cmdLocalStateGet)
+    , ("local-state-replace", cmdLocalStateReplace)
+    , ("local-state-wait", cmdLocalStateWait)
     , ("shared-state-get", cmdSharedStateGet)
     , ("shared-state-wait", cmdSharedStateWait)
     , ("watch-local-identity", cmdWatchLocalIdentity)
@@ -298,6 +303,17 @@ cmdStore = do
     let cnt = encodeUtf8 $ T.unlines ls
     ref <- liftIO $ unsafeStoreRawBytes st $ BL.fromChunks [encodeUtf8 otype, BC.singleton ' ', BC.pack (show $ B.length cnt), BC.singleton '\n', cnt]
     cmdOut $ "store-done " ++ show (refDigest ref)
+
+cmdLoad :: Command
+cmdLoad = do
+    st <- asks tiStorage
+    [ tref ] <- asks tiParams
+    Just ref <- liftIO $ readRef st $ encodeUtf8 tref
+    header : content <- return $ BL.lines $ lazyLoadBytes ref
+    cmdOut $ "load-type " <> T.unpack (decodeUtf8 $ BL.toStrict header)
+    forM_ content $ \line -> do
+        cmdOut $ "load-line " <> T.unpack (decodeUtf8 $ BL.toStrict line)
+    cmdOut "load-done"
 
 cmdStoredGeneration :: Command
 cmdStoredGeneration = do
@@ -422,6 +438,7 @@ cmdCreateIdentity = do
         storeHead st $ LocalState
             { lsIdentity = idExtData identity
             , lsShared = shared
+            , lsOther = []
             }
     initTestHead h
 
@@ -511,13 +528,25 @@ cmdTestMessageSend = do
     sendManyToPeer peer $ map (TestMessage . wrappedLoad) refs
     cmdOut "test-message-send done"
 
-cmdSharedStateGet :: Command
-cmdSharedStateGet = do
+cmdLocalStateGet :: Command
+cmdLocalStateGet = do
     h <- getHead
-    cmdOut $ unwords $ "shared-state-get" : map (show . refDigest . storedRef) (lsShared $ headObject h)
+    cmdOut $ unwords $ "local-state-get" : map (show . refDigest . storedRef) [ headStoredObject h ]
 
-cmdSharedStateWait :: Command
-cmdSharedStateWait = do
+cmdLocalStateReplace :: Command
+cmdLocalStateReplace = do
+    st <- asks tiStorage
+    [ told, tnew ] <- asks tiParams
+    Just rold <- liftIO $ readRef st $ encodeUtf8 told
+    Just rnew <- liftIO $ readRef st $ encodeUtf8 tnew
+    ok <- updateLocalHead @LocalState $ \ls -> do
+        if storedRef ls == rold
+          then return ( wrappedLoad rnew, True )
+          else return ( ls, False )
+    cmdOut $ if ok then "local-state-replace-done" else "local-state-replace-failed"
+
+localStateWaitHelper :: Storable a => String -> (Head LocalState -> [ Stored a ]) -> Command
+localStateWaitHelper label sel = do
     st <- asks tiStorage
     out <- asks tiOutput
     h <- getOrLoadHead
@@ -525,14 +554,25 @@ cmdSharedStateWait = do
 
     liftIO $ do
         mvar <- newEmptyMVar
-        w <- watchHeadWith h (lsShared . headObject) $ \cur -> do
+        w <- watchHeadWith h sel $ \cur -> do
             mbobjs <- mapM (readRef st . encodeUtf8) trefs
             case map wrappedLoad <$> sequence mbobjs of
                 Just objs | filterAncestors (cur ++ objs) == cur -> do
-                    outLine out $ unwords $ "shared-state-wait" : map T.unpack trefs
+                    outLine out $ unwords $ label : map T.unpack trefs
                     void $ forkIO $ unwatchHead =<< takeMVar mvar
                 _ -> return ()
         putMVar mvar w
+
+cmdLocalStateWait :: Command
+cmdLocalStateWait = localStateWaitHelper "local-state-wait" ((: []) . headStoredObject)
+
+cmdSharedStateGet :: Command
+cmdSharedStateGet = do
+    h <- getHead
+    cmdOut $ unwords $ "shared-state-get" : map (show . refDigest . storedRef) (lsShared $ headObject h)
+
+cmdSharedStateWait :: Command
+cmdSharedStateWait = localStateWaitHelper "shared-state-wait" (lsShared . headObject)
 
 cmdWatchLocalIdentity :: Command
 cmdWatchLocalIdentity = do
