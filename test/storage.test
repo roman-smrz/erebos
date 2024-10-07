@@ -474,3 +474,25 @@ test LocalStateKeepUnknown:
 		local:
 			expect /load-(.*)/ capture done
 			guard (done == "done")
+
+
+test UnknownObjectType:
+	let refpat = /blake2#[0-9a-f]*/
+
+	spawn as p
+	spawn as p2 on p.node
+
+	with p:
+		send:
+			"store test-unknown"
+			"TEST"
+			""
+		expect /store-done ($refpat)/ capture r1
+
+		with p2:
+			send "load $r1"
+			expect /load-type test-unknown 5/
+			expect /load-line TEST/
+			local:
+				expect /load-(.*)/ capture done
+				guard (done == "done")

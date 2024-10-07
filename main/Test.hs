@@ -309,7 +309,8 @@ cmdLoad = do
     st <- asks tiStorage
     [ tref ] <- asks tiParams
     Just ref <- liftIO $ readRef st $ encodeUtf8 tref
-    header : content <- return $ BL.lines $ lazyLoadBytes ref
+    let obj = load @Object ref
+    header : content <- return $ BL.lines $ serializeObject obj
     cmdOut $ "load-type " <> T.unpack (decodeUtf8 $ BL.toStrict header)
     forM_ content $ \line -> do
         cmdOut $ "load-line " <> T.unpack (decodeUtf8 $ BL.toStrict line)
@@ -455,8 +456,10 @@ cmdStartServer = do
         , someService @SyncService Proxy
         , someService @ChatroomService Proxy
         , someServiceAttr $ (defaultServiceAttributes Proxy)
-            { testMessageReceived = \otype len sref ->
-                liftIO $ outLine out $ unwords ["test-message-received", otype, len, sref]
+            { testMessageReceived = \obj otype len sref -> do
+                liftIO $ do
+                    void $ store (headStorage h) obj
+                    outLine out $ unwords ["test-message-received", otype, len, sref]
             }
         ]
 
