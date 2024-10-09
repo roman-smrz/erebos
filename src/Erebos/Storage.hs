@@ -221,6 +221,7 @@ copyRecItem' st = \case
     RecDate x -> return $ return $ RecDate x
     RecUUID x -> return $ return $ RecUUID x
     RecRef x -> fmap RecRef <$> copyRef' st x
+    RecUnknown t x -> return $ return $ RecUnknown t x
 
 copyObject' :: forall c c'. (StorageCompleteness c, StorageCompleteness c') => Storage' c' -> Object' c -> IO (c (Object' c'))
 copyObject' _ (Blob bs) = return $ return $ Blob bs
@@ -263,6 +264,7 @@ data RecItem' c
     | RecDate ZonedTime
     | RecUUID UUID
     | RecRef (Ref' c)
+    | RecUnknown ByteString ByteString
     deriving (Show)
 
 type RecItem = RecItem' Complete
@@ -300,6 +302,7 @@ serializeRecItem name (RecBinary x) = [name, BC.pack ":b ", showHex x, BC.single
 serializeRecItem name (RecDate x) = [name, BC.pack ":d", BC.singleton ' ', BC.pack (formatTime defaultTimeLocale "%s %z" x), BC.singleton '\n']
 serializeRecItem name (RecUUID x) = [name, BC.pack ":u", BC.singleton ' ', U.toASCIIBytes x, BC.singleton '\n']
 serializeRecItem name (RecRef x) = [name, BC.pack ":r ", showRef x, BC.singleton '\n']
+serializeRecItem name (RecUnknown t x) = [ name, BC.singleton ':', t, BC.singleton ' ', x, BC.singleton '\n' ]
 
 lazyLoadObject :: forall c. StorageCompleteness c => Ref' c -> LoadResult c (Object' c)
 lazyLoadObject = returnLoadResult . unsafePerformIO . ioLoadObject
@@ -352,7 +355,8 @@ unsafeDeserializeObject st bytes =
                   itype = B.take (space-colon-1) $ B.drop (colon+1) line
                   content = B.drop (space+1) line
 
-              val <- case BC.unpack itype of
+              let val = fromMaybe (RecUnknown itype content) $
+                      case BC.unpack itype of
                           "e" -> do guard $ B.null content
                                     return RecEmpty
                           "i" -> do (num, rest) <- BC.readInteger content
