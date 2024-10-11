@@ -36,8 +36,10 @@ uint32_t * join_multicast(int fd, size_t * count)
 		return 0;
 
 	for (struct ifaddrs * ifa = addrs; ifa; ifa = ifa->ifa_next) {
-		if (ifa->ifa_addr && ifa->ifa_addr->sa_family == AF_INET6 &&
-				!(ifa->ifa_flags & IFF_LOOPBACK)) {
+		if( ifa->ifa_addr && ifa->ifa_addr->sa_family == AF_INET6 &&
+				! (ifa->ifa_flags & IFF_LOOPBACK) &&
+				(ifa->ifa_flags & IFF_MULTICAST) &&
+				! IN6_IS_ADDR_LINKLOCAL( & ((struct sockaddr_in6 *) ifa->ifa_addr)->sin6_addr ) ){
 			int idx = if_nametoindex(ifa->ifa_name);
 
 			bool seen = false;
