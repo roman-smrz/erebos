@@ -205,7 +205,7 @@ sendRawChatroomMessageByStateData lookupData mdReplyTo mdText mdLeave = void $ f
         mergeSorted . (:[]) <$> mstore ChatroomStateData
             { rsdPrev = roomStateData cstate
             , rsdRoom = []
-            , rsdSubscribe = Just True
+            , rsdSubscribe = Just (not mdLeave)
             , rsdMessages = [ mdata ]
             }
 

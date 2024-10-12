@@ -413,9 +413,12 @@ test ChatroomMembers:
 	send "chatroom-leave $room1_p1" to p1
 	send "chatroom-leave $room1_p3" to p3
 
-	for p in [ p1, p2, p3 ]:
+	for p in [ p1, p2 ]:
 		with p:
 			expect /chatroom-message-new [a-z0-9#]+ room first_room from Owner1 leave/
+
+	for p in [ p2, p3 ]:
+		with p:
 			expect /chatroom-message-new [a-z0-9#]+ room first_room from Owner3 leave/
 
 	send "chatroom-members $room1_p1" to p1
