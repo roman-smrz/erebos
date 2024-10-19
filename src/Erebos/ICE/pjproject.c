@@ -213,7 +213,9 @@ ssize_t ice_encode_session(pj_ice_strans * strans, char * ufrag, char * pass,
 	pj_str_t local_ufrag, local_pwd;
 	pj_status_t status;
 
-	pj_ice_strans_get_ufrag_pwd(strans, &local_ufrag, &local_pwd, NULL, NULL);
+	status = pj_ice_strans_get_ufrag_pwd( strans, &local_ufrag, &local_pwd, NULL, NULL );
+	if( status != PJ_SUCCESS )
+		return -status;
 
 	n = snprintf(ufrag, maxlen, "%.*s", (int) local_ufrag.slen, local_ufrag.ptr);
 	if (n < 0 || n == maxlen)
