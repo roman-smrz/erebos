@@ -540,8 +540,19 @@ cmdPeerAdd = void $ do
 cmdPeerAddPublic :: Command
 cmdPeerAddPublic = do
     server <- asks ciServer
-    addr:_ <- liftIO $ getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just "discovery1.erebosprotocol.net") (Just (show discoveryPort))
-    void $ liftIO $ serverPeer server (addrAddress addr)
+    liftIO $ mapM_ (serverPeer server . addrAddress) =<< gather 'a'
+  where
+    gather c
+        | c <= 'z' = do
+            let hints = Just $ defaultHints { addrSocketType = Datagram }
+                hostname = Just $ c : ".discovery.erebosprotocol.net"
+                service = Just $ show discoveryPort
+            handle (\(_ :: IOException) -> return []) (getAddrInfo hints hostname service) >>= \case
+                addr : _ -> (addr :) <$> gather (succ c)
+                [] -> return []
+
+        | otherwise = do
+            return []
 
 cmdPeerDrop :: Command
 cmdPeerDrop = do
