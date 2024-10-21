@@ -172,7 +172,7 @@ pj_ice_strans * ice_create(pj_ice_sess_role role, HsStablePtr sptr, HsStablePtr 
 
 	pj_ice_strans * res;
 
-	struct user_data * udata = malloc(sizeof(struct user_data));
+	struct user_data * udata = calloc( 1, sizeof( struct user_data ));
 	udata->role = role;
 	udata->sptr = sptr;
 	udata->cb_init = cb;
