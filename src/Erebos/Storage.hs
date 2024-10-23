@@ -122,24 +122,31 @@ openStorage :: FilePath -> IO Storage
 openStorage path = modifyIOError annotate $ do
     let versionFileName = "erebos-storage"
     let versionPath = path </> versionFileName
-    let writeVersionFile = writeFile versionPath $ storageVersion <> "\n"
+    let writeVersionFile = writeFileOnce versionPath $ BLC.pack $ storageVersion <> "\n"
 
-    doesDirectoryExist path >>= \case
-        True -> do
-            listDirectory path >>= \case
-                files@(_:_)
-                    | versionFileName `elem` files -> do
-                        readFile versionPath >>= \case
-                            content | (ver:_) <- lines content, ver == storageVersion -> return ()
-                                    | otherwise -> fail "unsupported storage version"
+    maybeVersion <- handleJust (guard . isDoesNotExistError) (const $ return Nothing) $
+        Just <$> readFile versionPath
+    version <- case maybeVersion of
+        Just versionContent -> do
+            return $ takeWhile (/= '\n') versionContent
 
-                    | "objects" `notElem` files || "heads" `notElem` files -> do
-                        fail "directory is neither empty, nor an existing erebos storage"
+        Nothing -> do
+            files <- handleJust (guard . isDoesNotExistError) (const $ return []) $
+                listDirectory path
+            when (not $ or
+                    [ null files
+                    , versionFileName `elem` files
+                    , (versionFileName ++ ".lock") `elem` files
+                    , "objects" `elem` files && "heads" `elem` files
+                    ]) $ do
+                fail "directory is neither empty, nor an existing erebos storage"
 
-                _ -> writeVersionFile
-        False -> do
             createDirectoryIfMissing True $ path
             writeVersionFile
+            takeWhile (/= '\n') <$> readFile versionPath
+
+    when (version /= storageVersion) $ do
+        fail $ "unsupported storage version " <> version
 
     createDirectoryIfMissing True $ path </> "objects"
     createDirectoryIfMissing True $ path </> "heads"
