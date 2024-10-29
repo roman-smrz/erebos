@@ -429,3 +429,51 @@ test ChatroomMembers:
 			expect /chatroom-members-item Owner2/
 			expect /chatroom-members-([a-z]+)/ capture done
 			guard (done == "done")
+
+
+test ChatroomIdentity:
+	spawn as p1
+	spawn as p2
+
+	send "create-identity Device1 Owner1" to p1
+	send "create-identity Device2 Owner2" to p2
+
+	for p in [ p1, p2 ]:
+		with p:
+			send "chatroom-watch-local"
+			send "start-server"
+
+	send "chatroom-create first_room" to p1
+	expect /chatroom-create-done ([a-z0-9#]+) first_room.*/ from p1 capture room1_p1
+	expect /chatroom-watched-added ([a-z0-9#]+) first_room sub false/ from p2 capture room1_p2
+
+	send "chatroom-join-as $room1_p1 Custom1" to p1
+	expect /chatroom-join-as-done $room1_p1/ from p1
+	send "chatroom-join-as $room1_p2 Custom2" to p2
+	expect /chatroom-join-as-done $room1_p2/ from p2
+
+	send "chatroom-message-send $room1_p1 message1" to p1
+	send "chatroom-message-send $room1_p2 message2" to p2
+
+	for p in [ p1, p2 ]:
+		with p:
+			expect /chatroom-message-new [a-z0-9#]+ room first_room from ([^ ]+) text message1/ capture name1
+			guard (name1 == "Custom1")
+			expect /chatroom-message-new [a-z0-9#]+ room first_room from ([^ ]+) text message2/ capture name2
+			guard (name2 == "Custom2")
+
+	spawn as p1b on p1.node
+	spawn as p2b on p2.node
+	for p in [ p1b, p2b ]:
+		with p:
+			send "chatroom-watch-local"
+
+	send "chatroom-message-send $room1_p1 message3" to p1b
+	send "chatroom-message-send $room1_p2 message4" to p2b
+
+	for p in [ p1, p2, p1b, p2b ]:
+		with p:
+			expect /chatroom-message-new [a-z0-9#]+ room first_room from ([^ ]+) text message3/ capture name1
+			guard (name1 == "Custom1")
+			expect /chatroom-message-new [a-z0-9#]+ room first_room from ([^ ]+) text message4/ capture name2
+			guard (name2 == "Custom2")
