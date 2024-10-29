@@ -13,6 +13,7 @@ module Erebos.Chatroom (
     chatroomSetSubscribe,
     chatroomMembers,
     joinChatroom, joinChatroomByStateData,
+    joinChatroomAs, joinChatroomAsByStateData,
     leaveChatroom, leaveChatroomByStateData,
     getMessagesSinceState,
 
@@ -185,15 +186,18 @@ sendChatroomMessage rstate msg = sendChatroomMessageByStateData (head $ roomStat
 sendChatroomMessageByStateData
     :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
     => Stored ChatroomStateData -> Text -> m ()
-sendChatroomMessageByStateData lookupData msg = sendRawChatroomMessageByStateData lookupData Nothing (Just msg) False
+sendChatroomMessageByStateData lookupData msg = sendRawChatroomMessageByStateData lookupData Nothing Nothing (Just msg) False
 
 sendRawChatroomMessageByStateData
     :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
-    => Stored ChatroomStateData -> Maybe (Stored (Signed ChatMessageData)) -> Maybe Text -> Bool -> m ()
-sendRawChatroomMessageByStateData lookupData mdReplyTo mdText mdLeave = void $ findAndUpdateChatroomState $ \cstate -> do
+    => Stored ChatroomStateData -> Maybe UnifiedIdentity -> Maybe (Stored (Signed ChatMessageData)) -> Maybe Text -> Bool -> m ()
+sendRawChatroomMessageByStateData lookupData mbIdentity mdReplyTo mdText mdLeave = void $ findAndUpdateChatroomState $ \cstate -> do
     guard $ any (lookupData `precedesOrEquals`) $ roomStateData cstate
     Just $ do
-        mdFrom <- finalOwner . localIdentity . fromStored <$> getLocalHead
+        mdFrom <- finalOwner <$> if
+            | Just identity <- mbIdentity -> return identity
+            | Just identity <- roomStateIdentity cstate -> return identity
+            | otherwise -> localIdentity . fromStored <$> getLocalHead
         secret <- loadKey $ idKeyMessage mdFrom
         mdTime <- liftIO getZonedTime
         let mdPrev = roomStateMessageData cstate
@@ -206,6 +210,7 @@ sendRawChatroomMessageByStateData lookupData mdReplyTo mdText mdLeave = void $ f
             { rsdPrev = roomStateData cstate
             , rsdRoom = []
             , rsdSubscribe = Just (not mdLeave)
+            , rsdIdentity = mbIdentity
             , rsdMessages = [ mdata ]
             }
 
@@ -214,6 +219,7 @@ data ChatroomStateData = ChatroomStateData
     { rsdPrev :: [Stored ChatroomStateData]
     , rsdRoom :: [Stored (Signed ChatroomData)]
     , rsdSubscribe :: Maybe Bool
+    , rsdIdentity :: Maybe UnifiedIdentity
     , rsdMessages :: [Stored (Signed ChatMessageData)]
     }
 
@@ -222,6 +228,7 @@ data ChatroomState = ChatroomState
     , roomStateRoom :: Maybe Chatroom
     , roomStateMessageData :: [Stored (Signed ChatMessageData)]
     , roomStateSubscribe :: Bool
+    , roomStateIdentity :: Maybe UnifiedIdentity
     , roomStateMessages :: [ChatMessage]
     }
 
@@ -230,12 +237,14 @@ instance Storable ChatroomStateData where
         forM_ rsdPrev $ storeRef "PREV"
         forM_ rsdRoom $ storeRef "room"
         forM_ rsdSubscribe $ storeInt "subscribe" . bool @Int 0 1
+        forM_ rsdIdentity $ storeRef "id" . idExtData
         forM_ rsdMessages $ storeRef "msg"
 
     load' = loadRec $ do
         rsdPrev <- loadRefs "PREV"
         rsdRoom <- loadRefs "room"
         rsdSubscribe <- fmap ((/=) @Int 0) <$> loadMbInt "subscribe"
+        rsdIdentity <- loadMbUnifiedIdentity "id"
         rsdMessages <- loadRefs "msg"
         return ChatroomStateData {..}
 
@@ -249,6 +258,7 @@ instance Mergeable ChatroomState where
                 ChatroomStateData {..} | null rsdMessages -> Nothing
                                        | otherwise        -> Just rsdMessages
             roomStateSubscribe = fromMaybe False $ findPropertyFirst rsdSubscribe roomStateData
+            roomStateIdentity = findPropertyFirst rsdIdentity roomStateData
             roomStateMessages = threadToListSince [] $ concatMap (rsdMessages . fromStored) roomStateData
          in ChatroomState {..}
 
@@ -266,6 +276,7 @@ createChatroom rdName rdDescription = do
         { rsdPrev = []
         , rsdRoom = [ rdata ]
         , rsdSubscribe = Just True
+        , rsdIdentity = Nothing
         , rsdMessages = []
         }
 
@@ -313,6 +324,7 @@ updateChatroomByStateData lookupData newName newDesc = findAndUpdateChatroomStat
             { rsdPrev = roomStateData cstate
             , rsdRoom = [ rdata ]
             , rsdSubscribe = Just True
+            , rsdIdentity = Nothing
             , rsdMessages = []
             }
 
@@ -343,6 +355,7 @@ chatroomSetSubscribe lookupData subscribe = void $ findAndUpdateChatroomState $ 
             { rsdPrev = roomStateData cstate
             , rsdRoom = []
             , rsdSubscribe = Just subscribe
+            , rsdIdentity = Nothing
             , rsdMessages = []
             }
 
@@ -364,7 +377,17 @@ joinChatroom rstate = joinChatroomByStateData (head $ roomStateData rstate)
 joinChatroomByStateData
     :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
     => Stored ChatroomStateData -> m ()
-joinChatroomByStateData lookupData = sendRawChatroomMessageByStateData lookupData Nothing Nothing False
+joinChatroomByStateData lookupData = sendRawChatroomMessageByStateData lookupData Nothing Nothing Nothing False
+
+joinChatroomAs
+    :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
+    => UnifiedIdentity -> ChatroomState -> m ()
+joinChatroomAs identity rstate = joinChatroomAsByStateData identity (head $ roomStateData rstate)
+
+joinChatroomAsByStateData
+    :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
+    => UnifiedIdentity -> Stored ChatroomStateData -> m ()
+joinChatroomAsByStateData identity lookupData = sendRawChatroomMessageByStateData lookupData (Just identity) Nothing Nothing False
 
 leaveChatroom
     :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
@@ -374,7 +397,7 @@ leaveChatroom rstate = leaveChatroomByStateData (head $ roomStateData rstate)
 leaveChatroomByStateData
     :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
     => Stored ChatroomStateData -> m ()
-leaveChatroomByStateData lookupData = sendRawChatroomMessageByStateData lookupData Nothing Nothing True
+leaveChatroomByStateData lookupData = sendRawChatroomMessageByStateData lookupData Nothing Nothing Nothing True
 
 getMessagesSinceState :: ChatroomState -> ChatroomState -> [ChatMessage]
 getMessagesSinceState cur old = threadToListSince (roomStateMessageData old) (roomStateMessageData cur)
@@ -498,6 +521,7 @@ instance Service ChatroomService where
                                 { rsdPrev = prev
                                 , rsdRoom = room
                                 , rsdSubscribe = Nothing
+                                , rsdIdentity = Nothing
                                 , rsdMessages = []
                                 }
                             storeSetAddComponent sdata set
@@ -542,6 +566,7 @@ instance Service ChatroomService where
                                     { rsdPrev = prevData
                                     , rsdRoom = []
                                     , rsdSubscribe = Nothing
+                                    , rsdIdentity = Nothing
                                     , rsdMessages = messages
                                     }
                                 storeSetAddComponent sdata set

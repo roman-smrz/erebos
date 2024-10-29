@@ -13,7 +13,7 @@ module Erebos.Identity (
     createIdentity,
     validateIdentity, validateIdentityF, validateIdentityFE,
     validateExtendedIdentity, validateExtendedIdentityF, validateExtendedIdentityFE,
-    loadIdentity, loadUnifiedIdentity,
+    loadIdentity, loadMbIdentity, loadUnifiedIdentity, loadMbUnifiedIdentity,
 
     mergeIdentity, toUnifiedIdentity, toComposedIdentity,
     updateIdentity, updateOwners,
@@ -282,8 +282,14 @@ validateExtendedIdentityFE mdata = do
 loadIdentity :: String -> LoadRec ComposedIdentity
 loadIdentity name = maybe (throwError "identity validation failed") return . validateExtendedIdentityF =<< loadRefs name
 
+loadMbIdentity :: String -> LoadRec (Maybe ComposedIdentity)
+loadMbIdentity name = return . validateExtendedIdentityF =<< loadRefs name
+
 loadUnifiedIdentity :: String -> LoadRec UnifiedIdentity
 loadUnifiedIdentity name = maybe (throwError "identity validation failed") return . validateExtendedIdentity =<< loadRef name
+
+loadMbUnifiedIdentity :: String -> LoadRec (Maybe UnifiedIdentity)
+loadMbUnifiedIdentity name = return . (validateExtendedIdentity =<<) =<< loadMbRef name
 
 
 gatherPrevious :: Set (Stored (Signed ExtendedIdentityData)) -> [Stored (Signed ExtendedIdentityData)] -> Set (Stored (Signed ExtendedIdentityData))

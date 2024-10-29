@@ -128,6 +128,11 @@ are signed, so message author can not be forged.
 `/join`  
 : Join chatroom without sending text message.
 
+`/join-as <name>`  
+: Join chatroom using a new identity with a name `<name>`. This new identity is
+  unrelated to the main one, and will be used for any future messages sent to
+  this chatroom.
+
 `/leave`  
 : Leave the chatroom. User will no longer be listed as a member and erebos tool
   will no longer collect message of this chatroom.

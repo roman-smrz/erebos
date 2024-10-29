@@ -502,6 +502,7 @@ commands =
     , ("ice-send", cmdIceSend)
 #endif
     , ("join", cmdJoin)
+    , ("join-as", cmdJoinAs)
     , ("leave", cmdLeave)
     , ("members", cmdMembers)
     , ("select", cmdSelectContext)
@@ -569,6 +570,13 @@ showPeer pidentity paddr =
 
 cmdJoin :: Command
 cmdJoin = joinChatroom =<< getSelectedChatroom
+
+cmdJoinAs :: Command
+cmdJoinAs = do
+    name <- asks ciLine
+    st <- getStorage
+    identity <- liftIO $ createIdentity st (Just $ T.pack name) Nothing
+    joinChatroomAs identity =<< getSelectedChatroom
 
 cmdLeave :: Command
 cmdLeave = leaveChatroom =<< getSelectedChatroom

@@ -290,6 +290,7 @@ commands = map (T.pack *** id)
     , ("chatroom-unsubscribe", cmdChatroomUnsubscribe)
     , ("chatroom-members", cmdChatroomMembers)
     , ("chatroom-join", cmdChatroomJoin)
+    , ("chatroom-join-as", cmdChatroomJoinAs)
     , ("chatroom-leave", cmdChatroomLeave)
     , ("chatroom-message-send", cmdChatroomMessageSend)
     ]
@@ -757,7 +758,7 @@ cmdChatroomListLocal = do
 cmdChatroomWatchLocal :: Command
 cmdChatroomWatchLocal = do
     [] <- asks tiParams
-    h <- getHead
+    h <- getOrLoadHead
     out <- asks tiOutput
     void $ watchChatrooms h $ \_ -> \case
         Nothing -> return ()
@@ -814,6 +815,14 @@ cmdChatroomJoin = do
     [ cid ] <- asks tiParams
     joinChatroomByStateData =<< getChatroomStateData cid
     cmdOut "chatroom-join-done"
+
+cmdChatroomJoinAs :: Command
+cmdChatroomJoinAs = do
+    [ cid, name ] <- asks tiParams
+    st <- asks tiStorage
+    identity <- liftIO $ createIdentity st (Just name) Nothing
+    joinChatroomAsByStateData identity =<< getChatroomStateData cid
+    cmdOut $ unwords [ "chatroom-join-as-done", T.unpack cid ]
 
 cmdChatroomLeave :: Command
 cmdChatroomLeave = do
