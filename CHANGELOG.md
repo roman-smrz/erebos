@@ -1,5 +1,13 @@
 # Revision history for erebos
 
+## 0.1.7 -- 2024-10-30
+
+* Chatroom-specific identity
+* Secure cookie for connection initialization
+* Support multiple public peers
+* Handle unknown object and record item types
+* Keep unknown items in local state
+
 ## 0.1.6 -- 2024-08-12
 
 * Chatroom members list and join/leave commands
