@@ -102,20 +102,23 @@ library
         Erebos.Message
         Erebos.Network
         Erebos.Network.Protocol
+        Erebos.Object
         Erebos.Pairing
         Erebos.PubKey
         Erebos.Service
         Erebos.Set
         Erebos.State
+        Erebos.Storable
+        Erebos.Storage
         Erebos.Storage.Key
         Erebos.Storage.Merge
         Erebos.Sync
 
         -- Used by test tool:
-        Erebos.Object.Internal
         Erebos.Storage.Internal
     other-modules:
         Erebos.Flow
+        Erebos.Object.Internal
         Erebos.Storage.Platform
         Erebos.Util
 

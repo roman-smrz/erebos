@@ -8,8 +8,9 @@ import Control.Monad.Reader
 import Data.ByteString.Lazy.Char8 qualified as BL
 
 import Erebos.Network
-import Erebos.Object.Internal
+import Erebos.Object
 import Erebos.Service
+import Erebos.Storable
 
 data TestMessage = TestMessage (Stored Object)
 
