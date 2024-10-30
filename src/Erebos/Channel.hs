@@ -26,8 +26,8 @@ import Data.ByteString.Lazy qualified as BL
 import Data.List
 
 import Erebos.Identity
+import Erebos.Object.Internal
 import Erebos.PubKey
-import Erebos.Storage
 
 data Channel = Channel
     { chPeers :: [Stored (Signed IdentityData)]

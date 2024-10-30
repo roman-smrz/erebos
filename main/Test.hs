@@ -37,12 +37,12 @@ import Erebos.Contact
 import Erebos.Identity
 import Erebos.Message
 import Erebos.Network
+import Erebos.Object.Internal
 import Erebos.Pairing
 import Erebos.PubKey
 import Erebos.Service
 import Erebos.Set
 import Erebos.State
-import Erebos.Storage
 import Erebos.Storage.Internal (unsafeStoreRawBytes)
 import Erebos.Storage.Merge
 import Erebos.Sync

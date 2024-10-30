@@ -1,6 +1,6 @@
 module Erebos.Network where
 
-import Erebos.Storage
+import Erebos.Object.Internal
 
 data Server
 data Peer

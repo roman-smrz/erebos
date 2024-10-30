@@ -1,4 +1,4 @@
-module Erebos.Storage (
+module Erebos.Object.Internal (
     Storage, PartialStorage, StorageCompleteness,
     openStorage, memoryStorage,
     deriveEphemeralStorage, derivePartialStorage,

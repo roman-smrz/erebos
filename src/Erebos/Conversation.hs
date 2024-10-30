@@ -29,11 +29,11 @@ import Data.Text qualified as T
 import Data.Time.Format
 import Data.Time.LocalTime
 
-import Erebos.Identity
 import Erebos.Chatroom
+import Erebos.Identity
 import Erebos.Message hiding (formatMessage)
+import Erebos.Object.Internal
 import Erebos.State
-import Erebos.Storage
 
 
 data Message = DirectMessageMessage DirectMessage Bool

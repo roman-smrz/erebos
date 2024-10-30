@@ -31,7 +31,7 @@ import Data.Set qualified as S
 
 import System.IO.Unsafe (unsafePerformIO)
 
-import Erebos.Storage
+import Erebos.Object.Internal
 import Erebos.Storage.Internal
 import Erebos.Util
 

@@ -107,12 +107,12 @@ library
         Erebos.Service
         Erebos.Set
         Erebos.State
-        Erebos.Storage
         Erebos.Storage.Key
         Erebos.Storage.Merge
         Erebos.Sync
 
         -- Used by test tool:
+        Erebos.Object.Internal
         Erebos.Storage.Internal
     other-modules:
         Erebos.Flow

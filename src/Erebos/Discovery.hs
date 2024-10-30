@@ -19,8 +19,8 @@ import Network.Socket
 import Erebos.ICE
 import Erebos.Identity
 import Erebos.Network
+import Erebos.Object.Internal
 import Erebos.Service
-import Erebos.Storage
 
 
 keepaliveSeconds :: Int

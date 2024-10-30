@@ -16,11 +16,11 @@ import qualified Data.Text as T
 
 import Erebos.Identity
 import Erebos.Network
+import Erebos.Object.Internal
 import Erebos.Pairing
 import Erebos.PubKey
 import Erebos.Service
 import Erebos.State
-import Erebos.Storage
 import Erebos.Storage.Key
 
 type AttachService = PairingService AttachIdentity

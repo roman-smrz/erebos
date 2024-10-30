@@ -18,7 +18,7 @@ import System.Directory
 import System.FilePath
 import System.IO.Error
 
-import Erebos.Storage
+import Erebos.Object.Internal
 import Erebos.Storage.Internal
 
 class Storable pub => KeyPair sec pub | sec -> pub, pub -> sec where

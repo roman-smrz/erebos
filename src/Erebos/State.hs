@@ -35,8 +35,8 @@ import Data.UUID qualified as U
 import System.IO
 
 import Erebos.Identity
+import Erebos.Object.Internal
 import Erebos.PubKey
-import Erebos.Storage
 import Erebos.Storage.Merge
 
 data LocalState = LocalState

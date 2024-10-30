@@ -8,9 +8,9 @@ import Control.Monad.Reader
 import Data.List
 
 import Erebos.Identity
+import Erebos.Object.Internal
 import Erebos.Service
 import Erebos.State
-import Erebos.Storage
 import Erebos.Storage.Merge
 
 data SyncService = SyncPacket (Stored SharedState)

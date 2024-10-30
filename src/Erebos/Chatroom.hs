@@ -49,11 +49,11 @@ import Data.Text (Text)
 import Data.Time
 
 import Erebos.Identity
+import Erebos.Object.Internal
 import Erebos.PubKey
 import Erebos.Service
 import Erebos.Set
 import Erebos.State
-import Erebos.Storage
 import Erebos.Storage.Merge
 import Erebos.Util
 

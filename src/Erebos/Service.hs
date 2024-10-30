@@ -34,8 +34,8 @@ import qualified Data.UUID as U
 
 import Erebos.Identity
 import {-# SOURCE #-} Erebos.Network
+import Erebos.Object.Internal
 import Erebos.State
-import Erebos.Storage
 
 class (Typeable s, Storable s, Typeable (ServiceState s), Typeable (ServiceGlobalState s)) => Service s where
     serviceID :: proxy s -> ServiceID
