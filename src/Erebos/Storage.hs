@@ -841,91 +841,97 @@ loadEmpty :: String -> LoadRec ()
 loadEmpty name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbEmpty name
 
 loadMbEmpty :: String -> LoadRec (Maybe ())
-loadMbEmpty name = (lookup (BC.pack name) <$> loadRecItems) >>= \case
-    Nothing -> return Nothing
-    Just (RecEmpty) -> return (Just ())
-    Just _ -> throwError $ "Expecting type int of record item '"++name++"'"
+loadMbEmpty name = listToMaybe . mapMaybe p <$> loadRecItems
+  where
+    bname = BC.pack name
+    p ( name', RecEmpty ) | name' == bname
+        = Just ()
+    p _ = Nothing
 
 loadInt :: Num a => String -> LoadRec a
 loadInt name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbInt name
 
 loadMbInt :: Num a => String -> LoadRec (Maybe a)
-loadMbInt name = (lookup (BC.pack name) <$> loadRecItems) >>= \case
-    Nothing -> return Nothing
-    Just (RecInt x) -> return (Just $ fromInteger x)
-    Just _ -> throwError $ "Expecting type int of record item '"++name++"'"
+loadMbInt name = listToMaybe . mapMaybe p <$> loadRecItems
+  where
+    bname = BC.pack name
+    p ( name', RecInt x ) | name' == bname
+        = Just (fromInteger x)
+    p _ = Nothing
 
 loadNum :: (Real a, Fractional a) => String -> LoadRec a
 loadNum name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbNum name
 
 loadMbNum :: (Real a, Fractional a) => String -> LoadRec (Maybe a)
-loadMbNum name = (lookup (BC.pack name) <$> loadRecItems) >>= \case
-    Nothing -> return Nothing
-    Just (RecNum x) -> return (Just $ fromRational x)
-    Just _ -> throwError $ "Expecting type number of record item '"++name++"'"
+loadMbNum name = listToMaybe . mapMaybe p <$> loadRecItems
+  where
+    bname = BC.pack name
+    p ( name', RecNum x ) | name' == bname
+        = Just (fromRational x)
+    p _ = Nothing
 
 loadText :: StorableText a => String -> LoadRec a
 loadText name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbText name
 
 loadMbText :: StorableText a => String -> LoadRec (Maybe a)
-loadMbText name = (lookup (BC.pack name) <$> loadRecItems) >>= \case
-    Nothing -> return Nothing
-    Just (RecText x) -> Just <$> fromText x
-    Just _ -> throwError $ "Expecting type text of record item '"++name++"'"
+loadMbText name = listToMaybe <$> loadTexts name
 
 loadTexts :: StorableText a => String -> LoadRec [a]
-loadTexts name = do
-    items <- map snd . filter ((BC.pack name ==) . fst) <$> loadRecItems
-    forM items $ \case RecText x -> fromText x
-                       _ -> throwError $ "Expecting type text of record item '"++name++"'"
+loadTexts name = sequence . mapMaybe p =<< loadRecItems
+  where
+    bname = BC.pack name
+    p ( name', RecText x ) | name' == bname
+        = Just (fromText x)
+    p _ = Nothing
 
 loadBinary :: BA.ByteArray a => String -> LoadRec a
 loadBinary name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbBinary name
 
 loadMbBinary :: BA.ByteArray a => String -> LoadRec (Maybe a)
-loadMbBinary name = (lookup (BC.pack name) <$> loadRecItems) >>= \case
-    Nothing -> return Nothing
-    Just (RecBinary x) -> return $ Just $ BA.convert x
-    Just _ -> throwError $ "Expecting type binary of record item '"++name++"'"
+loadMbBinary name = listToMaybe <$> loadBinaries name
 
 loadBinaries :: BA.ByteArray a => String -> LoadRec [a]
-loadBinaries name = do
-    items <- map snd . filter ((BC.pack name ==) . fst) <$> loadRecItems
-    forM items $ \case RecBinary x -> return $ BA.convert x
-                       _ -> throwError $ "Expecting type binary of record item '"++name++"'"
+loadBinaries name = mapMaybe p <$> loadRecItems
+  where
+    bname = BC.pack name
+    p ( name', RecBinary x ) | name' == bname
+        = Just (BA.convert x)
+    p _ = Nothing
 
 loadDate :: StorableDate a => String -> LoadRec a
 loadDate name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbDate name
 
 loadMbDate :: StorableDate a => String -> LoadRec (Maybe a)
-loadMbDate name = (lookup (BC.pack name) <$> loadRecItems) >>= \case
-    Nothing -> return Nothing
-    Just (RecDate x) -> return $ Just $ fromDate x
-    Just _ -> throwError $ "Expecting type date of record item '"++name++"'"
+loadMbDate name = listToMaybe . mapMaybe p <$> loadRecItems
+  where
+    bname = BC.pack name
+    p ( name', RecDate x ) | name' == bname
+        = Just (fromDate x)
+    p _ = Nothing
 
 loadUUID :: StorableUUID a => String -> LoadRec a
 loadUUID name = maybe (throwError $ "Missing record iteem '"++name++"'") return =<< loadMbUUID name
 
 loadMbUUID :: StorableUUID a => String -> LoadRec (Maybe a)
-loadMbUUID name = (lookup (BC.pack name) <$> loadRecItems) >>= \case
-    Nothing -> return Nothing
-    Just (RecUUID x) -> return $ Just $ fromUUID x
-    Just _ -> throwError $ "Expecting type UUID of record item '"++name++"'"
+loadMbUUID name = listToMaybe . mapMaybe p <$> loadRecItems
+  where
+    bname = BC.pack name
+    p ( name', RecUUID x ) | name' == bname
+        = Just (fromUUID x)
+    p _ = Nothing
 
 loadRawRef :: String -> LoadRec Ref
 loadRawRef name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbRawRef name
 
 loadMbRawRef :: String -> LoadRec (Maybe Ref)
-loadMbRawRef name = (lookup (BC.pack name) <$> loadRecItems) >>= \case
-    Nothing -> return Nothing
-    Just (RecRef x) -> return (Just x)
-    Just _ -> throwError $ "Expecting type ref of record item '"++name++"'"
+loadMbRawRef name = listToMaybe <$> loadRawRefs name
 
 loadRawRefs :: String -> LoadRec [Ref]
-loadRawRefs name = do
-    items <- map snd . filter ((BC.pack name ==) . fst) <$> loadRecItems
-    forM items $ \case RecRef x -> return x
-                       _ -> throwError $ "Expecting type ref of record item '"++name++"'"
+loadRawRefs name = mapMaybe p <$> loadRecItems
+  where
+    bname = BC.pack name
+    p ( name', RecRef x ) | name' == bname = Just x
+    p _                                    = Nothing
 
 loadRef :: Storable a => String -> LoadRec a
 loadRef name = load <$> loadRawRef name
