@@ -7,14 +7,14 @@ Description:
     Library and simple CLI interface implementing the Erebos identity
     management, decentralized messaging and synchronization protocol, along
     with local storage.
-    .
+
     Erebos identity is based on locally stored cryptographic keys, all
     communication is end-to-end encrypted. Multiple devices can be attached to
     the same identity, after which they function interchangeably, without any
     one being in any way "primary"; messages and other state data are then
     synchronized automatically whenever the devices are able to connect with
     one another.
-    .
+
     See README for usage of the CLI tool.
 License:             BSD-3-Clause
 License-File:        LICENSE
