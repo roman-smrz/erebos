@@ -57,11 +57,11 @@ import qualified Network.Socket.ByteString as S
 import Foreign.C.Types
 import Foreign.Marshal.Alloc
 
-import Erebos.Channel
 #ifdef ENABLE_ICE_SUPPORT
 import Erebos.ICE
 #endif
 import Erebos.Identity
+import Erebos.Network.Channel
 import Erebos.Network.Protocol
 import Erebos.Object.Internal
 import Erebos.PubKey

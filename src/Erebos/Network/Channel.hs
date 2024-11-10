@@ -1,4 +1,4 @@
-module Erebos.Channel (
+module Erebos.Network.Channel (
     Channel,
     ChannelRequest, ChannelRequestData(..),
     ChannelAccept, ChannelAcceptData(..),

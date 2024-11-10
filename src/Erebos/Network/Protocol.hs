@@ -64,9 +64,9 @@ import Data.Void
 
 import System.Clock
 
-import Erebos.Channel
 import Erebos.Flow
 import Erebos.Identity
+import Erebos.Network.Channel
 import Erebos.Object.Internal
 import Erebos.Service
 

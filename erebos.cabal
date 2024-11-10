@@ -94,13 +94,13 @@ library
     hs-source-dirs:      src
     exposed-modules:
         Erebos.Attach
-        Erebos.Channel
         Erebos.Chatroom
         Erebos.Contact
         Erebos.Conversation
         Erebos.Identity
         Erebos.Message
         Erebos.Network
+        Erebos.Network.Channel
         Erebos.Network.Protocol
         Erebos.Object
         Erebos.Pairing
