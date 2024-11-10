@@ -40,7 +40,9 @@ import Foreign.Ptr
 import Foreign.StablePtr
 
 import Erebos.Flow
-import Erebos.Object.Internal
+import Erebos.Object
+import Erebos.Storable
+import Erebos.Storage
 
 #include "pjproject.h"
 

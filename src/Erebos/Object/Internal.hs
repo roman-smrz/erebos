@@ -16,17 +16,6 @@ module Erebos.Object.Internal (
     storeObject,
     collectObjects, collectStoredObjects,
 
-    Head, HeadType(..),
-    HeadTypeID, mkHeadTypeID,
-    headId, headStorage, headRef, headObject, headStoredObject,
-    loadHeads, loadHead, reloadHead,
-    storeHead, replaceHead, updateHead, updateHead_,
-    loadHeadRaw, storeHeadRaw, replaceHeadRaw,
-
-    WatchedHead,
-    watchHead, watchHeadWith, unwatchHead,
-    watchHeadRaw,
-
     MonadStorage(..),
 
     Storable(..), ZeroStorable(..),
@@ -84,7 +73,6 @@ import qualified Data.ByteString.Lazy.Char8 as BLC
 import Data.Char
 import Data.Function
 import qualified Data.HashTable.IO as HT
-import Data.List
 import qualified Data.Map as M
 import Data.Maybe
 import Data.Ratio
@@ -98,13 +86,10 @@ import Data.Time.Calendar
 import Data.Time.Clock
 import Data.Time.Format
 import Data.Time.LocalTime
-import Data.Typeable
 import Data.UUID (UUID)
 import qualified Data.UUID as U
-import qualified Data.UUID.V4 as U
 
 import System.Directory
-import System.FSNotify
 import System.FilePath
 import System.IO.Error
 import System.IO.Unsafe
@@ -404,193 +389,8 @@ collectOtherStored seen (Rec items) = foldr helper ([], seen) $ map snd items
 collectOtherStored seen _ = ([], seen)
 
 
-type Head = Head' Complete
-
-headId :: Head a -> HeadID
-headId (Head uuid _) = uuid
-
-headStorage :: Head a -> Storage
-headStorage = refStorage . headRef
-
-headRef :: Head a -> Ref
-headRef (Head _ sx) = storedRef sx
-
-headObject :: Head a -> a
-headObject (Head _ sx) = fromStored sx
-
-headStoredObject :: Head a -> Stored a
-headStoredObject (Head _ sx) = sx
-
 deriving instance StorableUUID HeadID
 deriving instance StorableUUID HeadTypeID
-
-mkHeadTypeID :: String -> HeadTypeID
-mkHeadTypeID = maybe (error "Invalid head type ID") HeadTypeID . U.fromString
-
-class Storable a => HeadType a where
-    headTypeID :: proxy a -> HeadTypeID
-
-
-headTypePath :: FilePath -> HeadTypeID -> FilePath
-headTypePath spath (HeadTypeID tid) = spath </> "heads" </> U.toString tid
-
-headPath :: FilePath -> HeadTypeID -> HeadID -> FilePath
-headPath spath tid (HeadID hid) = headTypePath spath tid </> U.toString hid
-
-loadHeads :: forall a m. MonadIO m => HeadType a => Storage -> m [Head a]
-loadHeads s@(Storage { stBacking = StorageDir { dirPath = spath }}) = liftIO $ do
-    let hpath = headTypePath spath $ headTypeID @a Proxy
-
-    files <- filterM (doesFileExist . (hpath </>)) =<<
-        handleJust (\e -> guard (isDoesNotExistError e)) (const $ return [])
-        (getDirectoryContents hpath)
-    fmap catMaybes $ forM files $ \hname -> do
-        case U.fromString hname of
-             Just hid -> do
-                 (h:_) <- BC.lines <$> B.readFile (hpath </> hname)
-                 Just ref <- readRef s h
-                 return $ Just $ Head (HeadID hid) $ wrappedLoad ref
-             Nothing -> return Nothing
-loadHeads Storage { stBacking = StorageMemory { memHeads = theads } } = liftIO $ do
-    let toHead ((tid, hid), ref) | tid == headTypeID @a Proxy = Just $ Head hid $ wrappedLoad ref
-                                 | otherwise                  = Nothing
-    catMaybes . map toHead <$> readMVar theads
-
-loadHead :: forall a m. (HeadType a, MonadIO m) => Storage -> HeadID -> m (Maybe (Head a))
-loadHead st hid = fmap (Head hid . wrappedLoad) <$> loadHeadRaw st (headTypeID @a Proxy) hid
-
-loadHeadRaw :: forall m. MonadIO m => Storage -> HeadTypeID -> HeadID -> m (Maybe Ref)
-loadHeadRaw s@(Storage { stBacking = StorageDir { dirPath = spath }}) tid hid = liftIO $ do
-    handleJust (guard . isDoesNotExistError) (const $ return Nothing) $ do
-        (h:_) <- BC.lines <$> B.readFile (headPath spath tid hid)
-        Just ref <- readRef s h
-        return $ Just ref
-loadHeadRaw Storage { stBacking = StorageMemory { memHeads = theads } } tid hid = liftIO $ do
-    lookup (tid, hid) <$> readMVar theads
-
-reloadHead :: (HeadType a, MonadIO m) => Head a -> m (Maybe (Head a))
-reloadHead (Head hid (Stored (Ref st _) _)) = loadHead st hid
-
-storeHead :: forall a m. MonadIO m => HeadType a => Storage -> a -> m (Head a)
-storeHead st obj = do
-    let tid = headTypeID @a Proxy
-    stored <- wrappedStore st obj
-    hid <- storeHeadRaw st tid (storedRef stored)
-    return $ Head hid stored
-
-storeHeadRaw :: forall m. MonadIO m => Storage -> HeadTypeID -> Ref -> m HeadID
-storeHeadRaw st tid ref = liftIO $ do
-    hid <- HeadID <$> U.nextRandom
-    case stBacking st of
-         StorageDir { dirPath = spath } -> do
-             Right () <- writeFileChecked (headPath spath tid hid) Nothing $
-                 showRef ref `B.append` BC.singleton '\n'
-             return ()
-         StorageMemory { memHeads = theads } -> do
-             modifyMVar_ theads $ return . (((tid, hid), ref) :)
-    return hid
-
-replaceHead :: forall a m. (HeadType a, MonadIO m) => Head a -> Stored a -> m (Either (Maybe (Head a)) (Head a))
-replaceHead prev@(Head hid pobj) stored' = liftIO $ do
-    let st = headStorage prev
-        tid = headTypeID @a Proxy
-    stored <- copyStored st stored'
-    bimap (fmap $ Head hid . wrappedLoad) (const $ Head hid stored) <$>
-        replaceHeadRaw st tid hid (storedRef pobj) (storedRef stored)
-
-replaceHeadRaw :: forall m. MonadIO m => Storage -> HeadTypeID -> HeadID -> Ref -> Ref -> m (Either (Maybe Ref) Ref)
-replaceHeadRaw st tid hid prev new = liftIO $ do
-    case stBacking st of
-         StorageDir { dirPath = spath } -> do
-             let filename = headPath spath tid hid
-                 showRefL r = showRef r `B.append` BC.singleton '\n'
-
-             writeFileChecked filename (Just $ showRefL prev) (showRefL new) >>= \case
-                 Left Nothing -> return $ Left Nothing
-                 Left (Just bs) -> do Just oref <- readRef st $ BC.takeWhile (/='\n') bs
-                                      return $ Left $ Just oref
-                 Right () -> return $ Right new
-
-         StorageMemory { memHeads = theads, memWatchers = twatch } -> do
-             res <- modifyMVar theads $ \hs -> do
-                 ws <- map wlFun . filter ((==(tid, hid)) . wlHead) . wlList <$> readMVar twatch
-                 return $ case partition ((==(tid, hid)) . fst) hs of
-                     ([] , _  ) -> (hs, Left Nothing)
-                     ((_, r):_, hs') | r == prev -> (((tid, hid), new) : hs',
-                                                                  Right (new, ws))
-                                     | otherwise -> (hs, Left $ Just r)
-             case res of
-                  Right (r, ws) -> mapM_ ($ r) ws >> return (Right r)
-                  Left x -> return $ Left x
-
-updateHead :: (HeadType a, MonadIO m) => Head a -> (Stored a -> m (Stored a, b)) -> m (Maybe (Head a), b)
-updateHead h f = do
-    (o, x) <- f $ headStoredObject h
-    replaceHead h o >>= \case
-        Right h' -> return (Just h', x)
-        Left Nothing -> return (Nothing, x)
-        Left (Just h') -> updateHead h' f
-
-updateHead_ :: (HeadType a, MonadIO m) => Head a -> (Stored a -> m (Stored a)) -> m (Maybe (Head a))
-updateHead_ h = fmap fst . updateHead h . (fmap (,()) .)
-
-
-data WatchedHead = forall a. WatchedHead Storage WatchID (MVar a)
-
-watchHead :: forall a. HeadType a => Head a -> (Head a -> IO ()) -> IO WatchedHead
-watchHead h = watchHeadWith h id
-
-watchHeadWith :: forall a b. (HeadType a, Eq b) => Head a -> (Head a -> b) -> (b -> IO ()) -> IO WatchedHead
-watchHeadWith (Head hid (Stored (Ref st _) _)) sel cb = do
-    watchHeadRaw st (headTypeID @a Proxy) hid (sel . Head hid . wrappedLoad) cb
-
-watchHeadRaw :: forall b. Eq b => Storage -> HeadTypeID -> HeadID -> (Ref -> b) -> (b -> IO ()) -> IO WatchedHead
-watchHeadRaw st tid hid sel cb = do
-    memo <- newEmptyMVar
-    let addWatcher wl = (wl', WatchedHead st (wlNext wl) memo)
-            where wl' = wl { wlNext = wlNext wl + 1
-                           , wlList = WatchListItem
-                               { wlID = wlNext wl
-                               , wlHead = (tid, hid)
-                               , wlFun = \r -> do
-                                   let x = sel r
-                                   modifyMVar_ memo $ \prev -> do
-                                       when (Just x /= prev) $ cb x
-                                       return $ Just x
-                               } : wlList wl
-                           }
-
-    watched <- case stBacking st of
-         StorageDir { dirPath = spath, dirWatchers = mvar } -> modifyMVar mvar $ \(mbmanager, ilist, wl) -> do
-             manager <- maybe startManager return mbmanager
-             ilist' <- case tid `elem` ilist of
-                 True -> return ilist
-                 False -> do
-                     void $ watchDir manager (headTypePath spath tid) (const True) $ \case
-                         Added { eventPath = fpath } | Just ihid <- HeadID <$> U.fromString (takeFileName fpath) -> do
-                             loadHeadRaw st tid ihid >>= \case
-                                 Just ref -> do
-                                     (_, _, iwl) <- readMVar mvar
-                                     mapM_ ($ ref) . map wlFun . filter ((== (tid, ihid)) . wlHead) . wlList $ iwl
-                                 Nothing -> return ()
-                         _ -> return ()
-                     return $ tid : ilist
-             return $ first ( Just manager, ilist', ) $ addWatcher wl
-
-         StorageMemory { memWatchers = mvar } -> modifyMVar mvar $ return . addWatcher
-
-    cur <- fmap sel <$> loadHeadRaw st tid hid
-    maybe (return ()) cb cur
-    putMVar memo cur
-
-    return watched
-
-unwatchHead :: WatchedHead -> IO ()
-unwatchHead (WatchedHead st wid _) = do
-    let delWatcher wl = wl { wlList = filter ((/=wid) . wlID) $ wlList wl }
-    case stBacking st of
-        StorageDir { dirWatchers = mvar } -> modifyMVar_ mvar $ return . second delWatcher
-        StorageMemory { memWatchers = mvar } -> modifyMVar_ mvar $ return . delWatcher
 
 
 class Monad m => MonadStorage m where
@@ -604,9 +404,6 @@ class Monad m => MonadStorage m where
 
 instance MonadIO m => MonadStorage (ReaderT Storage m) where
     getStorage = ask
-
-instance MonadIO m => MonadStorage (ReaderT (Head a) m) where
-    getStorage = asks $ headStorage
 
 
 class Storable a where

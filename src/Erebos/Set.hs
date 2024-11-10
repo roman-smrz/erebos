@@ -19,7 +19,8 @@ import Data.Map qualified as M
 import Data.Maybe
 import Data.Ord
 
-import Erebos.Object.Internal
+import Erebos.Object
+import Erebos.Storable
 import Erebos.Storage.Merge
 import Erebos.Util
 

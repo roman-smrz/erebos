@@ -45,6 +45,7 @@ import Erebos.Set
 import Erebos.State
 import Erebos.Storable
 import Erebos.Storage
+import Erebos.Storage.Head
 import Erebos.Storage.Internal (unsafeStoreRawBytes)
 import Erebos.Storage.Merge
 import Erebos.Sync

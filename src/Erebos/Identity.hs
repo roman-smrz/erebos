@@ -40,8 +40,8 @@ import qualified Data.Set as S
 import Data.Text (Text)
 import qualified Data.Text as T
 
-import Erebos.Object.Internal
 import Erebos.PubKey
+import Erebos.Storable
 import Erebos.Storage.Merge
 import Erebos.Util
 

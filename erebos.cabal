@@ -110,6 +110,7 @@ library
         Erebos.State
         Erebos.Storable
         Erebos.Storage
+        Erebos.Storage.Head
         Erebos.Storage.Key
         Erebos.Storage.Merge
         Erebos.Sync

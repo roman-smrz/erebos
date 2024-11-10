@@ -23,12 +23,12 @@ import qualified Data.Text as T
 
 import Erebos.Identity
 import Erebos.Network
-import Erebos.Object.Internal
 import Erebos.Pairing
 import Erebos.PubKey
 import Erebos.Service
 import Erebos.Set
 import Erebos.State
+import Erebos.Storable
 import Erebos.Storage.Merge
 
 data Contact = Contact

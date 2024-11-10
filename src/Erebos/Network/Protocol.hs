@@ -67,8 +67,10 @@ import System.Clock
 import Erebos.Flow
 import Erebos.Identity
 import Erebos.Network.Channel
-import Erebos.Object.Internal
+import Erebos.Object
 import Erebos.Service
+import Erebos.Storable
+import Erebos.Storage
 
 
 protocolVersion :: Text

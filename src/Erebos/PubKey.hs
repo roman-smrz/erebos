@@ -21,7 +21,7 @@ import Data.ByteArray
 import Data.ByteString (ByteString)
 import qualified Data.Text as T
 
-import Erebos.Object.Internal
+import Erebos.Storable
 import Erebos.Storage.Key
 
 data PublicKey = PublicKey ED.PublicKey

@@ -34,6 +34,8 @@ module Erebos.Storable (
     wrappedStore, wrappedLoad,
     copyStored,
     unsafeMapStored,
+
+    Storage, MonadStorage(..),
 ) where
 
 import Erebos.Object.Internal

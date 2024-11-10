@@ -27,10 +27,11 @@ import Data.Word
 
 import Erebos.Identity
 import Erebos.Network
-import Erebos.Object.Internal
+import Erebos.Object
 import Erebos.PubKey
 import Erebos.Service
 import Erebos.State
+import Erebos.Storable
 
 data PairingService a = PairingRequest (Stored (Signed IdentityData)) (Stored (Signed IdentityData)) RefDigest
                       | PairingResponse Bytes

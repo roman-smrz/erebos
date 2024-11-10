@@ -32,8 +32,8 @@ import Data.Time.LocalTime
 import Erebos.Chatroom
 import Erebos.Identity
 import Erebos.Message hiding (formatMessage)
-import Erebos.Object.Internal
 import Erebos.State
+import Erebos.Storable
 
 
 data Message = DirectMessageMessage DirectMessage Bool

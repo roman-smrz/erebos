@@ -10,12 +10,11 @@ module Erebos.Storage (
     openStorage, memoryStorage,
     deriveEphemeralStorage, derivePartialStorage,
 
-    Head, HeadType(..),
-    HeadTypeID, mkHeadTypeID,
+    Head, HeadType,
+    HeadID, HeadTypeID,
     headId, headStorage, headRef, headObject, headStoredObject,
     loadHeads, loadHead, reloadHead,
     storeHead, replaceHead, updateHead, updateHead_,
-    loadHeadRaw, storeHeadRaw, replaceHeadRaw,
 
     WatchedHead,
     watchHead, watchHeadWith, unwatchHead,
@@ -25,3 +24,4 @@ module Erebos.Storage (
 ) where
 
 import Erebos.Object.Internal
+import Erebos.Storage.Head

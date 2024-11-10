@@ -31,9 +31,10 @@ import Data.Time.LocalTime
 
 import Erebos.Identity
 import Erebos.Network
-import Erebos.Object.Internal
 import Erebos.Service
 import Erebos.State
+import Erebos.Storable
+import Erebos.Storage.Head
 import Erebos.Storage.Merge
 
 data DirectMessage = DirectMessage

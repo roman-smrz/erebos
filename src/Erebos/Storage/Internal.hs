@@ -159,12 +159,11 @@ readHex = return . BA.concat <=< readHex'
 newtype Generation = Generation Int
     deriving (Eq, Show)
 
-data Head' c a = Head HeadID (Stored' c a)
-    deriving (Eq, Show)
-
+-- | UUID of individual Erebos storage head.
 newtype HeadID = HeadID UUID
     deriving (Eq, Ord, Show)
 
+-- | UUID of Erebos storage head type.
 newtype HeadTypeID = HeadTypeID UUID
     deriving (Eq, Ord)
 

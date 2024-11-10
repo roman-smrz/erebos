@@ -67,6 +67,7 @@ import Erebos.Object.Internal
 import Erebos.PubKey
 import Erebos.Service
 import Erebos.State
+import Erebos.Storage
 import Erebos.Storage.Key
 import Erebos.Storage.Merge
 
