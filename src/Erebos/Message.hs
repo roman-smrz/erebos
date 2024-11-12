@@ -13,7 +13,6 @@ module Erebos.Message (
     messageThreadView,
 
     watchReceivedMessages,
-    formatMessage,
     formatDirectMessage,
 ) where
 
@@ -259,10 +258,6 @@ watchReceivedMessages h f = do
     watchHeadWith h (lookupSharedValue . lsShared . headObject) $ \(DirectMessageThreads sms _) -> do
         forM_ (map fromStored sms) $ \ms -> do
             mapM_ f $ filter (not . sameIdentity self . msgFrom . fromStored) $ msReceived ms
-
-{-# DEPRECATED formatMessage "use formatDirectMessage instead" #-}
-formatMessage :: TimeZone -> DirectMessage -> String
-formatMessage = formatDirectMessage
 
 formatDirectMessage :: TimeZone -> DirectMessage -> String
 formatDirectMessage tzone msg = concat

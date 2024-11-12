@@ -45,7 +45,7 @@ import Erebos.Discovery
 import Erebos.ICE
 #endif
 import Erebos.Identity
-import Erebos.Message hiding (formatMessage)
+import Erebos.Message
 import Erebos.Network
 import Erebos.Object
 import Erebos.PubKey

@@ -31,7 +31,7 @@ import Data.Time.LocalTime
 
 import Erebos.Chatroom
 import Erebos.Identity
-import Erebos.Message hiding (formatMessage)
+import Erebos.Message
 import Erebos.State
 import Erebos.Storable
 
