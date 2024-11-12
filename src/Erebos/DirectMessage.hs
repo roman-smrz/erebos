@@ -1,4 +1,4 @@
-module Erebos.Message (
+module Erebos.DirectMessage (
     DirectMessage(..),
     sendDirectMessage,
 

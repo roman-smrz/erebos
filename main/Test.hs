@@ -34,8 +34,8 @@ import System.IO.Error
 import Erebos.Attach
 import Erebos.Chatroom
 import Erebos.Contact
+import Erebos.DirectMessage
 import Erebos.Identity
-import Erebos.Message
 import Erebos.Network
 import Erebos.Object
 import Erebos.Pairing

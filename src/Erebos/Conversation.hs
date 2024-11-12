@@ -30,8 +30,8 @@ import Data.Time.Format
 import Data.Time.LocalTime
 
 import Erebos.Chatroom
+import Erebos.DirectMessage
 import Erebos.Identity
-import Erebos.Message
 import Erebos.State
 import Erebos.Storable
 

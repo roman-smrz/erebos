@@ -97,8 +97,8 @@ library
         Erebos.Chatroom
         Erebos.Contact
         Erebos.Conversation
+        Erebos.DirectMessage
         Erebos.Identity
-        Erebos.Message
         Erebos.Network
         Erebos.Network.Channel
         Erebos.Network.Protocol

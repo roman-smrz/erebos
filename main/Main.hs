@@ -40,12 +40,12 @@ import Erebos.Attach
 import Erebos.Contact
 import Erebos.Chatroom
 import Erebos.Conversation
+import Erebos.DirectMessage
 #ifdef ENABLE_ICE_SUPPORT
 import Erebos.Discovery
 import Erebos.ICE
 #endif
 import Erebos.Identity
-import Erebos.Message
 import Erebos.Network
 import Erebos.Object
 import Erebos.PubKey
