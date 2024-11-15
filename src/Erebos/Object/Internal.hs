@@ -45,12 +45,6 @@ module Erebos.Object.Internal (
     wrappedStore, wrappedLoad,
     copyStored,
     unsafeMapStored,
-
-    StoreInfo(..), makeStoreInfo,
-
-    StoredHistory,
-    fromHistory, fromHistoryAt, storedFromHistory, storedHistoryList,
-    beginHistory, modifyHistory,
 ) where
 
 import Control.Applicative
@@ -776,72 +770,6 @@ copyStored st (Stored ref' x) = liftIO $ returnLoadResult . fmap (flip Stored x)
 -- |Passed function needs to preserve the object representation to be safe
 unsafeMapStored :: (a -> b) -> Stored a -> Stored b
 unsafeMapStored f (Stored ref x) = Stored ref (f x)
-
-
-data StoreInfo = StoreInfo
-    { infoDate :: ZonedTime
-    , infoNote :: Maybe Text
-    }
-    deriving (Show)
-
-makeStoreInfo :: IO StoreInfo
-makeStoreInfo = StoreInfo
-    <$> getZonedTime
-    <*> pure Nothing
-
-storeInfoRec :: StoreInfo -> StoreRec c
-storeInfoRec info = do
-    storeDate "date" $ infoDate info
-    storeMbText "note" $ infoNote info
-
-loadInfoRec :: LoadRec StoreInfo
-loadInfoRec = StoreInfo
-    <$> loadDate "date"
-    <*> loadMbText "note"
-
-
-data History a = History StoreInfo (Stored a) (Maybe (StoredHistory a))
-    deriving (Show)
-
-type StoredHistory a = Stored (History a)
-
-instance Storable a => Storable (History a) where
-    store' (History si x prev) = storeRec $ do
-        storeInfoRec si
-        storeMbRef "prev" prev
-        storeRef "item" x
-
-    load' = loadRec $ History
-        <$> loadInfoRec
-        <*> loadRef "item"
-        <*> loadMbRef "prev"
-
-fromHistory :: StoredHistory a -> a
-fromHistory = fromStored . storedFromHistory
-
-fromHistoryAt :: ZonedTime -> StoredHistory a -> Maybe a
-fromHistoryAt zat = fmap (fromStored . snd) . listToMaybe . dropWhile ((at<) . zonedTimeToUTC . fst) . storedHistoryTimedList
-    where at = zonedTimeToUTC zat
-
-storedFromHistory :: StoredHistory a -> Stored a
-storedFromHistory sh = let History _ item _ = fromStored sh
-                        in item
-
-storedHistoryList :: StoredHistory a -> [Stored a]
-storedHistoryList = map snd . storedHistoryTimedList
-
-storedHistoryTimedList :: StoredHistory a -> [(ZonedTime, Stored a)]
-storedHistoryTimedList sh = let History hinfo item prev = fromStored sh
-                             in (infoDate hinfo, item) : maybe [] storedHistoryTimedList prev
-
-beginHistory :: Storable a => Storage -> StoreInfo -> a -> IO (StoredHistory a)
-beginHistory st si x = do sx <- wrappedStore st x
-                          wrappedStore st $ History si sx Nothing
-
-modifyHistory :: Storable a => StoreInfo -> (a -> a) -> StoredHistory a -> IO (StoredHistory a)
-modifyHistory si f prev@(Stored (Ref st _) _) = do
-    sx <- wrappedStore st $ f $ fromHistory prev
-    wrappedStore st $ History si sx (Just prev)
 
 
 showRatio :: Rational -> String
