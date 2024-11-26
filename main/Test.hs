@@ -46,7 +46,6 @@ import Erebos.State
 import Erebos.Storable
 import Erebos.Storage
 import Erebos.Storage.Head
-import Erebos.Storage.Internal (unsafeStoreRawBytes)
 import Erebos.Storage.Merge
 import Erebos.Sync
 
@@ -301,12 +300,20 @@ commands = map (T.pack *** id)
 cmdStore :: Command
 cmdStore = do
     st <- asks tiStorage
+    pst <- liftIO $ derivePartialStorage st
     [otype] <- asks tiParams
     ls <- getLines
 
     let cnt = encodeUtf8 $ T.unlines ls
-    ref <- liftIO $ unsafeStoreRawBytes st $ BL.fromChunks [encodeUtf8 otype, BC.singleton ' ', BC.pack (show $ B.length cnt), BC.singleton '\n', cnt]
-    cmdOut $ "store-done " ++ show (refDigest ref)
+        full = BL.fromChunks
+            [ encodeUtf8 otype
+            , BC.singleton ' '
+            , BC.pack (show $ B.length cnt)
+            , BC.singleton '\n', cnt
+            ]
+    liftIO (copyRef st =<< storeRawBytes pst full) >>= \case
+        Right ref -> cmdOut $ "store-done " ++ show (refDigest ref)
+        Left _ -> cmdOut $ "store-failed"
 
 cmdLoad :: Command
 cmdLoad = do

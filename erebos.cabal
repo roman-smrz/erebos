@@ -115,11 +115,10 @@ library
         Erebos.Storage.Merge
         Erebos.Sync
 
-        -- Used by test tool:
-        Erebos.Storage.Internal
     other-modules:
         Erebos.Flow
         Erebos.Object.Internal
+        Erebos.Storage.Internal
         Erebos.Storage.Platform
         Erebos.Util
 
