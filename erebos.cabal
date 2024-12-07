@@ -110,6 +110,7 @@ library
         Erebos.State
         Erebos.Storable
         Erebos.Storage
+        Erebos.Storage.Backend
         Erebos.Storage.Head
         Erebos.Storage.Key
         Erebos.Storage.Merge
@@ -118,7 +119,9 @@ library
     other-modules:
         Erebos.Flow
         Erebos.Object.Internal
+        Erebos.Storage.Disk
         Erebos.Storage.Internal
+        Erebos.Storage.Memory
         Erebos.Storage.Platform
         Erebos.Util
 

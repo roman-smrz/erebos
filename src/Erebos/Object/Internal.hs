@@ -1,7 +1,5 @@
 module Erebos.Object.Internal (
     Storage, PartialStorage, StorageCompleteness,
-    openStorage, memoryStorage,
-    deriveEphemeralStorage, derivePartialStorage,
 
     Ref, PartialRef, RefDigest,
     refDigest,
@@ -48,8 +46,6 @@ module Erebos.Object.Internal (
 ) where
 
 import Control.Applicative
-import Control.Concurrent
-import Control.Exception
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
@@ -66,8 +62,6 @@ import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Lazy.Char8 as BLC
 import Data.Char
 import Data.Function
-import qualified Data.HashTable.IO as HT
-import qualified Data.Map as M
 import Data.Maybe
 import Data.Ratio
 import Data.Set (Set)
@@ -83,91 +77,10 @@ import Data.Time.LocalTime
 import Data.UUID (UUID)
 import qualified Data.UUID as U
 
-import System.Directory
-import System.FilePath
-import System.IO.Error
 import System.IO.Unsafe
 
 import Erebos.Storage.Internal
 
-
-type Storage = Storage' Complete
-type PartialStorage = Storage' Partial
-
-storageVersion :: String
-storageVersion = "0.1"
-
-openStorage :: FilePath -> IO Storage
-openStorage path = modifyIOError annotate $ do
-    let versionFileName = "erebos-storage"
-    let versionPath = path </> versionFileName
-    let writeVersionFile = writeFileOnce versionPath $ BLC.pack $ storageVersion <> "\n"
-
-    maybeVersion <- handleJust (guard . isDoesNotExistError) (const $ return Nothing) $
-        Just <$> readFile versionPath
-    version <- case maybeVersion of
-        Just versionContent -> do
-            return $ takeWhile (/= '\n') versionContent
-
-        Nothing -> do
-            files <- handleJust (guard . isDoesNotExistError) (const $ return []) $
-                listDirectory path
-            when (not $ or
-                    [ null files
-                    , versionFileName `elem` files
-                    , (versionFileName ++ ".lock") `elem` files
-                    , "objects" `elem` files && "heads" `elem` files
-                    ]) $ do
-                fail "directory is neither empty, nor an existing erebos storage"
-
-            createDirectoryIfMissing True $ path
-            writeVersionFile
-            takeWhile (/= '\n') <$> readFile versionPath
-
-    when (version /= storageVersion) $ do
-        fail $ "unsupported storage version " <> version
-
-    createDirectoryIfMissing True $ path </> "objects"
-    createDirectoryIfMissing True $ path </> "heads"
-    watchers <- newMVar (Nothing, [], WatchList 1 [])
-    refgen <- newMVar =<< HT.new
-    refroots <- newMVar =<< HT.new
-    return $ Storage
-        { stBacking = StorageDir path watchers
-        , stParent = Nothing
-        , stRefGeneration = refgen
-        , stRefRoots = refroots
-        }
-  where
-    annotate e = annotateIOError e "failed to open storage" Nothing (Just path)
-
-memoryStorage' :: IO (Storage' c')
-memoryStorage' = do
-    backing <- StorageMemory <$> newMVar [] <*> newMVar M.empty <*> newMVar M.empty <*> newMVar (WatchList 1 [])
-    refgen <- newMVar =<< HT.new
-    refroots <- newMVar =<< HT.new
-    return $ Storage
-        { stBacking = backing
-        , stParent = Nothing
-        , stRefGeneration = refgen
-        , stRefRoots = refroots
-        }
-
-memoryStorage :: IO Storage
-memoryStorage = memoryStorage'
-
-deriveEphemeralStorage :: Storage -> IO Storage
-deriveEphemeralStorage parent = do
-    st <- memoryStorage
-    return $ st { stParent = Just parent }
-
-derivePartialStorage :: Storage -> IO PartialStorage
-derivePartialStorage parent = do
-    st <- memoryStorage'
-    return $ st { stParent = Just parent }
-
-type Ref = Ref' Complete
-type PartialRef = Ref' Partial
 
 zeroRef :: Storage' c -> Ref' c
 zeroRef s = Ref s (RefDigest h)

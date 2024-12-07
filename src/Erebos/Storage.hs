@@ -24,4 +24,6 @@ module Erebos.Storage (
 ) where
 
 import Erebos.Object.Internal
+import Erebos.Storage.Disk
 import Erebos.Storage.Head
+import Erebos.Storage.Memory
