@@ -40,8 +40,8 @@ import Erebos.Attach
 import Erebos.Contact
 import Erebos.Chatroom
 import Erebos.Conversation
-#ifdef ENABLE_ICE_SUPPORT
 import Erebos.Discovery
+#ifdef ENABLE_ICE_SUPPORT
 import Erebos.ICE
 #endif
 import Erebos.Identity
@@ -102,10 +102,8 @@ availableServices =
         True "create contacts with network peers"
     , ServiceOption "dm" (someService @DirectMessage Proxy)
         True "direct messages"
-#ifdef ENABLE_ICE_SUPPORT
     , ServiceOption "discovery" (someService @DiscoveryService Proxy)
         True "peer discovery"
-#endif
     ]
 
 options :: [OptDescr (Options -> Options)]
@@ -492,9 +490,9 @@ commands =
     , ("contact-reject", cmdContactReject)
     , ("conversations", cmdConversations)
     , ("details", cmdDetails)
-#ifdef ENABLE_ICE_SUPPORT
     , ("discovery-init", cmdDiscoveryInit)
     , ("discovery", cmdDiscovery)
+#ifdef ENABLE_ICE_SUPPORT
     , ("ice-create", cmdIceCreate)
     , ("ice-destroy", cmdIceDestroy)
     , ("ice-show", cmdIceShow)
@@ -838,8 +836,6 @@ cmdDetails = do
                 , map (BC.unpack . showRefDigest . refDigest . storedRef) $ idExtDataF cpid
                 ]
 
-#ifdef ENABLE_ICE_SUPPORT
-
 cmdDiscoveryInit :: Command
 cmdDiscoveryInit = void $ do
     server <- asks ciServer
@@ -866,6 +862,8 @@ cmdDiscovery = void $ do
             case res of
                  Right _ -> return ()
                  Left err -> eprint err
+
+#ifdef ENABLE_ICE_SUPPORT
 
 cmdIceCreate :: Command
 cmdIceCreate = do
