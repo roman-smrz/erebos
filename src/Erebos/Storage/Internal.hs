@@ -3,6 +3,7 @@ module Erebos.Storage.Internal where
 import Control.Arrow
 import Control.Concurrent
 import Control.DeepSeq
+import Control.Exception
 import Control.Monad
 import Control.Monad.Identity
 
@@ -270,7 +271,7 @@ instance StorageCompleteness Partial where
 
 unsafeStoreRawBytes :: Storage' c -> BL.ByteString -> IO (Ref' c)
 unsafeStoreRawBytes st@Storage {..} raw = do
-    let dgst = hashToRefDigest raw
+    dgst <- evaluate $ force $ hashToRefDigest raw
     backendStoreBytes stBackend dgst raw
     return $ Ref st dgst
 

@@ -5,7 +5,6 @@ module Erebos.Storage.Memory (
 ) where
 
 import Control.Concurrent.MVar
-import Control.DeepSeq
 
 import Data.ByteArray (ScrubbedBytes)
 import Data.ByteString.Lazy qualified as BL
@@ -46,8 +45,7 @@ instance (StorageCompleteness c, Typeable p) => StorageBackend (MemoryStorage p 
         M.lookup dgst <$> readMVar memObjs
 
     backendStoreBytes StorageMemory {..} dgst raw =
-        dgst `deepseq` -- the TVar may be accessed when evaluating the data to be written
-            modifyMVar_ memObjs (return . M.insert dgst raw)
+        modifyMVar_ memObjs (return . M.insert dgst raw)
 
 
     backendLoadHeads StorageMemory {..} tid = do
