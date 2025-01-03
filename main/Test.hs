@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Test (
     runTestTool,
 ) where
@@ -448,21 +450,30 @@ cmdStartServer :: Command
 cmdStartServer = do
     out <- asks tiOutput
 
+    let parseParams = \case
+            (name : value : rest)
+                | name == "services" -> T.splitOn "," value
+                | otherwise -> parseParams rest
+            _ -> []
+    serviceNames <- parseParams <$> asks tiParams
+
     h <- getOrLoadHead
     rsPeers <- liftIO $ newMVar (1, [])
-    rsServer <- liftIO $ startServer defaultServerOptions h (B.hPutStr stderr . (`BC.snoc` '\n') . BC.pack)
-        [ someServiceAttr $ pairingAttributes (Proxy @AttachService) out rsPeers "attach"
-        , someServiceAttr $ pairingAttributes (Proxy @ContactService) out rsPeers "contact"
-        , someServiceAttr $ directMessageAttributes out
-        , someService @SyncService Proxy
-        , someService @ChatroomService Proxy
-        , someServiceAttr $ (defaultServiceAttributes Proxy)
+    services <- forM serviceNames $ \case
+        "attach" -> return $ someServiceAttr $ pairingAttributes (Proxy @AttachService) out rsPeers "attach"
+        "chatroom" -> return $ someService @ChatroomService Proxy
+        "contact" -> return $ someServiceAttr $ pairingAttributes (Proxy @ContactService) out rsPeers "contact"
+        "dm" -> return $ someServiceAttr $ directMessageAttributes out
+        "sync" -> return $ someService @SyncService Proxy
+        "test" -> return $ someServiceAttr $ (defaultServiceAttributes Proxy)
             { testMessageReceived = \obj otype len sref -> do
                 liftIO $ do
                     void $ store (headStorage h) obj
                     outLine out $ unwords ["test-message-received", otype, len, sref]
             }
-        ]
+        sname -> throwError $ "unknown service `" <> T.unpack sname <> "'"
+
+    rsServer <- liftIO $ startServer defaultServerOptions h (B.hPutStr stderr . (`BC.snoc` '\n') . BC.pack) services
 
     rsPeerThread <- liftIO $ forkIO $ void $ forever $ do
         peer <- getNextPeerChange rsServer

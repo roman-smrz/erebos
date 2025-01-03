@@ -1,4 +1,6 @@
 test Contact:
+	let services = "attach,contact,sync"
+	
 	spawn as p1
 	spawn as p2
 	spawn as p3
@@ -9,10 +11,10 @@ test Contact:
 	send "create-identity Device3 Owner3" to p3
 	send "create-identity Device4"        to p4
 
-	send "start-server" to p1
-	send "start-server" to p2
-	send "start-server" to p3
-	send "start-server" to p4
+	send "start-server services $services" to p1
+	send "start-server services $services" to p2
+	send "start-server services $services" to p3
+	send "start-server services $services" to p4
 
 	expect from p1:
 		/peer ([0-9]+) addr ${p2.node.ip} 29665/ capture peer1_2

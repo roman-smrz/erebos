@@ -1,4 +1,6 @@
 test ChatroomSetup:
+	let services = "chatroom"
+
 	# Local chatrooms
 
 	spawn as p1
@@ -30,7 +32,7 @@ test ChatroomSetup:
 	for p in [ p1, p2, p3 ]:
 		with p:
 			send "chatroom-watch-local"
-			send "start-server"
+			send "start-server services $services"
 
 	for p in [ p2, p3 ]:
 		with p:
@@ -97,6 +99,8 @@ test ChatroomSetup:
 
 
 test ChatroomMessages:
+	let services = "chatroom"
+
 	spawn as p1
 	spawn as p2
 
@@ -106,7 +110,7 @@ test ChatroomMessages:
 	for p in [ p1, p2 ]:
 		with p:
 			send "chatroom-watch-local"
-			send "start-server"
+			send "start-server services $services"
 
 	send "chatroom-create first_room" to p1
 	expect /chatroom-create-done ([a-z0-9#]+) first_room.*/ from p1 capture room1_p1
@@ -159,7 +163,7 @@ test ChatroomMessages:
 	spawn as p3
 	send "create-identity Device3 Owner3" to p3
 	send "chatroom-watch-local" to p3
-	send "start-server" to p3
+	send "start-server services $services" to p3
 	expect /chatroom-watched-added ([a-z0-9#]+) first_room sub false/  from p3 capture room1_p3
 	expect /chatroom-watched-added ([a-z0-9#]+) second_room sub false/ from p3 capture room2_p3
 	expect /chatroom-watched-added ([a-z0-9#]+) third_room sub false/  from p3 capture room3_p3
@@ -242,6 +246,8 @@ test ChatroomMessages:
 
 
 test ChatroomSubscribedBeforeStart:
+	let services = "chatroom"
+
 	spawn as p1
 	spawn as p2
 
@@ -251,7 +257,7 @@ test ChatroomSubscribedBeforeStart:
 	for p in [ p1, p2 ]:
 		with p:
 			send "chatroom-watch-local"
-			send "start-server"
+			send "start-server services $services"
 
 	send "chatroom-create first_room" to p1
 	expect /chatroom-create-done ([a-z0-9#]+) first_room.*/ from p1 capture room1_p1
@@ -271,7 +277,7 @@ test ChatroomSubscribedBeforeStart:
 			expect /stop-server-done/
 	for p in [p1, p2]:
 		with p:
-			send "start-server"
+			send "start-server services $services"
 
 	send "chatroom-message-send $room1_p1 message1" to p1
 	expect /chatroom-message-new $room1_p1 room first_room from Owner1 text message1/ from p1
@@ -283,6 +289,8 @@ test ChatroomSubscribedBeforeStart:
 
 
 test ParallelThreads:
+	let services = "chatroom"
+
 	spawn as p1
 	spawn as p2
 
@@ -292,7 +300,7 @@ test ParallelThreads:
 	for p in [ p1, p2 ]:
 		with p:
 			send "chatroom-watch-local"
-			send "start-server"
+			send "start-server services $services"
 
 	send "chatroom-create first_room" to p1
 	expect /chatroom-create-done ([a-z0-9#]+) first_room.*/ from p1 capture room1_p1
@@ -330,7 +338,7 @@ test ParallelThreads:
 
 	for p in [p1, p2]:
 		with p:
-			send "start-server"
+			send "start-server services $services"
 
 	with p1:
 		expect /chatroom-message-new $room1_p1 room first_room from Owner. text message(..)/ capture msg
@@ -347,6 +355,8 @@ test ParallelThreads:
 
 
 test ChatroomMembers:
+	let services = "chatroom"
+
 	spawn as p1
 	spawn as p2
 	spawn as p3
@@ -358,7 +368,7 @@ test ChatroomMembers:
 	for p in [ p1, p2, p3 ]:
 		with p:
 			send "chatroom-watch-local"
-			send "start-server"
+			send "start-server services $services"
 
 	send "chatroom-create first_room" to p1
 	expect /chatroom-create-done ([a-z0-9#]+) first_room.*/ from p1 capture room1_p1
@@ -432,6 +442,8 @@ test ChatroomMembers:
 
 
 test ChatroomIdentity:
+	let services = "chatroom"
+
 	spawn as p1
 	spawn as p2
 
@@ -441,7 +453,7 @@ test ChatroomIdentity:
 	for p in [ p1, p2 ]:
 		with p:
 			send "chatroom-watch-local"
-			send "start-server"
+			send "start-server services $services"
 
 	send "chatroom-create first_room" to p1
 	expect /chatroom-create-done ([a-z0-9#]+) first_room.*/ from p1 capture room1_p1
