@@ -120,12 +120,14 @@ test Discovery:
 
 
 test LargeData:
+	let services = "test"
+
 	spawn as p1
 	spawn as p2
 	send "create-identity Device1" to p1
 	send "create-identity Device2" to p2
-	send "start-server" to p1
-	send "start-server" to p2
+	send "start-server services $services" to p1
+	send "start-server services $services" to p2
 	expect from p1:
 		/peer 1 addr ${p2.node.ip} 29665/
 		/peer 1 id Device2/
@@ -149,12 +151,14 @@ test LargeData:
 
 
 test ManyStreams:
+	let services = "test"
+
 	spawn as p1
 	spawn as p2
 	send "create-identity Device1" to p1
 	send "create-identity Device2" to p2
-	send "start-server" to p1
-	send "start-server" to p2
+	send "start-server services $services" to p1
+	send "start-server services $services" to p2
 	expect from p1:
 		/peer 1 addr ${p2.node.ip} 29665/
 		/peer 1 id Device2/
@@ -179,12 +183,14 @@ test ManyStreams:
 
 
 test MultipleServiceRefs:
+	let services = "test"
+
 	spawn as p1
 	spawn as p2
 	send "create-identity Device1" to p1
 	send "create-identity Device2" to p2
-	send "start-server" to p1
-	send "start-server" to p2
+	send "start-server services $services" to p1
+	send "start-server services $services" to p2
 	expect from p1:
 		/peer 1 addr ${p2.node.ip} 29665/
 		/peer 1 id Device2/
@@ -235,16 +241,18 @@ test MultipleServiceRefs:
 
 
 test Reconnection:
+	let services = "test"
+
 	spawn as p1
 	with p1:
 		send "create-identity Device1"
-		send "start-server"
+		send "start-server services $services"
 
 	node n
 	local:
 		spawn as p2 on n
 		send "create-identity Device2" to p2
-		send "start-server" to p2
+		send "start-server services $services" to p2
 
 		expect from p1:
 			/peer 1 addr ${p2.node.ip} 29665/
@@ -272,7 +280,7 @@ test Reconnection:
 	# Restart process on node 'n'
 	local:
 		spawn as p2 on n
-		send "start-server" to p2
+		send "start-server services $services" to p2
 		send "peer-add ${p1.node.ip}" to p2
 
 		expect from p2:
@@ -383,6 +391,7 @@ test Reconnection:
 
 
 test SendUnknownObjectType:
+	let services = "test"
 	let refpat = /blake2#[0-9a-f]*/
 
 	spawn as p1
@@ -390,10 +399,10 @@ test SendUnknownObjectType:
 
 	with p1:
 		send "create-identity Device1"
-		send "start-server"
+		send "start-server services $services"
 	with p2:
 		send "create-identity Device2"
-		send "start-server"
+		send "start-server services $services"
 
 	expect from p1:
 		/peer 1 addr ${p2.node.ip} 29665/

@@ -1,4 +1,6 @@
 test:
+	let services = "attach,sync"
+
 	spawn as p1
 	spawn as p2
 	send "create-identity Device1 Owner" to p1
@@ -7,8 +9,8 @@ test:
 	send "watch-local-identity" to p2
 	send "watch-shared-identity" to p1
 	send "watch-shared-identity" to p2
-	send "start-server" to p1
-	send "start-server" to p2
+	send "start-server services $services" to p1
+	send "start-server services $services" to p2
 	expect from p1:
 		/local-identity Device1 Owner/
 		/shared-identity Owner/
@@ -57,7 +59,7 @@ test:
 		send "create-identity Device3"
 		send "watch-local-identity"
 		send "watch-shared-identity"
-		send "start-server"
+		send "start-server services $services"
 
 		send "peer-add ${p1.node.ip}"
 

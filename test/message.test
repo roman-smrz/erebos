@@ -1,10 +1,12 @@
 test DirectMessage:
+	let services = "contact,dm"
+
 	spawn as p1
 	spawn as p2
 	send "create-identity Device1 Owner1" to p1
 	send "create-identity Device2 Owner2" to p2
-	send "start-server" to p1
-	send "start-server" to p2
+	send "start-server services $services" to p1
+	send "start-server services $services" to p2
 
 	expect from p1:
 		/peer ([0-9]+) addr ${p2.node.ip} 29665/ capture peer1_2
@@ -96,7 +98,7 @@ test DirectMessage:
 			expect /stop-server-done/
 	for p in [p1, p2]:
 		with p:
-			send "start-server"
+			send "start-server services $services"
 
 	with p1:
 		send "contact-list"
@@ -126,10 +128,10 @@ test DirectMessage:
 	for p in [p1, p2]:
 		with p:
 			expect /stop-server-done/
-	send "start-server" to p2
+	send "start-server services $services" to p2
 
 	send "dm-send-contact $c1_2 while_offline" to p1
-	send "start-server" to p1
+	send "start-server services $services" to p1
 
 	expect /dm-received from Owner1 text while_offline/ from p2
 
@@ -139,11 +141,11 @@ test DirectMessage:
 	for p in [p1, p2]:
 		with p:
 			expect /stop-server-done/
-	send "start-server" to p1
+	send "start-server services $services" to p1
 
 	send "dm-send-contact $c1_2 while_peer_offline" to p1
 	# TODO: sync from p1 on peer p2 discovery not ensured without addition wait
 	#wait
-	send "start-server" to p2
+	send "start-server services $services" to p2
 
 	expect /dm-received from Owner1 text while_peer_offline/ from p2

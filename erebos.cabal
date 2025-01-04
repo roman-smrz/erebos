@@ -98,6 +98,7 @@ library
         Erebos.Contact
         Erebos.Conversation
         Erebos.DirectMessage
+        Erebos.Discovery
         Erebos.Identity
         Erebos.Network
         Erebos.Network.Channel
@@ -132,7 +133,6 @@ library
 
     if flag(ice)
         exposed-modules:
-            Erebos.Discovery
             Erebos.ICE
         c-sources:
             src/Erebos/ICE/pjproject.c

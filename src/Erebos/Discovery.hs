@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP #-}
+
 module Erebos.Discovery (
     DiscoveryService(..),
     DiscoveryConnection(..)
@@ -16,7 +18,9 @@ import qualified Data.Text as T
 
 import Network.Socket
 
+#ifdef ENABLE_ICE_SUPPORT
 import Erebos.ICE
+#endif
 import Erebos.Identity
 import Erebos.Network
 import Erebos.Object
@@ -39,11 +43,18 @@ data DiscoveryConnection = DiscoveryConnection
     { dconnSource :: Ref
     , dconnTarget :: Ref
     , dconnAddress :: Maybe Text
+#ifdef ENABLE_ICE_SUPPORT
     , dconnIceSession :: Maybe IceRemoteInfo
+#endif
     }
 
 emptyConnection :: Ref -> Ref -> DiscoveryConnection
-emptyConnection source target = DiscoveryConnection source target Nothing Nothing
+emptyConnection dconnSource dconnTarget = DiscoveryConnection {..}
+  where
+    dconnAddress = Nothing
+#ifdef ENABLE_ICE_SUPPORT
+    dconnIceSession = Nothing
+#endif
 
 instance Storable DiscoveryService where
     store' x = storeRec $ do
@@ -65,7 +76,9 @@ instance Storable DiscoveryService where
                   storeRawRef "source" $ dconnSource conn
                   storeRawRef "target" $ dconnTarget conn
                   storeMbText "address" $ dconnAddress conn
+#ifdef ENABLE_ICE_SUPPORT
                   storeMbRef "ice-session" $ dconnIceSession conn
+#endif
 
     load' = loadRec $ msum
             [ DiscoverySelf
@@ -87,13 +100,17 @@ instance Storable DiscoveryService where
                       <$> loadRawRef "source"
                       <*> loadRawRef "target"
                       <*> loadMbText "address"
+#ifdef ENABLE_ICE_SUPPORT
                       <*> loadMbRef "ice-session"
+#endif
 
 data DiscoveryPeer = DiscoveryPeer
     { dpPriority :: Int
     , dpPeer :: Maybe Peer
     , dpAddress :: Maybe Text
+#ifdef ENABLE_ICE_SUPPORT
     , dpIceSession :: Maybe IceSession
+#endif
     }
 
 instance Service DiscoveryService where
@@ -116,8 +133,14 @@ instance Service DiscoveryService where
                                 else Nothing
                 _ -> return Nothing
             forM_ (idDataF =<< unfoldOwners pid) $ \s ->
-                svcModifyGlobal $ M.insertWith insertHelper (refDigest $ storedRef s) $
-                    DiscoveryPeer priority (Just peer) mbaddr Nothing
+                svcModifyGlobal $ M.insertWith insertHelper (refDigest $ storedRef s) DiscoveryPeer
+                    { dpPriority = priority
+                    , dpPeer = Just peer
+                    , dpAddress = mbaddr
+#ifdef ENABLE_ICE_SUPPORT
+                    , dpIceSession = Nothing
+#endif
+                    }
             replyPacket $ DiscoveryAcknowledged $ fromMaybe (T.pack "ICE") mbaddr
 
         DiscoveryAcknowledged addr -> do
@@ -143,6 +166,7 @@ instance Service DiscoveryService where
             server <- asks svcServer
             if addr == T.pack "ICE"
                then do
+#ifdef ENABLE_ICE_SUPPORT
                     self <- svcSelf
                     peer <- asks svcPeer
                     ice <- liftIO $ iceCreate PjIceSessRoleControlling $ \ice -> do
@@ -155,18 +179,28 @@ instance Service DiscoveryService where
 
                     svcModifyGlobal $ M.insert (refDigest ref) $
                         DiscoveryPeer 0 Nothing Nothing (Just ice)
+#else
+                    return ()
+#endif
                else do
                     case words (T.unpack addr) of
                         [ipaddr, port] -> do
                             saddr <- liftIO $ head <$>
                                 getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just ipaddr) (Just port)
                             peer <- liftIO $ serverPeer server (addrAddress saddr)
-                            svcModifyGlobal $ M.insert (refDigest ref) $
-                                DiscoveryPeer 0 (Just peer) Nothing Nothing
+                            svcModifyGlobal $ M.insert (refDigest ref) DiscoveryPeer
+                                { dpPriority = 0
+                                , dpPeer = Just peer
+                                , dpAddress = Nothing
+#ifdef ENABLE_ICE_SUPPORT
+                                , dpIceSession = Nothing
+#endif
+                                }
 
                         _ -> svcPrint $ "Discovery: invalid address in result: " ++ T.unpack addr
 
         DiscoveryConnectionRequest conn -> do
+#ifdef ENABLE_ICE_SUPPORT
             self <- svcSelf
             let rconn = emptyConnection (dconnSource conn) (dconnTarget conn)
             if refDigest (dconnTarget conn) `elem` (map (refDigest . storedRef) $ idDataF =<< unfoldOwners self)
@@ -194,8 +228,12 @@ instance Service DiscoveryService where
                                 | Just dpeer <- dpPeer dp -> do
                                     sendToPeer dpeer $ DiscoveryConnectionRequest conn
                                 | otherwise -> svcPrint $ "Discovery: failed to relay connection request"
+#else
+            return ()
+#endif
 
         DiscoveryConnectionResponse conn -> do
+#ifdef ENABLE_ICE_SUPPORT
             self <- svcSelf
             dpeers <- svcGetGlobal
             if refDigest (dconnSource conn) `elem` (map (refDigest . storedRef) $ idDataF =<< unfoldOwners self)
@@ -222,3 +260,6 @@ instance Service DiscoveryService where
                         Just dp | Just dpeer <- dpPeer dp -> do
                             sendToPeer dpeer $ DiscoveryConnectionResponse conn
                         _ -> svcPrint $ "Discovery: failed to relay connection response"
+#else
+            return ()
+#endif
