@@ -36,6 +36,7 @@ import System.IO.Error
 import Erebos.Attach
 import Erebos.Chatroom
 import Erebos.Contact
+import Erebos.Discovery
 import Erebos.Identity
 import Erebos.Message
 import Erebos.Network
@@ -257,6 +258,7 @@ commands = map (T.pack *** id)
     , ("head-watch", cmdHeadWatch)
     , ("head-unwatch", cmdHeadUnwatch)
     , ("create-identity", cmdCreateIdentity)
+    , ("identity-info", cmdIdentityInfo)
     , ("start-server", cmdStartServer)
     , ("stop-server", cmdStopServer)
     , ("peer-add", cmdPeerAdd)
@@ -295,6 +297,7 @@ commands = map (T.pack *** id)
     , ("chatroom-join-as", cmdChatroomJoinAs)
     , ("chatroom-leave", cmdChatroomLeave)
     , ("chatroom-message-send", cmdChatroomMessageSend)
+    , ("discovery-connect", cmdDiscoveryConnect)
     ]
 
 cmdStore :: Command
@@ -445,6 +448,22 @@ cmdCreateIdentity = do
             , lsOther = []
             }
     initTestHead h
+    cmdOut $ unwords [ "create-identity-done", "ref", show $ refDigest $ storedRef $ lsIdentity $ headObject h ]
+
+cmdIdentityInfo :: Command
+cmdIdentityInfo = do
+    st <- asks tiStorage
+    [ tref ] <- asks tiParams
+    Just ref <- liftIO $ readRef st $ encodeUtf8 tref
+    let sidata = wrappedLoad ref
+        idata = fromSigned sidata
+    cmdOut $ unwords $ concat
+        [ [ "identity-info" ]
+        , [ "ref", T.unpack tref ]
+        , [ "base", show $ refDigest $ storedRef $ eiddStoredBase sidata ]
+        , maybe [] (\owner -> [ "owner", show $ refDigest $ storedRef owner ]) $ eiddOwner idata
+        , maybe [] (\name -> [ "name", T.unpack name ]) $ eiddName idata
+        ]
 
 cmdStartServer :: Command
 cmdStartServer = do
@@ -463,6 +482,7 @@ cmdStartServer = do
         "attach" -> return $ someServiceAttr $ pairingAttributes (Proxy @AttachService) out rsPeers "attach"
         "chatroom" -> return $ someService @ChatroomService Proxy
         "contact" -> return $ someServiceAttr $ pairingAttributes (Proxy @ContactService) out rsPeers "contact"
+        "discovery" -> return $ someService @DiscoveryService Proxy
         "dm" -> return $ someServiceAttr $ directMessageAttributes out
         "sync" -> return $ someService @SyncService Proxy
         "test" -> return $ someServiceAttr $ (defaultServiceAttributes Proxy)
@@ -846,3 +866,14 @@ cmdChatroomMessageSend = do
     [cid, msg] <- asks tiParams
     to <- getChatroomStateData cid
     void $ sendChatroomMessageByStateData to msg
+
+cmdDiscoveryConnect :: Command
+cmdDiscoveryConnect = do
+    st <- asks tiStorage
+    [ tref ] <- asks tiParams
+    Just ref <- liftIO $ readRef st $ encodeUtf8 tref
+
+    Just RunningServer {..} <- gets tsServer
+    peers <- liftIO $ getCurrentPeerList rsServer
+    forM_ peers $ \peer -> do
+        sendToPeer peer $ DiscoverySearch ref

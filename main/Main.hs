@@ -846,7 +846,7 @@ cmdDiscoveryInit = void $ do
         [] -> ("discovery.erebosprotocol.net", show discoveryPort)
     addr:_ <- liftIO $ getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just hostname) (Just port)
     peer <- liftIO $ serverPeer server (addrAddress addr)
-    sendToPeer peer $ DiscoverySelf (T.pack "ICE") 0
+    sendToPeer peer $ DiscoverySelf [ T.pack "ICE" ] Nothing
     modify $ \s -> s { csIcePeer = Just peer }
 
 cmdDiscovery :: Command

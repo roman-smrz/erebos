@@ -10,11 +10,12 @@ import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
 
+import Data.IP qualified as IP
 import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as M
+import Data.Map.Strict qualified as M
 import Data.Maybe
 import Data.Text (Text)
-import qualified Data.Text as T
+import Data.Text qualified as T
 
 import Network.Socket
 
@@ -27,14 +28,10 @@ import Erebos.Service
 import Erebos.Storage
 
 
-keepaliveSeconds :: Int
-keepaliveSeconds = 20
-
-
-data DiscoveryService = DiscoverySelf Text Int
+data DiscoveryService = DiscoverySelf [ Text ] (Maybe Int)
                       | DiscoveryAcknowledged Text
                       | DiscoverySearch Ref
-                      | DiscoveryResult Ref (Maybe Text)
+                      | DiscoveryResult Ref [ Text ]
                       | DiscoveryConnectionRequest DiscoveryConnection
                       | DiscoveryConnectionResponse DiscoveryConnection
 
@@ -58,15 +55,15 @@ emptyConnection dconnSource dconnTarget = DiscoveryConnection {..}
 instance Storable DiscoveryService where
     store' x = storeRec $ do
         case x of
-            DiscoverySelf addr priority -> do
-                storeText "self" addr
-                storeInt "priority" priority
+            DiscoverySelf addrs priority -> do
+                mapM_ (storeText "self") addrs
+                mapM_ (storeInt "priority") priority
             DiscoveryAcknowledged addr -> do
                 storeText "ack" addr
             DiscoverySearch ref -> storeRawRef "search" ref
             DiscoveryResult ref addr -> do
                 storeRawRef "result" ref
-                storeMbText "address" addr
+                mapM_ (storeText "address") addr
             DiscoveryConnectionRequest conn -> storeConnection "request" conn
             DiscoveryConnectionResponse conn -> storeConnection "response" conn
 
@@ -80,15 +77,17 @@ instance Storable DiscoveryService where
 #endif
 
     load' = loadRec $ msum
-            [ DiscoverySelf
-                <$> loadText "self"
-                <*> loadInt "priority"
+            [ do
+                addrs <- loadTexts "self"
+                guard (not $ null addrs)
+                DiscoverySelf addrs
+                    <$> loadMbInt "priority"
             , DiscoveryAcknowledged
                 <$> loadText "ack"
             , DiscoverySearch <$> loadRawRef "search"
             , DiscoveryResult
                 <$> loadRawRef "result"
-                <*> loadMbText "address"
+                <*> loadTexts "address"
             , loadConnection "request" DiscoveryConnectionRequest
             , loadConnection "response" DiscoveryConnectionResponse
             ]
@@ -106,25 +105,25 @@ instance Storable DiscoveryService where
 data DiscoveryPeer = DiscoveryPeer
     { dpPriority :: Int
     , dpPeer :: Maybe Peer
-    , dpAddress :: Maybe Text
+    , dpAddress :: [ Text ]
 #ifdef ENABLE_ICE_SUPPORT
     , dpIceSession :: Maybe IceSession
 #endif
     }
 
 instance Service DiscoveryService where
-    serviceID _ = mkServiceID "dd59c89c-69cc-4703-b75b-4ddcd4b3c23b"
+    serviceID _ = mkServiceID "dd59c89c-69cc-4703-b75b-4ddcd4b3c23c"
 
     type ServiceGlobalState DiscoveryService = Map RefDigest DiscoveryPeer
     emptyServiceGlobalState _ = M.empty
 
     serviceHandler msg = case fromStored msg of
-        DiscoverySelf addr priority -> do
+        DiscoverySelf addrs priority -> do
             pid <- asks svcPeerIdentity
             peer <- asks svcPeer
             let insertHelper new old | dpPriority new > dpPriority old = new
                                      | otherwise                       = old
-            mbaddr <- case words (T.unpack addr) of
+            mbaddr <- fmap (listToMaybe . catMaybes) $ forM addrs $ \addr -> case words (T.unpack addr) of
                 [ipaddr, port] | DatagramAddress paddr <- peerAddress peer -> do
                     saddr <- liftIO $ head <$> getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just ipaddr) (Just port)
                     return $ if paddr == addrAddress saddr
@@ -133,70 +132,71 @@ instance Service DiscoveryService where
                 _ -> return Nothing
             forM_ (idDataF =<< unfoldOwners pid) $ \s ->
                 svcModifyGlobal $ M.insertWith insertHelper (refDigest $ storedRef s) DiscoveryPeer
-                    { dpPriority = priority
+                    { dpPriority = fromMaybe 0 priority
                     , dpPeer = Just peer
-                    , dpAddress = mbaddr
+                    , dpAddress = addrs
 #ifdef ENABLE_ICE_SUPPORT
                     , dpIceSession = Nothing
 #endif
                     }
             replyPacket $ DiscoveryAcknowledged $ fromMaybe (T.pack "ICE") mbaddr
 
-        DiscoveryAcknowledged addr -> do
-            when (addr == T.pack "ICE") $ do
-                -- keep-alive packet from behind NAT
-                peer <- asks svcPeer
-                liftIO $ void $ forkIO $ do
-                    threadDelay (keepaliveSeconds * 1000 * 1000)
-                    res <- runExceptT $ sendToPeer peer $ DiscoverySelf addr 0
-                    case res of
-                        Right _ -> return ()
-                        Left err -> putStrLn $ "Discovery: failed to send keep-alive: " ++ err
+        DiscoveryAcknowledged _ -> do
+            return ()
 
         DiscoverySearch ref -> do
-            addr <- M.lookup (refDigest ref) <$> svcGetGlobal
-            replyPacket $ DiscoveryResult ref $ fromMaybe (T.pack "ICE") . dpAddress <$> addr
+            dpeer <- M.lookup (refDigest ref) <$> svcGetGlobal
+            replyPacket $ DiscoveryResult ref $ maybe [] dpAddress dpeer
 
-        DiscoveryResult ref Nothing -> do
+        DiscoveryResult ref [] -> do
             svcPrint $ "Discovery: " ++ show (refDigest ref) ++ " not found"
 
-        DiscoveryResult ref (Just addr) -> do
+        DiscoveryResult ref addrs -> do
             -- TODO: check if we really requested that
             server <- asks svcServer
-            if addr == T.pack "ICE"
-               then do
+            self <- svcSelf
+            discoveryPeer <- asks svcPeer
+            let runAsService = runPeerService @DiscoveryService discoveryPeer
+
+            liftIO $ void $ forkIO $ forM_ addrs $ \addr -> if
+                | addr == T.pack "ICE" -> do
 #ifdef ENABLE_ICE_SUPPORT
-                    self <- svcSelf
-                    peer <- asks svcPeer
-                    ice <- liftIO $ iceCreate PjIceSessRoleControlling $ \ice -> do
+                    ice <- iceCreate PjIceSessRoleControlling $ \ice -> do
                         rinfo <- iceRemoteInfo ice
-                        res <- runExceptT $ sendToPeer peer $
+                        res <- runExceptT $ sendToPeer discoveryPeer $
                             DiscoveryConnectionRequest (emptyConnection (storedRef $ idData self) ref) { dconnIceSession = Just rinfo }
                         case res of
                             Right _ -> return ()
                             Left err -> putStrLn $ "Discovery: failed to send connection request: " ++ err
 
-                    svcModifyGlobal $ M.insert (refDigest ref) $
-                        DiscoveryPeer 0 Nothing Nothing (Just ice)
+                    runAsService $ do
+                        svcModifyGlobal $ M.insert (refDigest ref) DiscoveryPeer
+                            { dpPriority = 0
+                            , dpPeer = Nothing
+                            , dpAddress = []
+                            , dpIceSession = Just ice
+                            }
 #else
                     return ()
 #endif
-               else do
-                    case words (T.unpack addr) of
-                        [ipaddr, port] -> do
-                            saddr <- liftIO $ head <$>
-                                getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just ipaddr) (Just port)
-                            peer <- liftIO $ serverPeer server (addrAddress saddr)
-                            svcModifyGlobal $ M.insert (refDigest ref) DiscoveryPeer
-                                { dpPriority = 0
-                                , dpPeer = Just peer
-                                , dpAddress = Nothing
-#ifdef ENABLE_ICE_SUPPORT
-                                , dpIceSession = Nothing
-#endif
-                                }
 
-                        _ -> svcPrint $ "Discovery: invalid address in result: " ++ T.unpack addr
+                | [ ipaddr, port ] <- words (T.unpack addr) -> do
+                    saddr <- head <$>
+                        getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just ipaddr) (Just port)
+                    peer <- serverPeer server (addrAddress saddr)
+                    runAsService $ do
+                        svcModifyGlobal $ M.insert (refDigest ref) DiscoveryPeer
+                            { dpPriority = 0
+                            , dpPeer = Just peer
+                            , dpAddress = []
+#ifdef ENABLE_ICE_SUPPORT
+                            , dpIceSession = Nothing
+#endif
+                        }
+
+                | otherwise -> do
+                    runAsService $ do
+                        svcPrint $ "Discovery: invalid address in result: " ++ T.unpack addr
 
         DiscoveryConnectionRequest conn -> do
 #ifdef ENABLE_ICE_SUPPORT
@@ -222,7 +222,7 @@ instance Service DiscoveryService where
                     mbdp <- M.lookup (refDigest $ dconnTarget conn) <$> svcGetGlobal
                     case mbdp of
                         Nothing -> replyPacket $ DiscoveryConnectionResponse rconn
-                        Just dp | Just addr <- dpAddress dp -> do
+                        Just dp | addr : _ <- dpAddress dp -> do
                                     replyPacket $ DiscoveryConnectionResponse rconn { dconnAddress = Just addr }
                                 | Just dpeer <- dpPeer dp -> do
                                     sendToPeer dpeer $ DiscoveryConnectionRequest conn
@@ -245,7 +245,7 @@ instance Service DiscoveryService where
                                 getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just ipaddr) (Just port)
                             peer <- liftIO $ serverPeer server (addrAddress saddr)
                             svcModifyGlobal $ M.insert (refDigest $ dconnTarget conn) $
-                                DiscoveryPeer 0 (Just peer) Nothing Nothing
+                                DiscoveryPeer 0 (Just peer) [] Nothing
 
                         | Just dp <- M.lookup (refDigest $ dconnTarget conn) dpeers
                         , Just ice <- dpIceSession dp
@@ -262,3 +262,14 @@ instance Service DiscoveryService where
 #else
             return ()
 #endif
+
+    serviceNewPeer = do
+        server <- asks svcServer
+        peer <- asks svcPeer
+
+        let addrToText saddr = do
+                ( addr, port ) <- IP.fromSockAddr saddr
+                Just $ T.pack $ show addr <> " " <> show port
+        addrs <- catMaybes . map addrToText <$> liftIO (getServerAddresses server)
+
+        sendToPeer peer $ DiscoverySelf addrs Nothing
