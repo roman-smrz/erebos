@@ -1,0 +1,75 @@
+module discovery
+
+test ManualDiscovery:
+	let services = "discovery,test"
+	let refpat = /blake2#[0-9a-f]*/
+
+	subnet sd
+	subnet s1
+	subnet s2
+
+	spawn as pd on sd
+	spawn as p1 on s1
+	spawn as p2 on s2
+	send "create-identity Discovery" to pd
+	send "create-identity Device1 Owner1" to p1
+	send "create-identity Device2 Owner2" to p2
+
+	expect /create-identity-done ref ($refpat).*/ from p1 capture p1id
+	send "identity-info $p1id" to p1
+	expect /identity-info ref $p1id base ($refpat) owner ($refpat).*/ from p1 capture p1base, p1owner
+	send "identity-info $p1owner" to p1
+	expect /identity-info ref $p1owner base ($refpat).*/ from p1 capture p1obase
+
+	expect /create-identity-done ref $refpat.*/ from p2
+	expect /create-identity-done ref $refpat.*/ from pd
+
+	# TODO: avoid the need to send identity objects with weak refs
+	for p in [ p1, p2 ]:
+		with p:
+			send "start-server services $services"
+	send "peer-add ${p2.node.ip}" to p1
+	expect from p1:
+		/peer 1 addr ${p2.node.ip} 29665/
+		/peer 1 id Device2 Owner2/
+	expect from p2:
+		/peer 1 addr ${p1.node.ip} 29665/
+		/peer 1 id Device1 Owner1/
+	for r in [ p1base, p1obase ]:
+		with p1:
+			send "test-message-send 1 $r"
+			expect /test-message-send done/
+		with p2:
+			expect /test-message-received rec [0-9]+ $r/
+	for p in [ p1, p2 ]:
+		send "stop-server" to p
+		expect /stop-server-done/ from p
+
+	# Test discovery using owner and device identities:
+	for id in [ p1obase, p1base ]:
+		for p in [ pd, p1, p2 ]:
+			send "start-server services $services" to p
+
+		for p in [ p1, p2 ]:
+			with p:
+				send "peer-add ${pd.node.ip}"
+				expect:
+					/peer 1 addr ${pd.node.ip} 29665/
+					/peer 1 id Discovery/
+			expect from pd:
+					/peer [12] addr ${p.node.ip} 29665/
+					/peer [12] id .*/
+
+		send "discovery-connect $id" to p2
+
+		expect from p1:
+			/peer [0-9]+ addr ${p2.node.ip} 29665/
+			/peer [0-9]+ id Device2 Owner2/
+		expect from p2:
+			/peer [0-9]+ addr ${p1.node.ip} 29665/
+			/peer [0-9]+ id Device1 Owner1/
+
+		for p in [ pd, p1, p2 ]:
+			send "stop-server" to p
+		for p in [ pd, p1, p2 ]:
+			expect /stop-server-done/ from p
