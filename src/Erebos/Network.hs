@@ -984,9 +984,15 @@ joinMulticast sock =
     withFdSocket sock $ \fd ->
     alloca $ \pcount -> do
         ptr <- cJoinMulticast fd pcount
-        count <- fromIntegral <$> peek pcount
-        forM [ 0 .. count - 1 ] $ \i ->
-            peekElemOff ptr i
+        if ptr == nullPtr
+          then do
+            return []
+          else do
+            count <- fromIntegral <$> peek pcount
+            res <- forM [ 0 .. count - 1 ] $ \i ->
+                peekElemOff ptr i
+            cFree ptr
+            return res
 
 getServerAddresses :: Server -> IO [ SockAddr ]
 getServerAddresses Server {..} = do
