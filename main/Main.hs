@@ -31,7 +31,6 @@ import Data.Typeable
 import Network.Socket
 
 import System.Console.GetOpt
-import System.Console.Haskeline
 import System.Environment
 import System.Exit
 import System.IO
@@ -57,6 +56,7 @@ import Erebos.Storage
 import Erebos.Storage.Merge
 import Erebos.Sync
 
+import Terminal
 import Test
 import Version
 
@@ -243,22 +243,20 @@ main = do
             exitFailure
 
 
-inputSettings :: Settings IO
-inputSettings = setComplete commandCompletion $ defaultSettings
-
 interactiveLoop :: Storage -> Options -> IO ()
-interactiveLoop st opts = runInputT inputSettings $ do
+interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
     erebosHead <- liftIO $ loadLocalStateHead st
-    outputStrLn $ T.unpack $ displayIdentity $ headLocalIdentity erebosHead
+    void $ printLine term $ T.unpack $ displayIdentity $ headLocalIdentity erebosHead
 
-    tui <- haveTerminalUI
-    extPrint <- getExternalPrint
+    let tui = hasTerminalUI term
+    let extPrint = void . printLine term
     let extPrintLn str = do
             let str' = case reverse str of ('\n':_) -> str
                                            _ -> str ++ "\n";
             extPrint $! str' -- evaluate str before calling extPrint to avoid blinking
 
-    let getInputLinesTui eprompt = do
+    let getInputLinesTui :: Either CommandState String -> MaybeT IO String
+        getInputLinesTui eprompt = do
             prompt <- case eprompt of
                 Left cstate -> do
                     pname <- case csContext cstate of
@@ -272,11 +270,14 @@ interactiveLoop st opts = runInputT inputSettings $ do
                         SelectedConversation conv -> return $ T.unpack $ conversationName conv
                     return $ pname ++ "> "
                 Right prompt -> return prompt
-            Just input <- lift $ getInputLine prompt
-            case reverse input of
-                 _ | all isSpace input -> getInputLinesTui eprompt
-                 '\\':rest -> (reverse ('\n':rest) ++) <$> getInputLinesTui (Right ">> ")
-                 _         -> return input
+            lift $ setPrompt term prompt
+            join $ lift $ getInputLine term $ \case
+                Just input@('/' : _) -> KeepPrompt $ return input
+                Just input -> ErasePrompt $ case reverse input of
+                    _ | all isSpace input -> getInputLinesTui eprompt
+                    '\\':rest -> (reverse ('\n':rest) ++) <$> getInputLinesTui (Right ">> ")
+                    _         -> return input
+                Nothing -> KeepPrompt mzero
 
         getInputCommandTui cstate = do
             input <- getInputLinesTui cstate
@@ -289,7 +290,7 @@ interactiveLoop st opts = runInputT inputSettings $ do
             return (cmd, line)
 
         getInputLinesPipe = do
-            lift (getInputLine "") >>= \case
+            join $ lift $ getInputLine term $ KeepPrompt . \case
                 Just input -> return input
                 Nothing -> liftIO $ forever $ threadDelay 100000000
 
@@ -350,12 +351,12 @@ interactiveLoop st opts = runInputT inputSettings $ do
                 when (Just shown /= op) $ extPrintLn $ "[" <> show idx <> "] PEER " <> updateType' <> " " <> shown
             _ -> return ()
 
-    let process :: CommandState -> MaybeT (InputT IO) CommandState
+    let process :: CommandState -> MaybeT IO CommandState
         process cstate = do
             (cmd, line) <- getInputCommand cstate
             h <- liftIO (reloadHead $ csHead cstate) >>= \case
                 Just h  -> return h
-                Nothing -> do lift $ lift $ extPrintLn "current head deleted"
+                Nothing -> do lift $ extPrintLn "current head deleted"
                               mzero
             res <- liftIO $ runExceptT $ flip execStateT cstate { csHead = h } $ runReaderT cmd CommandInput
                 { ciServer = server
@@ -375,7 +376,7 @@ interactiveLoop st opts = runInputT inputSettings $ do
                     | csQuit cstate' -> mzero
                     | otherwise      -> return cstate'
                 Left err -> do
-                    lift $ lift $ extPrintLn $ "Error: " ++ err
+                    lift $ extPrintLn $ "Error: " ++ err
                     return cstate
 
     let loop (Just cstate) = runMaybeT (process cstate) >>= loop

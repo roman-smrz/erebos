@@ -184,6 +184,7 @@ executable erebos
     main-is:             Main.hs
     other-modules:
         Paths_erebos
+        Terminal
         Test
         Test.Service
         Version
@@ -192,14 +193,15 @@ executable erebos
         Paths_erebos
 
     build-depends:
+        ansi-terminal ^>= { 1.1.2 },
         bytestring,
         crypton,
         directory,
         erebos,
-        haskeline >=0.7 && <0.9,
         mtl,
         network,
         process >=1.6 && <1.7,
+        stm,
         template-haskell ^>= { 2.17, 2.18, 2.19, 2.20, 2.21, 2.22 },
         text,
         time,
