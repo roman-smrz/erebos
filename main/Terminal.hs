@@ -9,6 +9,9 @@ module Terminal (
     TerminalLine,
     printLine,
 
+    printBottomLines,
+    clearBottomLines,
+
     CompletionFunc, Completion,
     simpleCompletion,
     completeWordWithPrev,
@@ -32,6 +35,7 @@ data Terminal = Terminal
     , termPrompt :: TVar String
     , termShowPrompt :: TVar Bool
     , termInput :: TVar ( String, String )
+    , termBottomLines :: TVar [ String ]
     }
 
 data TerminalLine = TerminalLine
@@ -67,6 +71,7 @@ initTerminal = do
     termPrompt <- newTVarIO ""
     termShowPrompt <- newTVarIO False
     termInput <- newTVarIO ( "", "" )
+    termBottomLines <- newTVarIO []
     return Terminal {..}
 
 bracketSet :: IO a -> (a -> IO b) -> a -> IO c -> IO c
@@ -225,9 +230,58 @@ printLine tlTerminal@Terminal {..} str = do
             readTVar termShowPrompt >>= \case
                 True -> getCurrentPromptLine tlTerminal
                 False -> return ""
-        putStr $ "\r\ESC[K" <> str <> "\n" <> promptLine
+        putStr $ "\r\ESC[K" <> str <> "\n\ESC[K" <> promptLine
+        drawBottomLines tlTerminal
         hFlush stdout
         return TerminalLine {..}
+
+
+printBottomLines :: Terminal -> String -> IO ()
+printBottomLines term@Terminal {..} str = do
+    case lines str of
+        [] -> clearBottomLines term
+        blines -> do
+            withMVar termLock $ \_ -> do
+                atomically $ writeTVar termBottomLines blines
+                drawBottomLines term
+                hFlush stdout
+
+clearBottomLines :: Terminal -> IO ()
+clearBottomLines Terminal {..} = do
+    withMVar termLock $ \_ -> do
+        atomically (readTVar termBottomLines) >>= \case
+            []  -> return ()
+            _:_ -> do
+                atomically $ writeTVar termBottomLines []
+                putStr $ "\ESC[s\n\ESC[J\ESC[u"
+                hFlush stdout
+
+drawBottomLines :: Terminal -> IO ()
+drawBottomLines Terminal {..} = do
+    atomically (readTVar termBottomLines) >>= \case
+        blines@( firstLine : otherLines ) -> do
+            ( shift ) <- atomically $ do
+                readTVar termShowPrompt >>= \case
+                    True -> do
+                        prompt <- readTVar termPrompt
+                        ( pre, _ ) <- readTVar termInput
+                        return (displayWidth (prompt <> pre) + 1)
+                    False -> do
+                        return 0
+            putStr $ concat
+                [ "\n\ESC[J", firstLine, concat (map ('\n' :) otherLines)
+                , "\ESC[", show (length blines), "F"
+                , "\ESC[", show shift, "G"
+                ]
+        [] -> return ()
+
+
+displayWidth :: String -> Int
+displayWidth = \case
+    ('\ESC' : '[' : rest) -> displayWidth $ drop 1 $ dropWhile (not . isAlpha) rest
+    ('\ESC' : _ : rest) -> displayWidth rest
+    (_ : rest) -> 1 + displayWidth rest
+    [] -> 0
 
 
 type CompletionFunc m = ( String, String ) -> m ( String, [ Completion ] )
