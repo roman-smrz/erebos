@@ -6,6 +6,7 @@ module Erebos.Network (
     stopServer,
     getCurrentPeerList,
     getNextPeerChange,
+    getServerAddresses,
     ServerOptions(..), serverIdentity, defaultServerOptions,
 
     Peer, peerServer, peerStorage,
@@ -46,16 +47,16 @@ import Data.Maybe
 import Data.Typeable
 import Data.Word
 
+import Foreign.C.Types
+import Foreign.Marshal.Alloc
+import Foreign.Marshal.Array
 import Foreign.Ptr
-import Foreign.Storable
+import Foreign.Storable as F
 
 import GHC.Conc.Sync (unsafeIOToSTM)
 
 import Network.Socket hiding (ControlMessage)
 import qualified Network.Socket.ByteString as S
-
-import Foreign.C.Types
-import Foreign.Marshal.Alloc
 
 #ifdef ENABLE_ICE_SUPPORT
 import Erebos.ICE
@@ -84,6 +85,7 @@ announceIntervalSeconds = 60
 
 data Server = Server
     { serverStorage :: Storage
+    , serverOptions :: ServerOptions
     , serverOrigHead :: Head LocalState
     , serverIdentity_ :: MVar UnifiedIdentity
     , serverThreads :: MVar [ThreadId]
@@ -230,7 +232,7 @@ forkServerThread server act = do
         return (t:ts)
 
 startServer :: ServerOptions -> Head LocalState -> (String -> IO ()) -> [SomeService] -> IO Server
-startServer opt serverOrigHead logd' serverServices = do
+startServer serverOptions serverOrigHead logd' serverServices = do
     let serverStorage = headStorage serverOrigHead
     serverIdentity_ <- newMVar $ headLocalIdentity serverOrigHead
     serverThreads <- newMVar []
@@ -266,7 +268,7 @@ startServer opt serverOrigHead logd' serverServices = do
             return sock
 
         loop sock = do
-            when (serverLocalDiscovery opt) $ forkServerThread server $ do
+            when (serverLocalDiscovery serverOptions) $ forkServerThread server $ do
                 announceAddreses <- fmap concat $ sequence $
                     [ map (SockAddrInet6 discoveryPort 0 discoveryMulticastGroup) <$> joinMulticast sock
                     , getBroadcastAddresses discoveryPort
@@ -378,7 +380,7 @@ startServer opt serverOrigHead logd' serverServices = do
               , addrFamily = AF_INET6
               , addrSocketType = Datagram
               }
-        addr:_ <- getAddrInfo (Just hints) Nothing (Just $ show $ serverPort opt)
+        addr:_ <- getAddrInfo (Just hints) Nothing (Just $ show $ serverPort serverOptions)
         bracket (open addr) close loop
 
     forkServerThread server $ forever $ do
@@ -955,17 +957,56 @@ runPeerServiceOn mbservice peer handler = liftIO $ do
 
 
 foreign import ccall unsafe "Network/ifaddrs.h join_multicast" cJoinMulticast :: CInt -> Ptr CSize -> IO (Ptr Word32)
+foreign import ccall unsafe "Network/ifaddrs.h local_addresses" cLocalAddresses :: Ptr CSize -> IO (Ptr InetAddress)
 foreign import ccall unsafe "Network/ifaddrs.h broadcast_addresses" cBroadcastAddresses :: IO (Ptr Word32)
-foreign import ccall unsafe "stdlib.h free" cFree :: Ptr Word32 -> IO ()
+foreign import ccall unsafe "stdlib.h free" cFree :: Ptr a -> IO ()
+
+data InetAddress = InetAddress { fromInetAddress :: IP.IP }
+
+instance F.Storable InetAddress where
+    sizeOf _ = sizeOf (undefined :: CInt) + 16
+    alignment _ = 8
+
+    peek ptr = (unpackFamily <$> peekByteOff ptr 0) >>= \case
+        AF_INET -> InetAddress . IP.IPv4 . IP.fromHostAddress <$> peekByteOff ptr (sizeOf (undefined :: CInt))
+        AF_INET6 -> InetAddress . IP.IPv6 . IP.toIPv6b . map fromIntegral <$> peekArray 16 (ptr `plusPtr` sizeOf (undefined :: CInt) :: Ptr Word8)
+        _ -> fail "InetAddress: unknown family"
+
+    poke ptr (InetAddress addr) = case addr of
+        IP.IPv4 ip -> do
+            pokeByteOff ptr 0 (packFamily AF_INET)
+            pokeByteOff ptr (sizeOf (undefined :: CInt)) (IP.toHostAddress ip)
+        IP.IPv6 ip -> do
+            pokeByteOff ptr 0 (packFamily AF_INET6)
+            pokeArray (ptr `plusPtr` sizeOf (undefined :: CInt) :: Ptr Word8) (map fromIntegral $ IP.fromIPv6b ip)
 
 joinMulticast :: Socket -> IO [ Word32 ]
 joinMulticast sock =
     withFdSocket sock $ \fd ->
     alloca $ \pcount -> do
         ptr <- cJoinMulticast fd pcount
-        count <- fromIntegral <$> peek pcount
-        forM [ 0 .. count - 1 ] $ \i ->
-            peekElemOff ptr i
+        if ptr == nullPtr
+          then do
+            return []
+          else do
+            count <- fromIntegral <$> peek pcount
+            res <- forM [ 0 .. count - 1 ] $ \i ->
+                peekElemOff ptr i
+            cFree ptr
+            return res
+
+getServerAddresses :: Server -> IO [ SockAddr ]
+getServerAddresses Server {..} = do
+    alloca $ \pcount -> do
+        ptr <- cLocalAddresses pcount
+        if ptr == nullPtr
+          then do
+            return []
+          else do
+            count <- fromIntegral <$> peek pcount
+            res <- peekArray count ptr
+            cFree ptr
+            return $ map (IP.toSockAddr . (, serverPort serverOptions ) . fromInetAddress) res
 
 getBroadcastAddresses :: PortNumber -> IO [SockAddr]
 getBroadcastAddresses port = do

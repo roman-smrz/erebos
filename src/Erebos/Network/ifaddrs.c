@@ -9,6 +9,7 @@
 #ifndef _WIN32
 #include <arpa/inet.h>
 #include <net/if.h>
+#include <netinet/in.h>
 #include <ifaddrs.h>
 #include <endian.h>
 #include <sys/types.h>
@@ -85,7 +86,72 @@ uint32_t * join_multicast(int fd, size_t * count)
 	return interfaces;
 }
 
+static bool copy_local_address( struct InetAddress * dst, const struct sockaddr * src )
+{
+	int family = src->sa_family;
+
+	if( family == AF_INET ){
+		struct in_addr * addr = & (( struct sockaddr_in * ) src)->sin_addr;
+		if (! ((ntohl( addr->s_addr ) & 0xff000000) == 0x7f000000) && // loopback
+				! ((ntohl( addr->s_addr ) & 0xffff0000) == 0xa9fe0000) // link-local
+		   ){
+			dst->family = family;
+			memcpy( & dst->addr, addr, sizeof( * addr ));
+			return true;
+		}
+	}
+
+	if( family == AF_INET6 ){
+		struct in6_addr * addr = & (( struct sockaddr_in6 * ) src)->sin6_addr;
+		if (! IN6_IS_ADDR_LOOPBACK( addr ) &&
+				! IN6_IS_ADDR_LINKLOCAL( addr )
+		   ){
+			dst->family = family;
+			memcpy( & dst->addr, addr, sizeof( * addr ));
+			return true;
+		}
+	}
+
+	return false;
+}
+
 #ifndef _WIN32
+
+struct InetAddress * local_addresses( size_t * count )
+{
+	struct ifaddrs * addrs;
+	if( getifaddrs( &addrs ) < 0 )
+		return 0;
+
+	* count = 0;
+	size_t capacity = 16;
+	struct InetAddress * ret = malloc( sizeof(* ret) * capacity );
+
+	for( struct ifaddrs * ifa = addrs; ifa; ifa = ifa->ifa_next ){
+		if ( ifa->ifa_addr ){
+			int family = ifa->ifa_addr->sa_family;
+			if( family == AF_INET || family == AF_INET6 ){
+				if( (* count) >= capacity ){
+					capacity *= 2;
+					struct InetAddress * nret = realloc( ret, sizeof(* ret) * capacity );
+					if (nret) {
+						ret = nret;
+					} else {
+						free( ret );
+						freeifaddrs( addrs );
+						return 0;
+					}
+				}
+
+				if( copy_local_address( & ret[ * count ], ifa->ifa_addr ))
+					(* count)++;
+			}
+		}
+	}
+
+	freeifaddrs(addrs);
+	return ret;
+}
 
 uint32_t * broadcast_addresses(void)
 {
@@ -106,6 +172,7 @@ uint32_t * broadcast_addresses(void)
 					ret = nret;
 				} else {
 					free(ret);
+					freeifaddrs(addrs);
 					return 0;
 				}
 			}
@@ -124,8 +191,51 @@ uint32_t * broadcast_addresses(void)
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <iptypes.h>
+#include <iphlpapi.h>
 
 #pragma comment(lib, "ws2_32.lib")
+
+struct InetAddress * local_addresses( size_t * count )
+{
+	* count = 0;
+	struct InetAddress * ret = NULL;
+
+	ULONG bufsize = 15000;
+	IP_ADAPTER_ADDRESSES * buf = NULL;
+
+	DWORD rv = 0;
+
+	do {
+		buf = realloc( buf, bufsize );
+		rv = GetAdaptersAddresses( AF_UNSPEC, 0, NULL, buf, & bufsize );
+
+		if( rv == ERROR_BUFFER_OVERFLOW )
+			continue;
+	} while (0);
+
+	if( rv == NO_ERROR ){
+		size_t capacity = 16;
+		ret = malloc( sizeof( * ret ) * capacity );
+
+		for( IP_ADAPTER_ADDRESSES * cur = (IP_ADAPTER_ADDRESSES *) buf;
+				cur && (* count) < capacity;
+				cur = cur->Next ){
+
+			for( IP_ADAPTER_UNICAST_ADDRESS * curAddr = cur->FirstUnicastAddress;
+					curAddr && (* count) < capacity;
+					curAddr = curAddr->Next ){
+
+				if( copy_local_address( & ret[ * count ], curAddr->Address.lpSockaddr ))
+					(* count)++;
+			}
+		}
+	}
+
+cleanup:
+	free( buf );
+	return ret;
+}
 
 uint32_t * broadcast_addresses(void)
 {
