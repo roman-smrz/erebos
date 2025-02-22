@@ -4,9 +4,11 @@
 module Erebos.ICE (
     IceSession,
     IceSessionRole(..),
+    IceConfig,
     IceRemoteInfo,
 
-    iceCreate,
+    iceCreateConfig,
+    iceCreateSession,
     iceDestroy,
     iceRemoteInfo,
     iceShow,
@@ -23,17 +25,19 @@ import Control.Monad.Except
 import Control.Monad.Identity
 
 import Data.ByteString (ByteString, packCStringLen, useAsCString)
-import qualified Data.ByteString.Lazy.Char8 as BLC
+import Data.ByteString.Lazy.Char8 qualified as BLC
 import Data.ByteString.Unsafe
 import Data.Function
 import Data.Text (Text)
-import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
-import qualified Data.Text.Read as T
+import Data.Text qualified as T
+import Data.Text.Encoding qualified as T
+import Data.Text.Read qualified as T
 import Data.Void
+import Data.Word
 
 import Foreign.C.String
 import Foreign.C.Types
+import Foreign.ForeignPtr
 import Foreign.Marshal.Alloc
 import Foreign.Marshal.Array
 import Foreign.Ptr
@@ -46,6 +50,7 @@ import Erebos.Storage
 
 data IceSession = IceSession
     { isStrans :: PjIceStrans
+    , _isConfig :: IceConfig
     , isChan :: MVar (Either [ByteString] (Flow Void ByteString))
     }
 
@@ -116,14 +121,34 @@ instance StorableText IceCandidate where
 
 {#enum pj_ice_sess_role as IceSessionRole {underscoreToCase} deriving (Show, Eq) #}
 
+data PjIceStransCfg
+newtype IceConfig = IceConfig (ForeignPtr PjIceStransCfg)
+
+foreign import ccall unsafe "pjproject.h &ice_cfg_free"
+    ice_cfg_free :: FunPtr (Ptr PjIceStransCfg -> IO ())
+foreign import ccall unsafe "pjproject.h ice_cfg_create"
+    ice_cfg_create :: CString -> Word16 -> CString -> Word16 -> IO (Ptr PjIceStransCfg)
+
+iceCreateConfig :: Maybe ( Text, Word16 ) -> Maybe ( Text, Word16 ) -> IO (Maybe IceConfig)
+iceCreateConfig stun turn =
+    maybe ($ nullPtr) (withText . fst) stun $ \cstun ->
+    maybe ($ nullPtr) (withText . fst) turn $ \cturn -> do
+        cfg <- ice_cfg_create cstun (maybe 0 snd stun) cturn (maybe 0 snd turn)
+        if cfg == nullPtr
+          then return Nothing
+          else Just . IceConfig <$> newForeignPtr ice_cfg_free cfg
+
 {#pointer *pj_ice_strans as ^ #}
 
-iceCreate :: IceSessionRole -> (IceSession -> IO ()) -> IO IceSession
-iceCreate role cb = do
+iceCreateSession :: IceConfig -> IceSessionRole -> (IceSession -> IO ()) -> IO IceSession
+iceCreateSession icfg@(IceConfig fcfg) role cb = do
     rec sptr <- newStablePtr sess
         cbptr <- newStablePtr $ cb sess
         sess <- IceSession
-            <$> {#call ice_create #} (fromIntegral $ fromEnum role) (castStablePtrToPtr sptr) (castStablePtrToPtr cbptr)
+            <$> (withForeignPtr fcfg $ \cfg ->
+                    {#call ice_create #} (castPtr cfg) (fromIntegral $ fromEnum role) (castStablePtrToPtr sptr) (castStablePtrToPtr cbptr)
+                )
+            <*> pure icfg
             <*> (newMVar $ Left [])
     return $ sess
 
