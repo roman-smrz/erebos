@@ -216,8 +216,11 @@ target device with `/<number>`.
 Storage
 -------
 
-Data are by default stored within `.erebos` subdirectory of the current working
-directory. This can be overriden by `EREBOS_DIR` environment variable.
+Data are by default stored under `XDG_DATA_HOME`, typically
+`$HOME/.local/share/erebos`, unless there is an erebos storage already
+in `.erebos` subdirectory of the current working directory, in which case the
+latter one in used instead. This can be overriden by `EREBOS_DIR` environment
+variable.
 
 Private keys are currently stored in plaintext under the `keys` subdirectory of
 the erebos directory.

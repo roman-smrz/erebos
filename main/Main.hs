@@ -31,6 +31,7 @@ import Data.Typeable
 import Network.Socket
 
 import System.Console.GetOpt
+import System.Directory
 import System.Environment
 import System.Exit
 import System.IO
@@ -152,6 +153,14 @@ servicesOptions = concatMap helper $ "all" : map soptName availableServices
         | otherwise =   s : change name f ss
     change _ _ []   = []
 
+getDefaultStorageDir :: IO FilePath
+getDefaultStorageDir = do
+    lookupEnv "EREBOS_DIR" >>= \case
+        Just dir -> return dir
+        Nothing -> doesFileExist "./.erebos/erebos-storage" >>= \case
+            True -> return "./.erebos"
+            False -> getXdgDirectory XdgData "erebos"
+
 main :: IO ()
 main = do
     (opts, args) <- (getOpt RequireOrder (options ++ servicesOptions) <$> getArgs) >>= \case
@@ -163,7 +172,7 @@ main = do
             exitFailure
 
     st <- liftIO $ case optStorage opts of
-        DefaultStorage         -> openStorage . fromMaybe "./.erebos" =<< lookupEnv "EREBOS_DIR"
+        DefaultStorage         -> openStorage =<< getDefaultStorageDir
         FilesystemStorage path -> openStorage path
         MemoryStorage          -> memoryStorage
 
