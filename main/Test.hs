@@ -287,6 +287,7 @@ commands = map (T.pack *** id)
     , ("dm-list-peer", cmdDmListPeer)
     , ("dm-list-contact", cmdDmListContact)
     , ("chatroom-create", cmdChatroomCreate)
+    , ("chatroom-delete", cmdChatroomDelete)
     , ("chatroom-list-local", cmdChatroomListLocal)
     , ("chatroom-watch-local", cmdChatroomWatchLocal)
     , ("chatroom-set-name", cmdChatroomSetName)
@@ -763,6 +764,13 @@ cmdChatroomCreate = do
     [name] <- asks tiParams
     room <- createChatroom (Just name) Nothing
     cmdOut $ unwords $ "chatroom-create-done" : chatroomInfo room
+
+cmdChatroomDelete :: Command
+cmdChatroomDelete = do
+    [ cid ] <- asks tiParams
+    sdata <- getChatroomStateData cid
+    deleteChatroomByStateData sdata
+    cmdOut $ unwords [ "chatroom-delete-done", T.unpack cid ]
 
 getChatroomStateData :: Text -> CommandM (Stored ChatroomStateData)
 getChatroomStateData tref = do

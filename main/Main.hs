@@ -501,6 +501,7 @@ commands =
     , ("peer-add-public", cmdPeerAddPublic)
     , ("peer-drop", cmdPeerDrop)
     , ("send", cmdSend)
+    , ("delete", cmdDelete)
     , ("update-identity", cmdUpdateIdentity)
     , ("attach", cmdAttach)
     , ("attach-accept", cmdAttachAccept)
@@ -632,6 +633,11 @@ cmdSend = void $ do
             liftIO $ putStrLn $ formatMessage tzone msg
         Nothing -> return ()
 
+cmdDelete :: Command
+cmdDelete = void $ do
+    deleteConversation =<< getSelectedConversation
+    modify $ \s -> s { csContext = NoContext }
+
 cmdHistory :: Command
 cmdHistory = void $ do
     conv <- getSelectedConversation
@@ -678,7 +684,7 @@ watchChatroomsForCli eprint h chatroomSetVar contextVar autoSubscribe = do
 
     watchChatrooms h $ \set -> \case
         Nothing -> do
-            let chatroomList = fromSetBy (comparing roomStateData) set
+            let chatroomList = filter (not . roomStateDeleted) $ fromSetBy (comparing roomStateData) set
                 (subscribed, notSubscribed) = partition roomStateSubscribe chatroomList
                 subscribedNum = length subscribed
 
@@ -738,7 +744,7 @@ cmdChatrooms :: Command
 cmdChatrooms = do
     ensureWatchedChatrooms
     chatroomSetVar <- asks ciChatroomSetVar
-    chatroomList <- fromSetBy (comparing roomStateData) <$> liftIO (readMVar chatroomSetVar)
+    chatroomList <- filter (not . roomStateDeleted) . fromSetBy (comparing roomStateData) <$> liftIO (readMVar chatroomSetVar)
     set <- asks ciSetContextOptions
     set $ map SelectedChatroom chatroomList
     forM_ (zip [1..] chatroomList) $ \(i :: Int, rstate) -> do

@@ -18,6 +18,7 @@ module Erebos.Conversation (
     conversationHistory,
 
     sendMessage,
+    deleteConversation,
 ) where
 
 import Control.Monad.Except
@@ -103,3 +104,7 @@ conversationHistory (ChatroomConversation rstate) = map (\msg -> ChatroomMessage
 sendMessage :: (MonadHead LocalState m, MonadError String m) => Conversation -> Text -> m (Maybe Message)
 sendMessage (DirectMessageConversation thread) text = fmap Just $ DirectMessageMessage <$> (fromStored <$> sendDirectMessage (msgPeer thread) text) <*> pure False
 sendMessage (ChatroomConversation rstate) text = sendChatroomMessage rstate text >> return Nothing
+
+deleteConversation :: (MonadHead LocalState m, MonadError String m) => Conversation -> m ()
+deleteConversation (DirectMessageConversation _) = throwError "deleting direct message conversation is not supported"
+deleteConversation (ChatroomConversation rstate) = deleteChatroomByStateData (head $ roomStateData rstate)

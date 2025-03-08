@@ -137,6 +137,13 @@ are signed, so message author can not be forged.
 : Leave the chatroom. User will no longer be listed as a member and erebos tool
   will no longer collect message of this chatroom.
 
+`/delete`
+: Delete the chatroom; this action is only synchronized with devices belonging
+to the current user and does not affect the chatroom state for others. Due to
+the storage design, the chatroom data will not be purged from the local state
+history, but the chatroom will no longer be listed as available and no futher
+updates for this chatroom will be collected or shared with other peers.
+
 ### Add contacts
 
 To ensure the identity of the contact and prevent man-in-the-middle attack,
