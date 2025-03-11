@@ -58,6 +58,7 @@ import GHC.Conc.Sync (unsafeIOToSTM)
 import Network.Socket hiding (ControlMessage)
 import qualified Network.Socket.ByteString as S
 
+import Erebos.Error
 #ifdef ENABLE_ICE_SUPPORT
 import Erebos.ICE
 #endif
@@ -93,7 +94,7 @@ data Server = Server
     , serverRawPath :: SymFlow (PeerAddress, BC.ByteString)
     , serverControlFlow :: Flow (ControlMessage PeerAddress) (ControlRequest PeerAddress)
     , serverDataResponse :: TQueue (Peer, Maybe PartialRef)
-    , serverIOActions :: TQueue (ExceptT String IO ())
+    , serverIOActions :: TQueue (ExceptT ErebosError IO ())
     , serverServices :: [SomeService]
     , serverServiceStates :: TMVar (M.Map ServiceID SomeServiceGlobalState)
     , serverPeers :: MVar (Map PeerAddress Peer)
@@ -189,8 +190,8 @@ instance Ord PeerAddress where
 #endif
 
 
-data PeerIdentity = PeerIdentityUnknown (TVar [UnifiedIdentity -> ExceptT String IO ()])
-                  | PeerIdentityRef WaitingRef (TVar [UnifiedIdentity -> ExceptT String IO ()])
+data PeerIdentity = PeerIdentityUnknown (TVar [UnifiedIdentity -> ExceptT ErebosError IO ()])
+                  | PeerIdentityRef WaitingRef (TVar [UnifiedIdentity -> ExceptT ErebosError IO ()])
                   | PeerIdentityFull UnifiedIdentity
 
 peerIdentity :: MonadIO m => Peer -> m PeerIdentity
@@ -255,7 +256,7 @@ startServer serverOptions serverOrigHead logd' serverServices = do
 
     forkServerThread server $ dataResponseWorker server
     forkServerThread server $ forever $ do
-        either (atomically . logd) return =<< runExceptT =<<
+        either (atomically . logd . showErebosError) return =<< runExceptT =<<
             atomically (readTQueue serverIOActions)
 
     let open addr = do
@@ -407,7 +408,7 @@ dataResponseWorker server = forever $ do
                           Right ref -> do
                               atomically (writeTVar tvar $ Right ref)
                               forkServerThread server $ runExceptT (wrefAction wr ref) >>= \case
-                                  Left err -> atomically $ writeTQueue (serverErrorLog server) err
+                                  Left err -> atomically $ writeTQueue (serverErrorLog server) (showErebosError err)
                                   Right () -> return ()
 
                               return (Nothing, [])
@@ -586,7 +587,7 @@ handlePacket identity secure peer chanSvc svcs (TransportHeader headers) prefs =
                     liftSTM $ writeTQueue (serverIOActions server) $ void $ liftIO $ forkIO $ do
                         (runExcept <$> readObjectsFromStream (peerInStorage peer) streamReader) >>= \case
                             Left err -> atomically $ writeTQueue (serverErrorLog server) $
-                                "failed to receive object from stream: " <> err
+                                "failed to receive object from stream: " <> showErebosError err
                             Right objs -> do
                                 forM_ objs $ \obj -> do
                                     pref <- storeObject (peerInStorage peer) obj
@@ -668,7 +669,7 @@ handlePacket identity secure peer chanSvc svcs (TransportHeader headers) prefs =
             _ -> return ()
 
 
-withPeerIdentity :: MonadIO m => Peer -> (UnifiedIdentity -> ExceptT String IO ()) -> m ()
+withPeerIdentity :: MonadIO m => Peer -> (UnifiedIdentity -> ExceptT ErebosError IO ()) -> m ()
 withPeerIdentity peer act = liftIO $ atomically $ readTVar (peerIdentityVar peer) >>= \case
     PeerIdentityUnknown tvar -> modifyTVar' tvar (act:)
     PeerIdentityRef _ tvar -> modifyTVar' tvar (act:)
@@ -724,7 +725,7 @@ handleChannelAccept identity accref = do
                         sendToPeerS peer [] $ TransportPacket (TransportHeader [Acknowledged $ refDigest accref]) []
                         finalizedChannel peer ch identity
 
-                Left dgst -> throwError $ "missing accept data " ++ BC.unpack (showRefDigest dgst)
+                Left dgst -> throwOtherError $ "missing accept data " ++ BC.unpack (showRefDigest dgst)
 
 
 finalizedChannel :: Peer -> Channel -> UnifiedIdentity -> STM ()
@@ -882,7 +883,7 @@ sendToPeerS = sendToPeerS' EncryptedOnly
 sendToPeerPlain :: Peer -> [TransportHeaderItem] -> TransportPacket Ref -> STM ()
 sendToPeerPlain = sendToPeerS' PlaintextAllowed
 
-sendToPeerWith :: forall s m. (Service s, MonadIO m, MonadError String m) => Peer -> (ServiceState s -> ExceptT String IO (Maybe s, ServiceState s)) -> m ()
+sendToPeerWith :: forall s m e. (Service s, MonadIO m, MonadError e m, FromErebosError e) => Peer -> (ServiceState s -> ExceptT ErebosError IO (Maybe s, ServiceState s)) -> m ()
 sendToPeerWith peer fobj = do
     let sproxy = Proxy @s
         sid = serviceID sproxy
@@ -897,7 +898,7 @@ sendToPeerWith peer fobj = do
     case res of
          Right (Just obj) -> sendToPeer peer obj
          Right Nothing -> return ()
-         Left err -> throwError err
+         Left err -> throwError $ fromErebosError err
 
 
 lookupService :: forall s. Service s => Proxy s -> [SomeService] -> Maybe (SomeService, ServiceAttributes s)

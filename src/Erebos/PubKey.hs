@@ -11,7 +11,6 @@ module Erebos.PubKey (
 ) where
 
 import Control.Monad
-import Control.Monad.Except
 
 import Crypto.Error
 import qualified Crypto.PubKey.Ed25519 as ED
@@ -70,7 +69,7 @@ instance Storable PublicKey where
     load' = loadRec $ do
         ktype <- loadText "type"
         guard $ ktype == "ed25519"
-        maybe (throwError "Public key decoding failed") (return . PublicKey) .
+        maybe (throwOtherError "public key decoding failed") (return . PublicKey) .
             maybeCryptoError . (ED.publicKey :: ByteString -> CryptoFailable ED.PublicKey) =<<
                 loadBinary "pubkey"
 
@@ -82,7 +81,7 @@ instance Storable Signature where
     load' = loadRec $ Signature
         <$> loadRef "key"
         <*> loadSignature "sig"
-        where loadSignature = maybe (throwError "Signature decoding failed") return .
+        where loadSignature = maybe (throwOtherError "signature decoding failed") return .
                   maybeCryptoError . (ED.signature :: ByteString -> CryptoFailable ED.Signature) <=< loadBinary
 
 instance Storable a => Storable (Signed a) where
@@ -96,7 +95,7 @@ instance Storable a => Storable (Signed a) where
         forM_ sigs $ \sig -> do
             let PublicKey pubkey = fromStored $ sigKey $ fromStored sig
             when (not $ ED.verify pubkey (storedRef sdata) $ sigSignature $ fromStored sig) $
-                throwError "signature verification failed"
+                throwOtherError "signature verification failed"
         return $ Signed sdata sigs
 
 sign :: MonadStorage m => SecretKey -> Stored a -> m (Signed a)
@@ -148,7 +147,7 @@ instance Storable PublicKexKey where
     load' = loadRec $ do
         ktype <- loadText "type"
         guard $ ktype == "x25519"
-        maybe (throwError "public key decoding failed") (return . PublicKexKey) .
+        maybe (throwOtherError "public key decoding failed") (return . PublicKexKey) .
             maybeCryptoError . (CX.publicKey :: ScrubbedBytes -> CryptoFailable CX.PublicKey) =<<
                 loadBinary "pubkey"
 

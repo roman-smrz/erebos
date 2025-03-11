@@ -79,6 +79,7 @@ import qualified Data.UUID as U
 
 import System.IO.Unsafe
 
+import Erebos.Error
 import Erebos.Storage.Internal
 
 
@@ -215,7 +216,7 @@ ioLoadObject ref@(Ref st rhash) = do
         let chash = hashToRefDigest file
         when (chash /= rhash) $ error $ "Hash mismatch on object " ++ BC.unpack (showRef ref) {- TODO throw -}
         return $ case runExcept $ unsafeDeserializeObject st file of
-                      Left err -> error $ err ++ ", ref " ++ BC.unpack (showRef ref) {- TODO throw -}
+                      Left err -> error $ showErebosError err ++ ", ref " ++ BC.unpack (showRef ref) {- TODO throw -}
                       Right (x, rest) | BL.null rest -> x
                                       | otherwise -> error $ "Superfluous content after " ++ BC.unpack (showRef ref) {- TODO throw -}
 
@@ -223,7 +224,7 @@ lazyLoadBytes :: forall c. StorageCompleteness c => Ref' c -> LoadResult c BL.By
 lazyLoadBytes ref | isZeroRef ref = returnLoadResult (return BL.empty :: c BL.ByteString)
 lazyLoadBytes ref = returnLoadResult $ unsafePerformIO $ ioLoadBytes ref
 
-unsafeDeserializeObject :: Storage' c -> BL.ByteString -> Except String (Object' c, BL.ByteString)
+unsafeDeserializeObject :: Storage' c -> BL.ByteString -> Except ErebosError (Object' c, BL.ByteString)
 unsafeDeserializeObject _  bytes | BL.null bytes = return (ZeroObject, bytes)
 unsafeDeserializeObject st bytes =
     case BLC.break (=='\n') bytes of
@@ -232,10 +233,10 @@ unsafeDeserializeObject st bytes =
             guard $ B.length content == len
             (,next) <$> case otype of
                  _ | otype == BC.pack "blob" -> return $ Blob content
-                   | otype == BC.pack "rec" -> maybe (throwError $ "Malformed record item ")
+                   | otype == BC.pack "rec" -> maybe (throwOtherError $ "malformed record item ")
                                                    (return . Rec) $ sequence $ map parseRecLine $ mergeCont [] $ BC.lines content
                    | otherwise -> return $ UnknownObject otype content
-        _ -> throwError $ "Malformed object"
+        _ -> throwOtherError $ "malformed object"
     where splitObjPrefix line = do
               [otype, tlen] <- return $ BLC.words line
               (len, rest) <- BLC.readInt tlen
@@ -270,10 +271,10 @@ unsafeDeserializeObject st bytes =
                           _   -> Nothing
               return (name, val)
 
-deserializeObject :: PartialStorage -> BL.ByteString -> Except String (PartialObject, BL.ByteString)
+deserializeObject :: PartialStorage -> BL.ByteString -> Except ErebosError (PartialObject, BL.ByteString)
 deserializeObject = unsafeDeserializeObject
 
-deserializeObjects :: PartialStorage -> BL.ByteString -> Except String [PartialObject]
+deserializeObjects :: PartialStorage -> BL.ByteString -> Except ErebosError [PartialObject]
 deserializeObjects _  bytes | BL.null bytes = return []
 deserializeObjects st bytes = do (obj, rest) <- deserializeObject st bytes
                                  (obj:) <$> deserializeObjects st rest
@@ -344,11 +345,12 @@ newtype StoreRecM c a = StoreRecM (ReaderT (Storage' c) (Writer [IO [(ByteString
 
 type StoreRec c = StoreRecM c ()
 
-newtype Load a = Load (ReaderT (Ref, Object) (Except String) a)
-    deriving (Functor, Applicative, Alternative, Monad, MonadPlus, MonadError String)
+newtype Load a = Load (ReaderT (Ref, Object) (Except ErebosError) a)
+    deriving (Functor, Applicative, Alternative, Monad, MonadPlus, MonadError ErebosError)
 
 evalLoad :: Load a -> Ref -> a
-evalLoad (Load f) ref = either (error {- TODO throw -} . ((BC.unpack (showRef ref) ++ ": ")++)) id $ runExcept $ runReaderT f (ref, lazyLoadObject ref)
+evalLoad (Load f) ref = either (error {- TODO throw -} . ((BC.unpack (showRef ref) ++ ": ") ++) . showErebosError) id $
+    runExcept $ runReaderT f (ref, lazyLoadObject ref)
 
 loadCurrentRef :: Load Ref
 loadCurrentRef = Load $ asks fst
@@ -356,8 +358,8 @@ loadCurrentRef = Load $ asks fst
 loadCurrentObject :: Load Object
 loadCurrentObject = Load $ asks snd
 
-newtype LoadRec a = LoadRec (ReaderT (Ref, [(ByteString, RecItem)]) (Except String) a)
-    deriving (Functor, Applicative, Alternative, Monad, MonadPlus, MonadError String)
+newtype LoadRec a = LoadRec (ReaderT (Ref, [(ByteString, RecItem)]) (Except ErebosError) a)
+    deriving (Functor, Applicative, Alternative, Monad, MonadPlus, MonadError ErebosError)
 
 loadRecCurrentRef :: LoadRec Ref
 loadRecCurrentRef = LoadRec $ asks fst
@@ -413,7 +415,7 @@ storeZero = StoreZero
 
 class StorableText a where
     toText :: a -> Text
-    fromText :: MonadError String m => Text -> m a
+    fromText :: MonadError ErebosError m => Text -> m a
 
 instance StorableText Text where
     toText = id; fromText = return
@@ -526,23 +528,23 @@ storeRecItems items = StoreRecM $ do
 loadBlob :: (ByteString -> a) -> Load a
 loadBlob f = loadCurrentObject >>= \case
     Blob x -> return $ f x
-    _      -> throwError "Expecting blob"
+    _      -> throwOtherError "Expecting blob"
 
 loadRec :: LoadRec a -> Load a
 loadRec (LoadRec lrec) = loadCurrentObject >>= \case
     Rec rs -> do
         ref <- loadCurrentRef
         either throwError return $ runExcept $ runReaderT lrec (ref, rs)
-    _ -> throwError "Expecting record"
+    _ -> throwOtherError "Expecting record"
 
 loadZero :: a -> Load a
 loadZero x = loadCurrentObject >>= \case
     ZeroObject -> return x
-    _          -> throwError "Expecting zero"
+    _          -> throwOtherError "Expecting zero"
 
 
 loadEmpty :: String -> LoadRec ()
-loadEmpty name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbEmpty name
+loadEmpty name = maybe (throwOtherError $ "Missing record item '"++name++"'") return =<< loadMbEmpty name
 
 loadMbEmpty :: String -> LoadRec (Maybe ())
 loadMbEmpty name = listToMaybe . mapMaybe p <$> loadRecItems
@@ -553,7 +555,7 @@ loadMbEmpty name = listToMaybe . mapMaybe p <$> loadRecItems
     p _ = Nothing
 
 loadInt :: Num a => String -> LoadRec a
-loadInt name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbInt name
+loadInt name = maybe (throwOtherError $ "Missing record item '"++name++"'") return =<< loadMbInt name
 
 loadMbInt :: Num a => String -> LoadRec (Maybe a)
 loadMbInt name = listToMaybe . mapMaybe p <$> loadRecItems
@@ -564,7 +566,7 @@ loadMbInt name = listToMaybe . mapMaybe p <$> loadRecItems
     p _ = Nothing
 
 loadNum :: (Real a, Fractional a) => String -> LoadRec a
-loadNum name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbNum name
+loadNum name = maybe (throwOtherError $ "Missing record item '"++name++"'") return =<< loadMbNum name
 
 loadMbNum :: (Real a, Fractional a) => String -> LoadRec (Maybe a)
 loadMbNum name = listToMaybe . mapMaybe p <$> loadRecItems
@@ -575,7 +577,7 @@ loadMbNum name = listToMaybe . mapMaybe p <$> loadRecItems
     p _ = Nothing
 
 loadText :: StorableText a => String -> LoadRec a
-loadText name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbText name
+loadText name = maybe (throwOtherError $ "Missing record item '"++name++"'") return =<< loadMbText name
 
 loadMbText :: StorableText a => String -> LoadRec (Maybe a)
 loadMbText name = listToMaybe <$> loadTexts name
@@ -589,7 +591,7 @@ loadTexts name = sequence . mapMaybe p =<< loadRecItems
     p _ = Nothing
 
 loadBinary :: BA.ByteArray a => String -> LoadRec a
-loadBinary name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbBinary name
+loadBinary name = maybe (throwOtherError $ "Missing record item '"++name++"'") return =<< loadMbBinary name
 
 loadMbBinary :: BA.ByteArray a => String -> LoadRec (Maybe a)
 loadMbBinary name = listToMaybe <$> loadBinaries name
@@ -603,7 +605,7 @@ loadBinaries name = mapMaybe p <$> loadRecItems
     p _ = Nothing
 
 loadDate :: StorableDate a => String -> LoadRec a
-loadDate name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbDate name
+loadDate name = maybe (throwOtherError $ "Missing record item '"++name++"'") return =<< loadMbDate name
 
 loadMbDate :: StorableDate a => String -> LoadRec (Maybe a)
 loadMbDate name = listToMaybe . mapMaybe p <$> loadRecItems
@@ -614,7 +616,7 @@ loadMbDate name = listToMaybe . mapMaybe p <$> loadRecItems
     p _ = Nothing
 
 loadUUID :: StorableUUID a => String -> LoadRec a
-loadUUID name = maybe (throwError $ "Missing record iteem '"++name++"'") return =<< loadMbUUID name
+loadUUID name = maybe (throwOtherError $ "Missing record iteem '"++name++"'") return =<< loadMbUUID name
 
 loadMbUUID :: StorableUUID a => String -> LoadRec (Maybe a)
 loadMbUUID name = listToMaybe . mapMaybe p <$> loadRecItems
@@ -625,7 +627,7 @@ loadMbUUID name = listToMaybe . mapMaybe p <$> loadRecItems
     p _ = Nothing
 
 loadRawRef :: String -> LoadRec Ref
-loadRawRef name = maybe (throwError $ "Missing record item '"++name++"'") return =<< loadMbRawRef name
+loadRawRef name = maybe (throwOtherError $ "Missing record item '"++name++"'") return =<< loadMbRawRef name
 
 loadMbRawRef :: String -> LoadRec (Maybe Ref)
 loadMbRawRef name = listToMaybe <$> loadRawRefs name

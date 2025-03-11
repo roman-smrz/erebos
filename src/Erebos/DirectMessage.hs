@@ -17,7 +17,6 @@ module Erebos.DirectMessage (
 ) where
 
 import Control.Monad
-import Control.Monad.Except
 import Control.Monad.Reader
 
 import Data.List
@@ -157,7 +156,7 @@ findMsgProperty pid sel mss = concat $ flip findProperty mss $ \x -> do
     return $ sel x
 
 
-sendDirectMessage :: (Foldable f, Applicative f, MonadHead LocalState m, MonadError String m)
+sendDirectMessage :: (Foldable f, Applicative f, MonadHead LocalState m)
                   => Identity f -> Text -> m (Stored DirectMessage)
 sendDirectMessage pid text = updateLocalHead $ \ls -> do
     let self = localIdentity $ fromStored ls

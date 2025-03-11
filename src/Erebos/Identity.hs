@@ -280,13 +280,13 @@ validateExtendedIdentityFE mdata = do
                  Just mk -> return mk
 
 loadIdentity :: String -> LoadRec ComposedIdentity
-loadIdentity name = maybe (throwError "identity validation failed") return . validateExtendedIdentityF =<< loadRefs name
+loadIdentity name = maybe (throwOtherError "identity validation failed") return . validateExtendedIdentityF =<< loadRefs name
 
 loadMbIdentity :: String -> LoadRec (Maybe ComposedIdentity)
 loadMbIdentity name = return . validateExtendedIdentityF =<< loadRefs name
 
 loadUnifiedIdentity :: String -> LoadRec UnifiedIdentity
-loadUnifiedIdentity name = maybe (throwError "identity validation failed") return . validateExtendedIdentity =<< loadRef name
+loadUnifiedIdentity name = maybe (throwOtherError "identity validation failed") return . validateExtendedIdentity =<< loadRef name
 
 loadMbUnifiedIdentity :: String -> LoadRec (Maybe UnifiedIdentity)
 loadMbUnifiedIdentity name = return . (validateExtendedIdentity =<<) =<< loadMbRef name
@@ -322,7 +322,7 @@ lookupProperty sel topHeads = findResult propHeads
     findResult [] = Nothing
     findResult xs = sel $ fromSigned $ minimum xs
 
-mergeIdentity :: (MonadStorage m, MonadError String m, MonadIO m) => Identity f -> m UnifiedIdentity
+mergeIdentity :: (MonadStorage m, MonadError e m, FromErebosError e, MonadIO m) => Identity f -> m UnifiedIdentity
 mergeIdentity idt | Just idt' <- toUnifiedIdentity idt = return idt'
 mergeIdentity idt@Identity {..} = do
     (owner, ownerData) <- case idOwner_ of

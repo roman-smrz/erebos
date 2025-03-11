@@ -103,7 +103,7 @@ runTestTool st = do
             Nothing -> return ()
 
     runExceptT (evalStateT testLoop initTestState) >>= \case
-        Left x -> B.hPutStr stderr $ (`BC.snoc` '\n') $ BC.pack x
+        Left x -> B.hPutStr stderr $ (`BC.snoc` '\n') $ BC.pack (showErebosError x)
         Right () -> return ()
 
 getLineMb :: MonadIO m => m (Maybe Text)
@@ -175,7 +175,7 @@ pairingAttributes _ out peers prefix = PairingAttributes
     , pairingHookFailed = \case
         PairingUserRejected -> failed "user"
         PairingUnexpectedMessage pstate packet -> failed $ "unexpected " ++ strState pstate ++ " " ++ strPacket packet
-        PairingFailedOther str -> failed $ "other " ++ str
+        PairingFailedOther err -> failed $ "other " ++ showErebosError err
     , pairingHookVerifyFailed = failed "verify"
     , pairingHookRejected = failed "rejected"
     }
@@ -226,11 +226,11 @@ dmReceivedWatcher out smsg = do
         ]
 
 
-newtype CommandM a = CommandM (ReaderT TestInput (StateT TestState (ExceptT String IO)) a)
-    deriving (Functor, Applicative, Monad, MonadIO, MonadReader TestInput, MonadState TestState, MonadError String)
+newtype CommandM a = CommandM (ReaderT TestInput (StateT TestState (ExceptT ErebosError IO)) a)
+    deriving (Functor, Applicative, Monad, MonadIO, MonadReader TestInput, MonadState TestState, MonadError ErebosError)
 
 instance MonadFail CommandM where
-    fail = throwError
+    fail = throwOtherError
 
 instance MonadRandom CommandM where
     getRandomBytes = liftIO . getRandomBytes
@@ -502,7 +502,7 @@ cmdStartServer = do
                     void $ store (headStorage h) obj
                     outLine out $ unwords ["test-message-received", otype, len, sref]
             }
-        sname -> throwError $ "unknown service `" <> T.unpack sname <> "'"
+        sname -> throwOtherError $ "unknown service `" <> T.unpack sname <> "'"
 
     rsServer <- liftIO $ startServer defaultServerOptions h (B.hPutStr stderr . (`BC.snoc` '\n') . BC.pack) services
 
@@ -662,7 +662,7 @@ cmdUpdateSharedIdentity :: Command
 cmdUpdateSharedIdentity = do
     [name] <- asks tiParams
     updateLocalHead_ $ updateSharedState_ $ \case
-        Nothing -> throwError "no existing shared identity"
+        Nothing -> throwOtherError "no existing shared identity"
         Just identity -> do
             let public = idKeyIdentity identity
             secret <- loadKey public

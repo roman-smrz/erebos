@@ -155,13 +155,13 @@ instance PairingResult ContactAccepted where
             svcPrint $ "Contact failed"
         }
 
-contactRequest :: (MonadIO m, MonadError String m) => Peer -> m ()
+contactRequest :: (MonadIO m, MonadError e m, FromErebosError e) => Peer -> m ()
 contactRequest = pairingRequest @ContactAccepted Proxy
 
-contactAccept :: (MonadIO m, MonadError String m) => Peer -> m ()
+contactAccept :: (MonadIO m, MonadError e m, FromErebosError e) => Peer -> m ()
 contactAccept = pairingAccept @ContactAccepted Proxy
 
-contactReject :: (MonadIO m, MonadError String m) => Peer -> m ()
+contactReject :: (MonadIO m, MonadError e m, FromErebosError e) => Peer -> m ()
 contactReject = pairingReject @ContactAccepted Proxy
 
 finalizeContact :: MonadHead LocalState m => UnifiedIdentity -> m ()

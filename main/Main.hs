@@ -235,7 +235,7 @@ main = do
             Nothing -> error "ref does not exist"
             Just ref -> print $ storedGeneration (wrappedLoad ref :: Stored Object)
 
-        ["update-identity"] -> either fail return <=< runExceptT $ do
+        ["update-identity"] -> either (fail . showErebosError) return <=< runExceptT $ do
             runReaderT updateSharedIdentity =<< loadLocalStateHead st
 
         ("update-identity" : srefs) -> do
@@ -244,7 +244,7 @@ main = do
                 Just refs
                     | Just idt <- validateIdentityF $ map wrappedLoad refs -> do
                         BC.putStrLn . showRefDigest . refDigest . storedRef . idData =<<
-                            (either fail return <=< runExceptT $ runReaderT (interactiveIdentityUpdate idt) st)
+                            (either (fail . showErebosError) return <=< runExceptT $ runReaderT (interactiveIdentityUpdate idt) st)
                     | otherwise -> error "invalid identity"
 
         ["test"] -> runTestTool st
@@ -408,7 +408,7 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
                     | csQuit cstate' -> mzero
                     | otherwise      -> return cstate'
                 Left err -> do
-                    lift $ extPrintLn $ "Error: " ++ err
+                    lift $ extPrintLn $ "Error: " ++ showErebosError err
                     return cstate
 
     let loop (Just cstate) = runMaybeT (process cstate) >>= loop
@@ -454,15 +454,15 @@ data CommandContext = NoContext
                     | SelectedChatroom ChatroomState
                     | SelectedConversation Conversation
 
-newtype CommandM a = CommandM (ReaderT CommandInput (StateT CommandState (ExceptT String IO)) a)
-    deriving (Functor, Applicative, Monad, MonadReader CommandInput, MonadState CommandState, MonadError String)
+newtype CommandM a = CommandM (ReaderT CommandInput (StateT CommandState (ExceptT ErebosError IO)) a)
+    deriving (Functor, Applicative, Monad, MonadReader CommandInput, MonadState CommandState, MonadError ErebosError)
 
 instance MonadFail CommandM where
-    fail = throwError
+    fail = throwOtherError
 
 instance MonadIO CommandM where
     liftIO act = CommandM (liftIO (try act)) >>= \case
-        Left (e :: SomeException) -> throwError (show e)
+        Left (e :: SomeException) -> throwOtherError (show e)
         Right x -> return x
 
 instance MonadRandom CommandM where
@@ -483,27 +483,27 @@ type Command = CommandM ()
 getSelectedPeer :: CommandM Peer
 getSelectedPeer = gets csContext >>= \case
     SelectedPeer peer -> return peer
-    _ -> throwError "no peer selected"
+    _ -> throwOtherError "no peer selected"
 
 getSelectedChatroom :: CommandM ChatroomState
 getSelectedChatroom = gets csContext >>= \case
     SelectedChatroom rstate -> return rstate
-    _ -> throwError "no chatroom selected"
+    _ -> throwOtherError "no chatroom selected"
 
 getSelectedConversation :: CommandM Conversation
 getSelectedConversation = gets csContext >>= \case
     SelectedPeer peer -> peerIdentity peer >>= \case
         PeerIdentityFull pid -> directMessageConversation $ finalOwner pid
-        _ -> throwError "incomplete peer identity"
+        _ -> throwOtherError "incomplete peer identity"
     SelectedContact contact -> case contactIdentity contact of
         Just cid -> directMessageConversation cid
-        Nothing -> throwError "contact without erebos identity"
+        Nothing -> throwOtherError "contact without erebos identity"
     SelectedChatroom rstate ->
         chatroomConversation rstate >>= \case
             Just conv -> return conv
-            Nothing -> throwError "invalid chatroom"
+            Nothing -> throwOtherError "invalid chatroom"
     SelectedConversation conv -> reloadConversation conv
-    _ -> throwError "no contact, peer or conversation selected"
+    _ -> throwOtherError "no contact, peer or conversation selected"
 
 commands :: [(String, Command)]
 commands =
@@ -568,7 +568,7 @@ cmdPeerAdd = void $ do
     (hostname, port) <- (words <$> asks ciLine) >>= \case
         hostname:p:_ -> return (hostname, p)
         [hostname] -> return (hostname, show discoveryPort)
-        [] -> throwError "missing peer address"
+        [] -> throwOtherError "missing peer address"
     addr:_ <- liftIO $ getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just hostname) (Just port)
     liftIO $ serverPeer server (addrAddress addr)
 
@@ -633,7 +633,7 @@ cmdSelectContext = do
                     when (not (roomStateSubscribe rstate)) $ do
                         chatroomSetSubscribe (head $ roomStateData rstate) True
                 _ -> return ()
-        | otherwise -> throwError "invalid index"
+        | otherwise -> throwOtherError "invalid index"
 
 cmdSend :: Command
 cmdSend = void $ do
@@ -709,7 +709,7 @@ watchChatroomsForCli eprint h chatroomSetVar contextVar autoSubscribe = do
                     forM_ (take (num - subscribedNum) notSubscribed) $ \rstate -> do
                         (runExceptT $ flip runReaderT h $ chatroomSetSubscribe (head $ roomStateData rstate) True) >>= \case
                              Right () -> return ()
-                             Left err -> eprint err
+                             Left err -> eprint (showErebosError err)
 
         Just diff -> do
             modifyMVar_ chatroomSetVar $ return . const set
@@ -932,7 +932,7 @@ cmdIceCreate = do
             , Just ( T.pack stunServer, read stunPort )
             , Just ( T.pack turnServer, read turnPort )
             )
-        _ -> throwError "invalid parameters"
+        _ -> throwOtherError "invalid parameters"
 
     eprint <- asks ciPrint
     Just cfg <- liftIO $ iceCreateConfig stun turn

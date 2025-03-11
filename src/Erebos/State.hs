@@ -172,20 +172,20 @@ makeSharedStateUpdate st val prev = liftIO $ wrappedStore st SharedState
     }
 
 
-mergeSharedIdentity :: (MonadHead LocalState m, MonadError String m) => m UnifiedIdentity
+mergeSharedIdentity :: (MonadHead LocalState m, MonadError e m, FromErebosError e) => m UnifiedIdentity
 mergeSharedIdentity = updateLocalHead $ updateSharedState $ \case
     Just cidentity -> do
         identity <- mergeIdentity cidentity
         return (Just $ toComposedIdentity identity, identity)
-    Nothing -> throwError "no existing shared identity"
+    Nothing -> throwOtherError "no existing shared identity"
 
-updateSharedIdentity :: (MonadHead LocalState m, MonadError String m) => m ()
+updateSharedIdentity :: (MonadHead LocalState m, MonadError e m, FromErebosError e) => m ()
 updateSharedIdentity = updateLocalHead_ $ updateSharedState_ $ \case
     Just identity -> do
         Just . toComposedIdentity <$> interactiveIdentityUpdate identity
-    Nothing -> throwError "no existing shared identity"
+    Nothing -> throwOtherError "no existing shared identity"
 
-interactiveIdentityUpdate :: (Foldable f, MonadStorage m, MonadIO m, MonadError String m) => Identity f -> m UnifiedIdentity
+interactiveIdentityUpdate :: (Foldable f, MonadStorage m, MonadIO m, MonadError e m, FromErebosError e) => Identity f -> m UnifiedIdentity
 interactiveIdentityUpdate identity = do
     let public = idKeyIdentity identity
 
@@ -203,7 +203,7 @@ interactiveIdentityUpdate identity = do
     if  | T.null name -> mergeIdentity identity
         | otherwise -> do
             secret <- loadKey public
-            maybe (throwError "created invalid identity") return . validateIdentity =<<
+            maybe (throwOtherError "created invalid identity") return . validateIdentity =<<
                 mstore =<< sign secret =<< mstore (emptyIdentityData public)
                 { iddPrev = toList $ idDataF identity
                 , iddName = Just name

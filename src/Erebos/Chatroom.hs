@@ -181,17 +181,17 @@ threadToListSince since thread = helper (S.fromList since) thread
     cmpView msg = (zonedTimeToUTC $ mdTime $ fromSigned msg, msg)
 
 sendChatroomMessage
-    :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
+    :: (MonadStorage m, MonadHead LocalState m, MonadError e m, FromErebosError e)
     => ChatroomState -> Text -> m ()
 sendChatroomMessage rstate msg = sendChatroomMessageByStateData (head $ roomStateData rstate) msg
 
 sendChatroomMessageByStateData
-    :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
+    :: (MonadStorage m, MonadHead LocalState m, MonadError e m, FromErebosError e)
     => Stored ChatroomStateData -> Text -> m ()
 sendChatroomMessageByStateData lookupData msg = sendRawChatroomMessageByStateData lookupData Nothing Nothing (Just msg) False
 
 sendRawChatroomMessageByStateData
-    :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
+    :: (MonadStorage m, MonadHead LocalState m, MonadError e m, FromErebosError e)
     => Stored ChatroomStateData -> Maybe UnifiedIdentity -> Maybe (Stored (Signed ChatMessageData)) -> Maybe Text -> Bool -> m ()
 sendRawChatroomMessageByStateData lookupData mbIdentity mdReplyTo mdText mdLeave = void $ findAndUpdateChatroomState $ \cstate -> do
     guard $ any (lookupData `precedesOrEquals`) $ roomStateData cstate
@@ -283,7 +283,7 @@ instance Mergeable ChatroomState where
 instance SharedType (Set ChatroomState) where
     sharedTypeID _ = mkSharedTypeID "7bc71cbf-bc43-42b1-b413-d3a2c9a2aae0"
 
-createChatroom :: (MonadStorage m, MonadHead LocalState m, MonadIO m, MonadError String m) => Maybe Text -> Maybe Text -> m ChatroomState
+createChatroom :: (MonadStorage m, MonadHead LocalState m, MonadIO m, MonadError e m, FromErebosError e) => Maybe Text -> Maybe Text -> m ChatroomState
 createChatroom rdName rdDescription = do
     (secret, rdKey) <- liftIO . generateKeys =<< getStorage
     let rdPrev = []
@@ -317,7 +317,7 @@ findAndUpdateChatroomState f = do
             [] -> return (roomSet, Nothing)
 
 deleteChatroomByStateData
-    :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
+    :: (MonadStorage m, MonadHead LocalState m, MonadError e m, FromErebosError e)
     => Stored ChatroomStateData -> m ()
 deleteChatroomByStateData lookupData = void $ findAndUpdateChatroomState $ \cstate -> do
     guard $ any (lookupData `precedesOrEquals`) $ roomStateData cstate
@@ -328,7 +328,7 @@ deleteChatroomByStateData lookupData = void $ findAndUpdateChatroomState $ \csta
             }
 
 updateChatroomByStateData
-    :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
+    :: (MonadStorage m, MonadHead LocalState m, MonadError e m, FromErebosError e)
     => Stored ChatroomStateData
     -> Maybe Text
     -> Maybe Text
@@ -369,7 +369,7 @@ findChatroomByStateData :: MonadHead LocalState m => Stored ChatroomStateData ->
 findChatroomByStateData cdata = findChatroom $ any (cdata `precedesOrEquals`) . roomStateData
 
 chatroomSetSubscribe
-    :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
+    :: (MonadStorage m, MonadHead LocalState m, MonadError e m, FromErebosError e)
     => Stored ChatroomStateData -> Bool -> m ()
 chatroomSetSubscribe lookupData subscribe = void $ findAndUpdateChatroomState $ \cstate -> do
     guard $ any (lookupData `precedesOrEquals`) $ roomStateData cstate
@@ -390,32 +390,32 @@ chatroomMembers ChatroomState {..} =
     toList $ ancestors $ roomStateMessageData
 
 joinChatroom
-    :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
+    :: (MonadStorage m, MonadHead LocalState m, MonadError e m, FromErebosError e)
     => ChatroomState -> m ()
 joinChatroom rstate = joinChatroomByStateData (head $ roomStateData rstate)
 
 joinChatroomByStateData
-    :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
+    :: (MonadStorage m, MonadHead LocalState m, MonadError e m, FromErebosError e)
     => Stored ChatroomStateData -> m ()
 joinChatroomByStateData lookupData = sendRawChatroomMessageByStateData lookupData Nothing Nothing Nothing False
 
 joinChatroomAs
-    :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
+    :: (MonadStorage m, MonadHead LocalState m, MonadError e m, FromErebosError e)
     => UnifiedIdentity -> ChatroomState -> m ()
 joinChatroomAs identity rstate = joinChatroomAsByStateData identity (head $ roomStateData rstate)
 
 joinChatroomAsByStateData
-    :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
+    :: (MonadStorage m, MonadHead LocalState m, MonadError e m, FromErebosError e)
     => UnifiedIdentity -> Stored ChatroomStateData -> m ()
 joinChatroomAsByStateData identity lookupData = sendRawChatroomMessageByStateData lookupData (Just identity) Nothing Nothing False
 
 leaveChatroom
-    :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
+    :: (MonadStorage m, MonadHead LocalState m, MonadError e m, FromErebosError e)
     => ChatroomState -> m ()
 leaveChatroom rstate = leaveChatroomByStateData (head $ roomStateData rstate)
 
 leaveChatroomByStateData
-    :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
+    :: (MonadStorage m, MonadHead LocalState m, MonadError e m, FromErebosError e)
     => Stored ChatroomStateData -> m ()
 leaveChatroomByStateData lookupData = sendRawChatroomMessageByStateData lookupData Nothing Nothing Nothing True
 

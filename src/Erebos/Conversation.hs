@@ -101,10 +101,10 @@ conversationHistory (DirectMessageConversation thread) = map (\msg -> DirectMess
 conversationHistory (ChatroomConversation rstate) = map (\msg -> ChatroomMessage msg False) $ roomStateMessages rstate
 
 
-sendMessage :: (MonadHead LocalState m, MonadError String m) => Conversation -> Text -> m (Maybe Message)
+sendMessage :: (MonadHead LocalState m, MonadError e m, FromErebosError e) => Conversation -> Text -> m (Maybe Message)
 sendMessage (DirectMessageConversation thread) text = fmap Just $ DirectMessageMessage <$> (fromStored <$> sendDirectMessage (msgPeer thread) text) <*> pure False
 sendMessage (ChatroomConversation rstate) text = sendChatroomMessage rstate text >> return Nothing
 
-deleteConversation :: (MonadHead LocalState m, MonadError String m) => Conversation -> m ()
-deleteConversation (DirectMessageConversation _) = throwError "deleting direct message conversation is not supported"
+deleteConversation :: (MonadHead LocalState m, MonadError e m, FromErebosError e) => Conversation -> m ()
+deleteConversation (DirectMessageConversation _) = throwOtherError "deleting direct message conversation is not supported"
 deleteConversation (ChatroomConversation rstate) = deleteChatroomByStateData (head $ roomStateData rstate)

@@ -21,7 +21,6 @@ module Erebos.ICE (
 import Control.Arrow
 import Control.Concurrent.MVar
 import Control.Monad
-import Control.Monad.Except
 import Control.Monad.Identity
 
 import Data.ByteString (ByteString, packCStringLen, useAsCString)
@@ -118,7 +117,7 @@ instance StorableText IceCandidate where
                 , icandPort = port
                 , icandType = ctype
                 }
-        _ -> throwError "failed to parse candidate"
+        _ -> throwOtherError "failed to parse candidate"
 
 
 {#enum pj_ice_sess_role as IceSessionRole {underscoreToCase} deriving (Show, Eq) #}

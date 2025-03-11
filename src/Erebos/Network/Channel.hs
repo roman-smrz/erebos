@@ -78,23 +78,23 @@ instance Storable ChannelAcceptData where
 keySize :: Int
 keySize = 32
 
-createChannelRequest :: (MonadStorage m, MonadIO m, MonadError String m) => UnifiedIdentity -> UnifiedIdentity -> m (Stored ChannelRequest)
+createChannelRequest :: (MonadStorage m, MonadIO m, MonadError e m, FromErebosError e) => UnifiedIdentity -> UnifiedIdentity -> m (Stored ChannelRequest)
 createChannelRequest self peer = do
     (_, xpublic) <- liftIO . generateKeys =<< getStorage
     skey <- loadKey $ idKeyMessage self
     mstore =<< sign skey =<< mstore ChannelRequest { crPeers = sort [idData self, idData peer], crKey = xpublic }
 
-acceptChannelRequest :: (MonadStorage m, MonadIO m, MonadError String m) => UnifiedIdentity -> UnifiedIdentity -> Stored ChannelRequest -> m (Stored ChannelAccept, Channel)
+acceptChannelRequest :: (MonadStorage m, MonadIO m, MonadError e m, FromErebosError e) => UnifiedIdentity -> UnifiedIdentity -> Stored ChannelRequest -> m (Stored ChannelAccept, Channel)
 acceptChannelRequest self peer req = do
     case sequence $ map validateIdentity $ crPeers $ fromStored $ signedData $ fromStored req of
-        Nothing -> throwError $ "invalid peers in channel request"
+        Nothing -> throwOtherError $ "invalid peers in channel request"
         Just peers -> do
             when (not $ any (self `sameIdentity`) peers) $
-                throwError $ "self identity missing in channel request peers"
+                throwOtherError $ "self identity missing in channel request peers"
             when (not $ any (peer `sameIdentity`) peers) $
-                throwError $ "peer identity missing in channel request peers"
+                throwOtherError $ "peer identity missing in channel request peers"
     when (idKeyMessage peer `notElem` (map (sigKey . fromStored) $ signedSignature $ fromStored req)) $
-        throwError $ "channel requent not signed by peer"
+        throwOtherError $ "channel requent not signed by peer"
 
     (xsecret, xpublic) <- liftIO . generateKeys =<< getStorage
     skey <- loadKey $ idKeyMessage self
@@ -110,20 +110,20 @@ acceptChannelRequest self peer req = do
 
         return (acc, Channel {..})
 
-acceptedChannel :: (MonadIO m, MonadError String m) => UnifiedIdentity -> UnifiedIdentity -> Stored ChannelAccept -> m Channel
+acceptedChannel :: (MonadIO m, MonadError e m, FromErebosError e) => UnifiedIdentity -> UnifiedIdentity -> Stored ChannelAccept -> m Channel
 acceptedChannel self peer acc = do
     let req = caRequest $ fromStored $ signedData $ fromStored acc
     case sequence $ map validateIdentity $ crPeers $ fromStored $ signedData $ fromStored req of
-        Nothing -> throwError $ "invalid peers in channel accept"
+        Nothing -> throwOtherError $ "invalid peers in channel accept"
         Just peers -> do
             when (not $ any (self `sameIdentity`) peers) $
-                throwError $ "self identity missing in channel accept peers"
+                throwOtherError $ "self identity missing in channel accept peers"
             when (not $ any (peer `sameIdentity`) peers) $
-                throwError $ "peer identity missing in channel accept peers"
+                throwOtherError $ "peer identity missing in channel accept peers"
     when (idKeyMessage peer `notElem` (map (sigKey . fromStored) $ signedSignature $ fromStored acc)) $
-        throwError $ "channel accept not signed by peer"
+        throwOtherError $ "channel accept not signed by peer"
     when (idKeyMessage self `notElem` (map (sigKey . fromStored) $ signedSignature $ fromStored req)) $
-        throwError $ "original channel request not signed by us"
+        throwOtherError $ "original channel request not signed by us"
 
     xsecret <- loadKey $ crKey $ fromStored $ signedData $ fromStored req
     let chPeers = crPeers $ fromStored $ signedData $ fromStored req
@@ -137,23 +137,23 @@ acceptedChannel self peer acc = do
     return Channel {..}
 
 
-channelEncrypt :: (ByteArray ba, MonadIO m, MonadError String m) => Channel -> ba -> m (ba, Word64)
+channelEncrypt :: (ByteArray ba, MonadIO m, MonadError e m, FromErebosError e) => Channel -> ba -> m (ba, Word64)
 channelEncrypt Channel {..} plain = do
     count <- liftIO $ modifyMVar chCounterNextOut $ \c -> return (c + 1, c)
     let cbytes = convert $ BL.toStrict $ encode count
         nonce = nonce8 chNonceFixedOur cbytes
     state <- case initialize chKey =<< nonce of
         CryptoPassed state -> return state
-        CryptoFailed err -> throwError $ "failed to init chacha-poly1305 cipher: " <> show err
+        CryptoFailed err -> throwOtherError $ "failed to init chacha-poly1305 cipher: " <> show err
 
     let (ctext, state') = encrypt plain state
         tag = finalize state'
     return (BA.concat [ convert $ BA.drop 7 cbytes, ctext, convert tag ], count)
 
-channelDecrypt :: (ByteArray ba, MonadIO m, MonadError String m) => Channel -> ba -> m (ba, Word64)
+channelDecrypt :: (ByteArray ba, MonadIO m, MonadError e m, FromErebosError e) => Channel -> ba -> m (ba, Word64)
 channelDecrypt Channel {..} body = do
     when (BA.length body < 17) $ do
-        throwError $ "invalid encrypted data length"
+        throwOtherError $ "invalid encrypted data length"
 
     expectedCount <- liftIO $ readMVar chCounterNextIn
     let countByte = body `BA.index` 0
@@ -165,11 +165,11 @@ channelDecrypt Channel {..} body = do
         tag = BA.dropView body' blen
     state <- case initialize chKey =<< nonce of
         CryptoPassed state -> return state
-        CryptoFailed err -> throwError $ "failed to init chacha-poly1305 cipher: " <> show err
+        CryptoFailed err -> throwOtherError $ "failed to init chacha-poly1305 cipher: " <> show err
 
     let (plain, state') = decrypt (convert ctext) state
     when (not $ tag `BA.constEq` finalize state') $ do
-        throwError $ "tag validation falied"
+        throwOtherError $ "tag validation falied"
 
     liftIO $ modifyMVar_ chCounterNextIn $ return . max (guessedCount + 1)
     return (plain, guessedCount)

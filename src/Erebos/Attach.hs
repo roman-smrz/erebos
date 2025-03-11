@@ -113,11 +113,11 @@ instance PairingResult AttachIdentity where
             svcPrint $ "Attachement failed"
         }
 
-attachToOwner :: (MonadIO m, MonadError String m) => Peer -> m ()
+attachToOwner :: (MonadIO m, MonadError e m, FromErebosError e) => Peer -> m ()
 attachToOwner = pairingRequest @AttachIdentity Proxy
 
-attachAccept :: (MonadIO m, MonadError String m) => Peer -> m ()
+attachAccept :: (MonadIO m, MonadError e m, FromErebosError e) => Peer -> m ()
 attachAccept = pairingAccept @AttachIdentity Proxy
 
-attachReject :: (MonadIO m, MonadError String m) => Peer -> m ()
+attachReject :: (MonadIO m, MonadError e m, FromErebosError e) => Peer -> m ()
 attachReject = pairingReject @AttachIdentity Proxy

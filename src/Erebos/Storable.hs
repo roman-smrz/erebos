@@ -36,6 +36,9 @@ module Erebos.Storable (
     unsafeMapStored,
 
     Storage, MonadStorage(..),
+
+    module Erebos.Error,
 ) where
 
+import Erebos.Error
 import Erebos.Object.Internal

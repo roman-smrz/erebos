@@ -323,7 +323,7 @@ connAddWriteStream conn@Connection {..} = do
                         Right (ctext, counter) -> do
                             let isAcked = True
                             return $ Just (0x80 `B.cons` ctext, if isAcked then [ AcknowledgedSingle $ fromIntegral counter ] else [])
-                        Left err -> do atomically $ gLog $ "Failed to encrypt data: " ++ err
+                        Left err -> do atomically $ gLog $ "Failed to encrypt data: " ++ showErebosError err
                                        return Nothing
                 Nothing | secure    -> return Nothing
                         | otherwise -> return $ Just (plain, plainAckedBy)
@@ -402,16 +402,16 @@ readStreamToList stream = readFlowIO stream >>= \case
     StreamData sq bytes -> fmap ((sq, bytes) :) <$> readStreamToList stream
     StreamClosed sqEnd  -> return (sqEnd, [])
 
-readObjectsFromStream :: PartialStorage -> RawStreamReader -> IO (Except String [PartialObject])
+readObjectsFromStream :: PartialStorage -> RawStreamReader -> IO (Except ErebosError [PartialObject])
 readObjectsFromStream st stream = do
     (seqEnd, list) <- readStreamToList stream
     let validate s ((s', bytes) : rest)
             | s == s'   = (bytes : ) <$> validate (s + 1) rest
             | s >  s'   = validate s rest
-            | otherwise = throwError "missing object chunk"
+            | otherwise = throwOtherError "missing object chunk"
         validate s []
             | s == seqEnd = return []
-            | otherwise = throwError "content length mismatch"
+            | otherwise = throwOtherError "content length mismatch"
     return $ do
         content <- BL.fromChunks <$> validate 0 list
         deserializeObjects st content
@@ -434,7 +434,7 @@ data WaitingRef = WaitingRef
     , wrefStatus :: TVar (Either [RefDigest] Ref)
     }
 
-type WaitingRefCallback = ExceptT String IO ()
+type WaitingRefCallback = ExceptT ErebosError IO ()
 
 wrDigest :: WaitingRef -> RefDigest
 wrDigest = refDigest . wrefPartial
@@ -571,7 +571,7 @@ processIncoming gs@GlobalState {..} = do
         let parse = case B.uncons msg of
                 Just (b, enc)
                     | b .&. 0xE0 == 0x80 -> do
-                        ch <- maybe (throwError "unexpected encrypted packet") return mbch
+                        ch <- maybe (throwOtherError "unexpected encrypted packet") return mbch
                         (dec, counter) <- channelDecrypt ch enc
 
                         case B.uncons dec of
@@ -586,18 +586,18 @@ processIncoming gs@GlobalState {..} = do
                                     return $ Right (snum, seq8, content, counter)
 
                             Just (_, _) -> do
-                                throwError "unexpected stream header"
+                                throwOtherError "unexpected stream header"
 
                             Nothing -> do
-                                throwError "empty decrypted content"
+                                throwOtherError "empty decrypted content"
 
                     | b .&. 0xE0 == 0x60 -> do
                         objs <- deserialize msg
                         return $ Left (False, objs, Nothing)
 
-                    | otherwise -> throwError "invalid packet"
+                    | otherwise -> throwOtherError "invalid packet"
 
-                Nothing -> throwError "empty packet"
+                Nothing -> throwOtherError "empty packet"
 
         now <- getTime Monotonic
         runExceptT parse >>= \case
@@ -648,7 +648,7 @@ processIncoming gs@GlobalState {..} = do
                     atomically $ gLog $ show addr <> ": stream packet without connection"
 
             Left err -> do
-                atomically $ gLog $ show addr <> ": failed to parse packet: " <> err
+                atomically $ gLog $ show addr <> ": failed to parse packet: " <> showErebosError err
 
 processPacket :: GlobalState addr -> Either addr (Connection addr) -> Bool -> TransportPacket a -> IO (Maybe (Connection addr, Maybe (TransportPacket a)))
 processPacket gs@GlobalState {..} econn secure packet@(TransportPacket (TransportHeader header) _) = if
@@ -882,7 +882,7 @@ processOutgoing gs@GlobalState {..} = do
                             Right (ctext, counter) -> do
                                 let isAcked = any isHeaderItemAcknowledged hitems
                                 return $ Just (0x80 `B.cons` ctext, if isAcked then [ AcknowledgedSingle $ fromIntegral counter ] else [])
-                            Left err -> do atomically $ gLog $ "Failed to encrypt data: " ++ err
+                            Left err -> do atomically $ gLog $ "Failed to encrypt data: " ++ showErebosError err
                                            return Nothing
 
                 mbs <- case (secure, mbch) of

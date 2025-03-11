@@ -99,6 +99,7 @@ library
         Erebos.Conversation
         Erebos.DirectMessage
         Erebos.Discovery
+        Erebos.Error
         Erebos.Identity
         Erebos.Network
         Erebos.Network.Channel

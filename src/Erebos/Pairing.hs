@@ -49,7 +49,7 @@ data PairingState a = NoPairing
 
 data PairingFailureReason a = PairingUserRejected
                             | PairingUnexpectedMessage (PairingState a) (PairingService a)
-                            | PairingFailedOther String
+                            | PairingFailedOther ErebosError
 
 data PairingAttributes a = PairingAttributes
     { pairingHookRequest :: ServiceHandler (PairingService a) ()
@@ -116,16 +116,16 @@ instance PairingResult a => Service (PairingService a) where
 
     serviceHandler spacket = ((,fromStored spacket) <$> svcGet) >>= \case
         (NoPairing, PairingRequest pdata sdata confirm) -> do
-            self <- maybe (throwError "failed to validate received identity") return $ validateIdentity sdata
-            self' <- maybe (throwError "failed to validate own identity") return .
+            self <- maybe (throwOtherError "failed to validate received identity") return $ validateIdentity sdata
+            self' <- maybe (throwOtherError "failed to validate own identity") return .
                 validateExtendedIdentity . lsIdentity . fromStored =<< svcGetLocal
             when (not $ self `sameIdentity` self') $ do
-                throwError "pairing request to different identity"
+                throwOtherError "pairing request to different identity"
 
-            peer <- maybe (throwError "failed to validate received peer identity") return $ validateIdentity pdata
+            peer <- maybe (throwOtherError "failed to validate received peer identity") return $ validateIdentity pdata
             peer' <- asks $ svcPeerIdentity
             when (not $ peer `sameIdentity` peer') $ do
-                throwError "pairing request from different identity"
+                throwOtherError "pairing request from different identity"
 
             join $ asks $ pairingHookRequest . svcAttributes
             nonce <- liftIO $ getRandomBytes 32
@@ -167,7 +167,7 @@ instance PairingResult a => Service (PairingService a) where
                         svcSet $ PairingDone
                     Nothing -> do
                         join $ asks $ pairingHookVerifyFailed . svcAttributes
-                        throwError ""
+                        throwOtherError ""
         x@(OurRequestReady, _) -> reject $ uncurry PairingUnexpectedMessage x
 
         (PeerRequest peer self nonce dgst, PairingRequestNonce pnonce) -> do
@@ -204,22 +204,22 @@ confirmationNumber dgst =
          _ -> ""
     where len = 6
 
-pairingRequest :: forall a m proxy. (PairingResult a, MonadIO m, MonadError String m) => proxy a -> Peer -> m ()
+pairingRequest :: forall a m e proxy. (PairingResult a, MonadIO m, MonadError e m, FromErebosError e) => proxy a -> Peer -> m ()
 pairingRequest _ peer = do
     self <- liftIO $ serverIdentity $ peerServer peer
     nonce <- liftIO $ getRandomBytes 32
     pid <- peerIdentity peer >>= \case
         PeerIdentityFull pid -> return pid
-        _ -> throwError "incomplete peer identity"
+        _ -> throwOtherError "incomplete peer identity"
     sendToPeerWith @(PairingService a) peer $ \case
         NoPairing -> return (Just $ PairingRequest (idData self) (idData pid) (nonceDigest self pid nonce BA.empty), OurRequest self pid nonce)
-        _ -> throwError "already in progress"
+        _ -> throwOtherError "already in progress"
 
-pairingAccept :: forall a m proxy. (PairingResult a, MonadIO m, MonadError String m) => proxy a -> Peer -> m ()
+pairingAccept :: forall a m e proxy. (PairingResult a, MonadIO m, MonadError e m, FromErebosError e) => proxy a -> Peer -> m ()
 pairingAccept _ peer = runPeerService @(PairingService a) peer $ do
     svcGet >>= \case
-        NoPairing -> throwError $ "none in progress"
-        OurRequest {} -> throwError $ "waiting for peer"
+        NoPairing -> throwOtherError $ "none in progress"
+        OurRequest {} -> throwOtherError $ "waiting for peer"
         OurRequestConfirm Nothing -> do
             join $ asks $ pairingHookConfirmedResponse . svcAttributes
             svcSet OurRequestReady
@@ -227,17 +227,17 @@ pairingAccept _ peer = runPeerService @(PairingService a) peer $ do
             join $ asks $ pairingHookAcceptedResponse . svcAttributes
             pairingFinalizeRequest verified
             svcSet PairingDone
-        OurRequestReady -> throwError $ "already accepted, waiting for peer"
-        PeerRequest {} -> throwError $ "waiting for peer"
+        OurRequestReady -> throwOtherError $ "already accepted, waiting for peer"
+        PeerRequest {} -> throwOtherError $ "waiting for peer"
         PeerRequestConfirm -> do
             join $ asks $ pairingHookAcceptedRequest . svcAttributes
             replyPacket . PairingAccept =<< pairingFinalizeResponse
             svcSet PairingDone
-        PairingDone -> throwError $ "already done"
+        PairingDone -> throwOtherError $ "already done"
 
-pairingReject :: forall a m proxy. (PairingResult a, MonadIO m, MonadError String m) => proxy a -> Peer -> m ()
+pairingReject :: forall a m e proxy. (PairingResult a, MonadIO m, MonadError e m, FromErebosError e) => proxy a -> Peer -> m ()
 pairingReject _ peer = runPeerService @(PairingService a) peer $ do
     svcGet >>= \case
-        NoPairing -> throwError $ "none in progress"
-        PairingDone -> throwError $ "already done"
+        NoPairing -> throwOtherError $ "none in progress"
+        PairingDone -> throwOtherError $ "already done"
         _ -> reject PairingUserRejected

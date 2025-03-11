@@ -127,8 +127,8 @@ data ServiceHandlerState s = ServiceHandlerState
     , svcLocal :: Stored LocalState
     }
 
-newtype ServiceHandler s a = ServiceHandler (ReaderT (ServiceInput s) (WriterT [ServiceReply s] (StateT (ServiceHandlerState s) (ExceptT String IO))) a)
-    deriving (Functor, Applicative, Monad, MonadReader (ServiceInput s), MonadWriter [ServiceReply s], MonadState (ServiceHandlerState s), MonadError String, MonadIO)
+newtype ServiceHandler s a = ServiceHandler (ReaderT (ServiceInput s) (WriterT [ServiceReply s] (StateT (ServiceHandlerState s) (ExceptT ErebosError IO))) a)
+    deriving (Functor, Applicative, Monad, MonadReader (ServiceInput s), MonadWriter [ServiceReply s], MonadState (ServiceHandlerState s), MonadError ErebosError, MonadIO)
 
 instance MonadStorage (ServiceHandler s) where
     getStorage = asks $ peerStorage . svcPeer
@@ -145,7 +145,7 @@ runServiceHandler h input svc global shandler = do
         ServiceHandler handler = shandler
     (runExceptT $ flip runStateT sstate $ execWriterT $ flip runReaderT input $ handler) >>= \case
         Left err -> do
-            svcPrintOp input $ "service failed: " ++ err
+            svcPrintOp input $ "service failed: " ++ showErebosError err
             return ([], (svc, global))
         Right (rsp, sstate')
             | svcLocal sstate' == svcLocal sstate -> return (rsp, (svcValue sstate', svcGlobal sstate'))
@@ -178,7 +178,7 @@ svcSetLocal :: Stored LocalState -> ServiceHandler s ()
 svcSetLocal x = modify $ \st -> st { svcLocal = x }
 
 svcSelf :: ServiceHandler s UnifiedIdentity
-svcSelf = maybe (throwError "failed to validate own identity") return .
+svcSelf = maybe (throwOtherError "failed to validate own identity") return .
         validateExtendedIdentity . lsIdentity . fromStored =<< svcGetLocal
 
 svcPrint :: String -> ServiceHandler s ()

@@ -27,8 +27,8 @@ storeKey key = do
     case storedStorage spub of
         Storage {..} -> backendStoreKey stBackend (refDigest $ storedRef spub) (keyGetData key)
 
-loadKey :: (KeyPair sec pub, MonadIO m, MonadError String m) => Stored pub -> m sec
-loadKey pub = maybe (throwError $ "secret key not found for " <> show (storedRef pub)) return =<< loadKeyMb pub
+loadKey :: (KeyPair sec pub, MonadIO m, MonadError e m, FromErebosError e) => Stored pub -> m sec
+loadKey pub = maybe (throwOtherError $ "secret key not found for " <> show (storedRef pub)) return =<< loadKeyMb pub
 
 loadKeyMb :: forall sec pub m. (KeyPair sec pub, MonadIO m) => Stored pub -> m (Maybe sec)
 loadKeyMb spub = liftIO $ run $ storedStorage spub
