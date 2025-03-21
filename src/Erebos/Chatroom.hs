@@ -6,6 +6,7 @@ module Erebos.Chatroom (
     ChatroomState(..),
     ChatroomStateData(..),
     createChatroom,
+    deleteChatroomByStateData,
     updateChatroomByStateData,
     listChatrooms,
     findChatroomByRoomData,
@@ -207,9 +208,8 @@ sendRawChatroomMessageByStateData lookupData mbIdentity mdReplyTo mdText mdLeave
                         else []
 
         mdata <- mstore =<< sign secret =<< mstore ChatMessageData {..}
-        mergeSorted . (:[]) <$> mstore ChatroomStateData
+        mergeSorted . (:[]) <$> mstore emptyChatroomStateData
             { rsdPrev = roomStateData cstate
-            , rsdRoom = []
             , rsdSubscribe = Just (not mdLeave)
             , rsdIdentity = mbIdentity
             , rsdMessages = [ mdata ]
@@ -219,15 +219,27 @@ sendRawChatroomMessageByStateData lookupData mbIdentity mdReplyTo mdText mdLeave
 data ChatroomStateData = ChatroomStateData
     { rsdPrev :: [Stored ChatroomStateData]
     , rsdRoom :: [Stored (Signed ChatroomData)]
+    , rsdDelete :: Bool
     , rsdSubscribe :: Maybe Bool
     , rsdIdentity :: Maybe UnifiedIdentity
     , rsdMessages :: [Stored (Signed ChatMessageData)]
+    }
+
+emptyChatroomStateData :: ChatroomStateData
+emptyChatroomStateData = ChatroomStateData
+    { rsdPrev = []
+    , rsdRoom = []
+    , rsdDelete = False
+    , rsdSubscribe = Nothing
+    , rsdIdentity = Nothing
+    , rsdMessages = []
     }
 
 data ChatroomState = ChatroomState
     { roomStateData :: [Stored ChatroomStateData]
     , roomStateRoom :: Maybe Chatroom
     , roomStateMessageData :: [Stored (Signed ChatMessageData)]
+    , roomStateDeleted :: Bool
     , roomStateSubscribe :: Bool
     , roomStateIdentity :: Maybe UnifiedIdentity
     , roomStateMessages :: [ChatMessage]
@@ -237,6 +249,7 @@ instance Storable ChatroomStateData where
     store' ChatroomStateData {..} = storeRec $ do
         forM_ rsdPrev $ storeRef "PREV"
         forM_ rsdRoom $ storeRef "room"
+        when  rsdDelete $ storeEmpty "delete"
         forM_ rsdSubscribe $ storeInt "subscribe" . bool @Int 0 1
         forM_ rsdIdentity $ storeRef "id" . idExtData
         forM_ rsdMessages $ storeRef "msg"
@@ -244,6 +257,7 @@ instance Storable ChatroomStateData where
     load' = loadRec $ do
         rsdPrev <- loadRefs "PREV"
         rsdRoom <- loadRefs "room"
+        rsdDelete <- isJust <$> loadMbEmpty "delete"
         rsdSubscribe <- fmap ((/=) @Int 0) <$> loadMbInt "subscribe"
         rsdIdentity <- loadMbUnifiedIdentity "id"
         rsdMessages <- loadRefs "msg"
@@ -258,7 +272,8 @@ instance Mergeable ChatroomState where
             roomStateMessageData = filterAncestors $ concat $ flip findProperty roomStateData $ \case
                 ChatroomStateData {..} | null rsdMessages -> Nothing
                                        | otherwise        -> Just rsdMessages
-            roomStateSubscribe = fromMaybe False $ findPropertyFirst rsdSubscribe roomStateData
+            roomStateDeleted = any (rsdDelete . fromStored) roomStateData
+            roomStateSubscribe = not roomStateDeleted && (fromMaybe False $ findPropertyFirst rsdSubscribe roomStateData)
             roomStateIdentity = findPropertyFirst rsdIdentity roomStateData
             roomStateMessages = threadToListSince [] $ concatMap (rsdMessages . fromStored) roomStateData
          in ChatroomState {..}
@@ -273,12 +288,9 @@ createChatroom rdName rdDescription = do
     (secret, rdKey) <- liftIO . generateKeys =<< getStorage
     let rdPrev = []
     rdata <- mstore =<< sign secret =<< mstore ChatroomData {..}
-    cstate <- mergeSorted . (:[]) <$> mstore ChatroomStateData
-        { rsdPrev = []
-        , rsdRoom = [ rdata ]
+    cstate <- mergeSorted . (:[]) <$> mstore emptyChatroomStateData
+        { rsdRoom = [ rdata ]
         , rsdSubscribe = Just True
-        , rsdIdentity = Nothing
-        , rsdMessages = []
         }
 
     updateLocalHead $ updateSharedState $ \rooms -> do
@@ -304,6 +316,17 @@ findAndUpdateChatroomState f = do
                     return (roomSet, Just upd)
             [] -> return (roomSet, Nothing)
 
+deleteChatroomByStateData
+    :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
+    => Stored ChatroomStateData -> m ()
+deleteChatroomByStateData lookupData = void $ findAndUpdateChatroomState $ \cstate -> do
+    guard $ any (lookupData `precedesOrEquals`) $ roomStateData cstate
+    Just $ do
+        mergeSorted . (:[]) <$> mstore emptyChatroomStateData
+            { rsdPrev = roomStateData cstate
+            , rsdDelete = True
+            }
+
 updateChatroomByStateData
     :: (MonadStorage m, MonadHead LocalState m, MonadError String m)
     => Stored ChatroomStateData
@@ -321,17 +344,16 @@ updateChatroomByStateData lookupData newName newDesc = findAndUpdateChatroomStat
             , rdDescription = newDesc
             , rdKey = roomKey room
             }
-        mergeSorted . (:[]) <$> mstore ChatroomStateData
+        mergeSorted . (:[]) <$> mstore emptyChatroomStateData
             { rsdPrev = roomStateData cstate
             , rsdRoom = [ rdata ]
             , rsdSubscribe = Just True
-            , rsdIdentity = Nothing
-            , rsdMessages = []
             }
 
 
 listChatrooms :: MonadHead LocalState m => m [ChatroomState]
-listChatrooms = fromSetBy (comparing $ roomName <=< roomStateRoom) .
+listChatrooms = filter (not . roomStateDeleted) .
+    fromSetBy (comparing $ roomName <=< roomStateRoom) .
     lookupSharedValue . lsShared . fromStored <$> getLocalHead
 
 findChatroom :: MonadHead LocalState m => (ChatroomState -> Bool) -> m (Maybe ChatroomState)
@@ -352,12 +374,9 @@ chatroomSetSubscribe
 chatroomSetSubscribe lookupData subscribe = void $ findAndUpdateChatroomState $ \cstate -> do
     guard $ any (lookupData `precedesOrEquals`) $ roomStateData cstate
     Just $ do
-        mergeSorted . (:[]) <$> mstore ChatroomStateData
+        mergeSorted . (:[]) <$> mstore emptyChatroomStateData
             { rsdPrev = roomStateData cstate
-            , rsdRoom = []
             , rsdSubscribe = Just subscribe
-            , rsdIdentity = Nothing
-            , rsdMessages = []
             }
 
 chatroomMembers :: ChatroomState -> [ ComposedIdentity ]
@@ -420,7 +439,7 @@ watchChatrooms h f = liftIO $ do
             return $ makeChatroomDiff lastList curList
 
 chatroomSetToList :: Set ChatroomState -> [(Stored ChatroomStateData, ChatroomState)]
-chatroomSetToList = map (cmp &&& id) . fromSetBy (comparing cmp)
+chatroomSetToList = map (cmp &&& id) . filter (not . roomStateDeleted) . fromSetBy (comparing cmp)
   where
     cmp :: ChatroomState -> Stored ChatroomStateData
     cmp = head . filterAncestors . concatMap storedRoots . toComponents
@@ -518,12 +537,9 @@ instance Service ChatroomService where
                         -- update local state only if we got roomInfo not present there
                         if roomInfo `notElem` prevRoom && roomInfo `elem` room
                           then do
-                            sdata <- mstore ChatroomStateData
+                            sdata <- mstore emptyChatroomStateData
                                 { rsdPrev = prev
                                 , rsdRoom = room
-                                , rsdSubscribe = Nothing
-                                , rsdIdentity = Nothing
-                                , rsdMessages = []
                                 }
                             storeSetAddComponent sdata set
                           else return set
@@ -563,11 +579,8 @@ instance Service ChatroomService where
                             -- update local state only if subscribed and we got some new messages
                             if roomStateSubscribe prev && messages /= prevMessages
                               then do
-                                sdata <- mstore ChatroomStateData
+                                sdata <- mstore emptyChatroomStateData
                                     { rsdPrev = prevData
-                                    , rsdRoom = []
-                                    , rsdSubscribe = Nothing
-                                    , rsdIdentity = Nothing
                                     , rsdMessages = messages
                                     }
                                 storeSetAddComponent sdata set

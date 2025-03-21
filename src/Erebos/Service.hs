@@ -38,7 +38,13 @@ import Erebos.State
 import Erebos.Storable
 import Erebos.Storage.Head
 
-class (Typeable s, Storable s, Typeable (ServiceState s), Typeable (ServiceGlobalState s)) => Service s where
+class (
+        Typeable s, Storable s,
+        Typeable (ServiceAttributes s),
+        Typeable (ServiceState s),
+        Typeable (ServiceGlobalState s)
+    ) => Service s where
+
     serviceID :: proxy s -> ServiceID
     serviceHandler :: Stored s -> ServiceHandler s ()
 

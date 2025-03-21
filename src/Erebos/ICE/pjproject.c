@@ -12,7 +12,6 @@ static struct
 {
 	pj_caching_pool cp;
 	pj_pool_t * pool;
-	pj_ice_strans_cfg cfg;
 	pj_sockaddr def_addr;
 } ice;
 
@@ -31,9 +30,9 @@ static void ice_perror(const char * msg, pj_status_t status)
 	fprintf(stderr, "ICE: %s: %s\n", msg, err);
 }
 
-static int ice_worker_thread(void * unused)
+static int ice_worker_thread(void * vcfg)
 {
-	PJ_UNUSED_ARG(unused);
+	pj_ice_strans_cfg * cfg = (pj_ice_strans_cfg *) vcfg;
 
 	while (true) {
 		pj_time_val max_timeout = { 0, 0 };
@@ -41,7 +40,7 @@ static int ice_worker_thread(void * unused)
 
 		max_timeout.msec = 500;
 
-		pj_timer_heap_poll(ice.cfg.stun_cfg.timer_heap, &timeout);
+		pj_timer_heap_poll(cfg->stun_cfg.timer_heap, &timeout);
 
 		pj_assert(timeout.sec >= 0 && timeout.msec >= 0);
 		if (timeout.msec >= 1000)
@@ -50,7 +49,7 @@ static int ice_worker_thread(void * unused)
 		if (PJ_TIME_VAL_GT(timeout, max_timeout))
 			timeout = max_timeout;
 
-		int c = pj_ioqueue_poll(ice.cfg.stun_cfg.ioqueue, &timeout);
+		int c = pj_ioqueue_poll(cfg->stun_cfg.ioqueue, &timeout);
 		if (c < 0)
 			pj_thread_sleep(PJ_TIME_VAL_MSEC(timeout));
 	}
@@ -105,7 +104,7 @@ static void ice_init(void)
 
 	if (done) {
 		pthread_mutex_unlock(&mutex);
-		goto exit;
+		return;
 	}
 
 	pj_log_set_level(1);
@@ -125,48 +124,88 @@ static void ice_init(void)
 
 	pj_caching_pool_init(&ice.cp, NULL, 0);
 
-	pj_ice_strans_cfg_default(&ice.cfg);
-	ice.cfg.stun_cfg.pf = &ice.cp.factory;
-
 	ice.pool = pj_pool_create(&ice.cp.factory, "ice", 512, 512, NULL);
-
-	if (pj_timer_heap_create(ice.pool, 100,
-				&ice.cfg.stun_cfg.timer_heap) != PJ_SUCCESS) {
-		fprintf(stderr, "pj_timer_heap_create failed\n");
-		goto exit;
-	}
-
-	if (pj_ioqueue_create(ice.pool, 16, &ice.cfg.stun_cfg.ioqueue) != PJ_SUCCESS) {
-		fprintf(stderr, "pj_ioqueue_create failed\n");
-		goto exit;
-	}
-
-	pj_thread_t * thread;
-	if (pj_thread_create(ice.pool, "ice", &ice_worker_thread,
-				NULL, 0, 0, &thread) != PJ_SUCCESS) {
-		fprintf(stderr, "pj_thread_create failed\n");
-		goto exit;
-	}
-
-	ice.cfg.af = pj_AF_INET();
-	ice.cfg.opt.aggressive = PJ_TRUE;
-
-	ice.cfg.stun.server.ptr = "discovery1.erebosprotocol.net";
-	ice.cfg.stun.server.slen = strlen(ice.cfg.stun.server.ptr);
-	ice.cfg.stun.port = 29670;
-
-	ice.cfg.turn.server = ice.cfg.stun.server;
-	ice.cfg.turn.port = ice.cfg.stun.port;
-	ice.cfg.turn.auth_cred.type = PJ_STUN_AUTH_CRED_STATIC;
-	ice.cfg.turn.auth_cred.data.static_cred.data_type = PJ_STUN_PASSWD_PLAIN;
-	ice.cfg.turn.conn_type = PJ_TURN_TP_UDP;
 
 exit:
 	done = true;
 	pthread_mutex_unlock(&mutex);
 }
 
-pj_ice_strans * ice_create(pj_ice_sess_role role, HsStablePtr sptr, HsStablePtr cb)
+pj_ice_strans_cfg * ice_cfg_create( const char * stun_server, uint16_t stun_port,
+		const char * turn_server, uint16_t turn_port )
+{
+	ice_init();
+
+	pj_ice_strans_cfg * cfg = malloc( sizeof(pj_ice_strans_cfg) );
+	pj_ice_strans_cfg_default( cfg );
+
+	cfg->stun_cfg.pf = &ice.cp.factory;
+	if( pj_timer_heap_create( ice.pool, 100,
+				&cfg->stun_cfg.timer_heap ) != PJ_SUCCESS ){
+		fprintf( stderr, "pj_timer_heap_create failed\n" );
+		goto fail;
+	}
+
+	if( pj_ioqueue_create( ice.pool, 16, &cfg->stun_cfg.ioqueue ) != PJ_SUCCESS ){
+		fprintf( stderr, "pj_ioqueue_create failed\n" );
+		goto fail;
+	}
+
+	pj_thread_t * thread;
+	if( pj_thread_create( ice.pool, NULL, &ice_worker_thread,
+				cfg, 0, 0, &thread ) != PJ_SUCCESS ){
+		fprintf( stderr, "pj_thread_create failed\n" );
+		goto fail;
+	}
+
+	cfg->af = pj_AF_INET();
+	cfg->opt.aggressive = PJ_TRUE;
+
+	if( stun_server ){
+		cfg->stun.server.ptr = malloc( strlen( stun_server ));
+		pj_strcpy2( &cfg->stun.server, stun_server );
+		if( stun_port )
+			cfg->stun.port = stun_port;
+	}
+
+	if( turn_server ){
+		cfg->turn.server.ptr = malloc( strlen( turn_server ));
+		pj_strcpy2( &cfg->turn.server, turn_server );
+		if( turn_port )
+			cfg->turn.port = turn_port;
+		cfg->turn.auth_cred.type = PJ_STUN_AUTH_CRED_STATIC;
+		cfg->turn.auth_cred.data.static_cred.data_type = PJ_STUN_PASSWD_PLAIN;
+		cfg->turn.conn_type = PJ_TURN_TP_UDP;
+	}
+
+	return cfg;
+fail:
+	ice_cfg_free( cfg );
+	return NULL;
+}
+
+void ice_cfg_free( pj_ice_strans_cfg * cfg )
+{
+	if( ! cfg )
+		return;
+
+	if( cfg->turn.server.ptr )
+		free( cfg->turn.server.ptr );
+
+	if( cfg->stun.server.ptr )
+		free( cfg->stun.server.ptr );
+
+	if( cfg->stun_cfg.ioqueue )
+		pj_ioqueue_destroy( cfg->stun_cfg.ioqueue );
+
+	if( cfg->stun_cfg.timer_heap )
+		pj_timer_heap_destroy( cfg->stun_cfg.timer_heap );
+
+	free( cfg );
+}
+
+pj_ice_strans * ice_create( const pj_ice_strans_cfg * cfg, pj_ice_sess_role role,
+		HsStablePtr sptr, HsStablePtr cb )
 {
 	ice_init();
 
@@ -182,8 +221,8 @@ pj_ice_strans * ice_create(pj_ice_sess_role role, HsStablePtr sptr, HsStablePtr 
 		.on_ice_complete = cb_on_ice_complete,
 	};
 
-	pj_status_t status = pj_ice_strans_create(NULL, &ice.cfg, 1,
-			udata, &icecb, &res);
+	pj_status_t status = pj_ice_strans_create( NULL, cfg, 1,
+			udata, &icecb, &res );
 
 	if (status != PJ_SUCCESS)
 		ice_perror("error creating ice", status);

@@ -126,6 +126,20 @@ options =
     , Option [] ["chatroom-auto-subscribe"]
         (ReqArg (\count -> \opts -> opts { optChatroomAutoSubscribe = Just (read count) }) "<count>")
         "automatically subscribe for up to <count> chatrooms"
+#ifdef ENABLE_ICE_SUPPORT
+    , Option [] [ "discovery-stun-port" ]
+        (ReqArg (\value -> serviceAttr $ \attrs -> attrs { discoveryStunPort = Just (read value) }) "<port>")
+        "offer specified <port> to discovery peers for STUN protocol"
+    , Option [] [ "discovery-stun-server" ]
+        (ReqArg (\value -> serviceAttr $ \attrs -> attrs { discoveryStunServer = Just (read value) }) "<server>")
+        "offer <server> (domain name or IP address) to discovery peers for STUN protocol"
+    , Option [] [ "discovery-turn-port" ]
+        (ReqArg (\value -> serviceAttr $ \attrs -> attrs { discoveryTurnPort = Just (read value) }) "<port>")
+        "offer specified <port> to discovery peers for TURN protocol"
+    , Option [] [ "discovery-turn-server" ]
+        (ReqArg (\value -> serviceAttr $ \attrs -> attrs { discoveryTurnServer = Just (read value) }) "<server>")
+        "offer <server> (domain name or IP address) to discovery peers for TURN protocol"
+#endif
     , Option [] ["dm-bot-echo"]
         (ReqArg (\prefix -> \opts -> opts { optDmBotEcho = Just (T.pack prefix) }) "<prefix>")
         "automatically reply to direct messages with the same text prefixed with <prefix>"
@@ -136,7 +150,16 @@ options =
         (NoArg $ \opts -> opts { optShowVersion = True })
         "show version and exit"
     ]
-    where so f opts = opts { optServer = f $ optServer opts }
+  where
+    so f opts = opts { optServer = f $ optServer opts }
+
+    updateService :: Service s => (ServiceAttributes s -> ServiceAttributes s) -> SomeService -> SomeService
+    updateService f some@(SomeService proxy attrs)
+        | Just f' <- cast f = SomeService proxy (f' attrs)
+        | otherwise = some
+
+    serviceAttr :: Service s => (ServiceAttributes s -> ServiceAttributes s) -> Options -> Options
+    serviceAttr f opts = opts { optServices = map (\sopt -> sopt { soptService = updateService f (soptService sopt) }) (optServices opts) }
 
 servicesOptions :: [OptDescr (Options -> Options)]
 servicesOptions = concatMap helper $ "all" : map soptName availableServices
@@ -490,6 +513,7 @@ commands =
     , ("peer-add-public", cmdPeerAddPublic)
     , ("peer-drop", cmdPeerDrop)
     , ("send", cmdSend)
+    , ("delete", cmdDelete)
     , ("update-identity", cmdUpdateIdentity)
     , ("attach", cmdAttach)
     , ("attach-accept", cmdAttachAccept)
@@ -621,6 +645,11 @@ cmdSend = void $ do
             liftIO $ putStrLn $ formatMessage tzone msg
         Nothing -> return ()
 
+cmdDelete :: Command
+cmdDelete = void $ do
+    deleteConversation =<< getSelectedConversation
+    modify $ \s -> s { csContext = NoContext }
+
 cmdHistory :: Command
 cmdHistory = void $ do
     conv <- getSelectedConversation
@@ -667,7 +696,7 @@ watchChatroomsForCli eprint h chatroomSetVar contextVar autoSubscribe = do
 
     watchChatrooms h $ \set -> \case
         Nothing -> do
-            let chatroomList = fromSetBy (comparing roomStateData) set
+            let chatroomList = filter (not . roomStateDeleted) $ fromSetBy (comparing roomStateData) set
                 (subscribed, notSubscribed) = partition roomStateSubscribe chatroomList
                 subscribedNum = length subscribed
 
@@ -727,7 +756,7 @@ cmdChatrooms :: Command
 cmdChatrooms = do
     ensureWatchedChatrooms
     chatroomSetVar <- asks ciChatroomSetVar
-    chatroomList <- fromSetBy (comparing roomStateData) <$> liftIO (readMVar chatroomSetVar)
+    chatroomList <- filter (not . roomStateDeleted) . fromSetBy (comparing roomStateData) <$> liftIO (readMVar chatroomSetVar)
     set <- asks ciSetContextOptions
     set $ map SelectedChatroom chatroomList
     forM_ (zip [1..] chatroomList) $ \(i :: Int, rstate) -> do
@@ -879,12 +908,35 @@ cmdDiscovery = void $ do
 
 cmdIceCreate :: Command
 cmdIceCreate = do
-    role <- asks ciLine >>= return . \case
-        'm':_ -> PjIceSessRoleControlling
-        's':_ -> PjIceSessRoleControlled
-        _ -> PjIceSessRoleUnknown
+    let getRole = \case
+            'm':_ -> PjIceSessRoleControlling
+            's':_ -> PjIceSessRoleControlled
+            _ -> PjIceSessRoleUnknown
+
+    ( role, stun, turn ) <- asks (words . ciLine) >>= \case
+        [] -> return ( PjIceSessRoleControlling, Nothing, Nothing )
+        [ role ] -> return
+            ( getRole role, Nothing, Nothing )
+        [ role, server ] -> return
+            ( getRole role
+            , Just ( T.pack server, 0 )
+            , Just ( T.pack server, 0 )
+            )
+        [ role, server, port ] -> return
+            ( getRole role
+            , Just ( T.pack server, read port )
+            , Just ( T.pack server, read port )
+            )
+        [ role, stunServer, stunPort, turnServer, turnPort ] -> return
+            ( getRole role
+            , Just ( T.pack stunServer, read stunPort )
+            , Just ( T.pack turnServer, read turnPort )
+            )
+        _ -> throwError "invalid parameters"
+
     eprint <- asks ciPrint
-    sess <- liftIO $ iceCreate role $ eprint <=< iceShow
+    Just cfg <- liftIO $ iceCreateConfig stun turn
+    sess <- liftIO $ iceCreateSession cfg role $ eprint <=< iceShow
     modify $ \s -> s { csIceSessions = sess : csIceSessions s }
 
 cmdIceDestroy :: Command

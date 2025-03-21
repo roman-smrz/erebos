@@ -1,3 +1,5 @@
+def refpat = /blake2#[0-9a-f]+/
+
 test ChatroomSetup:
 	let services = "chatroom"
 
@@ -489,3 +491,172 @@ test ChatroomIdentity:
 			guard (name1 == "Custom1")
 			expect /chatroom-message-new [a-z0-9#]+ room first_room from ([^ ]+) text message4/ capture name2
 			guard (name2 == "Custom2")
+
+
+test ChatroomDelete:
+	let services = "chatroom"
+
+	node n1
+	node n2
+	node n3
+
+	# Create and sync chatrooms on n1 and sync to n2
+	local:
+		spawn as p1 on n1
+		with p1:
+			send "create-identity Device1 Owner1"
+			expect /create-identity-done .*/
+
+			send "chatroom-watch-local"
+			send "start-server services $services"
+
+			send "chatroom-create first"
+			send "chatroom-create second"
+			expect /chatroom-create-done $refpat first.*/
+			expect /chatroom-create-done $refpat second.*/
+
+
+		spawn as p2 on n2
+		with p2:
+			send "create-identity Device2 Owner2"
+			expect /create-identity-done .*/
+
+			send "chatroom-watch-local"
+			send "start-server services $services"
+
+			expect /chatroom-watched-added ($refpat) first sub false/ capture first
+			expect /chatroom-watched-added ($refpat) second sub false/ capture second
+
+			send "chatroom-subscribe $first"
+			send "chatroom-subscribe $second"
+			expect /chatroom-watched-updated $first first sub true .*/
+			expect /chatroom-watched-updated $second second sub true .*/
+
+	local:
+		spawn as p3 on n3
+		with p3:
+			send "create-identity Device3 Owner3"
+			expect /create-identity-done .*/
+
+	local:
+		spawn as p1 on n1
+		spawn as p2 on n2
+		spawn as p3 on n3
+
+		# Delete first chatroom from n1
+		with p1:
+			send "chatroom-watch-local"
+			send "start-server services $services"
+
+			send "chatroom-list-local"
+			expect /chatroom-list-item ($refpat) first sub true/ capture first
+			expect /chatroom-list-item $refpat second sub true/
+			local:
+				expect /chatroom-list-(.*)/ capture done
+				guard (done == "done")
+
+			send "chatroom-delete $first"
+			expect /chatroom-delete-done .*/
+
+		# Setup n3
+		with p3:
+			send "chatroom-watch-local"
+			send "start-server services $services"
+
+			expect /chatroom-watched-added $refpat second sub false/
+
+		# Check that both n1 and n3 see only the second chatroom
+		for p in [ p1, p3 ]:
+			with p:
+				send "chatroom-list-local"
+				expect /chatroom-list-item $refpat second .*/
+				local:
+					expect /chatroom-list-(.*)/ capture done
+					guard (done == "done")
+
+		# Reactive server on n2 and create third chatroom
+		with p2:
+			send "chatroom-watch-local"
+			send "start-server services $services"
+
+			send "chatroom-create third"
+			expect /chatroom-create-done $refpat third.*/
+
+		# Verify that first chatroom appears only on n3 ...
+		with p3:
+			expect /chatroom-watched-added $refpat first sub false/
+			expect /chatroom-watched-added $refpat third sub false/
+
+			send "chatroom-list-local"
+			expect /chatroom-list-item $refpat first .*/
+			expect /chatroom-list-item $refpat second .*/
+			expect /chatroom-list-item $refpat third .*/
+			local:
+				expect /chatroom-list-(.*)/ capture done
+				guard (done == "done")
+
+		# ... and not on n1
+		with p1:
+			expect /chatroom-watched-added ($refpat) third sub false/ capture third
+			send "chatroom-subscribe $third"
+			expect /chatroom-watched-updated $third third sub true .*/
+
+			send "chatroom-list-local"
+			expect /chatroom-list-item $refpat second .*/
+			expect /chatroom-list-item $refpat third .*/
+			local:
+				expect /chatroom-list-(.*)/ capture done
+				guard (done == "done")
+
+		# Delete second chatroom on n2
+		with p2:
+			send "chatroom-list-local"
+			expect /chatroom-list-item $refpat first .*/
+			expect /chatroom-list-item ($refpat) second .*/ capture second
+			expect /chatroom-list-item $refpat third .*/
+			local:
+				expect /chatroom-list-(.*)/ capture done
+				guard (done == "done")
+
+			send "chatroom-delete $second"
+			expect /chatroom-delete-done .*/
+
+		# Send messages
+		with p3:
+			send "chatroom-list-local"
+			expect /chatroom-list-item ($refpat) first .*/ capture first
+			expect /chatroom-list-item ($refpat) second .*/ capture second
+			expect /chatroom-list-item ($refpat) third .*/ capture third
+			local:
+				expect /chatroom-list-(.*)/ capture done
+				guard (done == "done")
+
+			send "chatroom-message-send $first message_first"
+			send "chatroom-message-send $second message_second"
+			send "chatroom-message-send $third message_third"
+
+		# Receive only to non-deleted ones
+		with p1:
+			expect /chatroom-message-new $refpat room second from Owner3 text message_second/
+			expect /chatroom-message-new $refpat room ([a-z]+) from Owner3 text ([a-z_]+)/ capture room, msg
+			guard (room == "third")
+			guard (msg == "message_third")
+
+			send "chatroom-list-local"
+			expect /chatroom-list-item $refpat second .*/
+			expect /chatroom-list-item $refpat third .*/
+			local:
+				expect /chatroom-list-(.*)/ capture done
+				guard (done == "done")
+		with p2:
+			expect /chatroom-message-new $refpat room first from Owner3 text message_first/
+			expect /chatroom-message-new $refpat room ([a-z]+) from Owner3 text ([a-z_]+)/ capture room, msg
+			guard (room == "third")
+			guard (msg == "message_third")
+
+			send "chatroom-list-local"
+			expect /chatroom-list-item $refpat first .*/
+			expect /chatroom-list-item $refpat third .*/
+			local:
+				expect /chatroom-list-(.*)/ capture done
+				guard (done == "done")
