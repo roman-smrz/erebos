@@ -58,7 +58,7 @@ data DiscoveryConnection = DiscoveryConnection
     , dconnTarget :: Ref
     , dconnAddress :: Maybe Text
 #ifdef ENABLE_ICE_SUPPORT
-    , dconnIceSession :: Maybe IceRemoteInfo
+    , dconnIceInfo :: Maybe IceRemoteInfo
 #endif
     }
 
@@ -67,7 +67,7 @@ emptyConnection dconnSource dconnTarget = DiscoveryConnection {..}
   where
     dconnAddress = Nothing
 #ifdef ENABLE_ICE_SUPPORT
-    dconnIceSession = Nothing
+    dconnIceInfo = Nothing
 #endif
 
 instance Storable DiscoveryService where
@@ -96,7 +96,7 @@ instance Storable DiscoveryService where
                   storeRawRef "target" $ dconnTarget conn
                   storeMbText "address" $ dconnAddress conn
 #ifdef ENABLE_ICE_SUPPORT
-                  storeMbRef "ice-session" $ dconnIceSession conn
+                  storeMbRef "ice-info" $ dconnIceInfo conn
 #endif
 
     load' = loadRec $ msum
@@ -130,7 +130,7 @@ instance Storable DiscoveryService where
                       <*> loadRawRef "target"
                       <*> loadMbText "address"
 #ifdef ENABLE_ICE_SUPPORT
-                      <*> loadMbRef "ice-session"
+                      <*> loadMbRef "ice-info"
 #endif
 
 data DiscoveryPeer = DiscoveryPeer
@@ -237,7 +237,7 @@ instance Service DiscoveryService where
                     ice <- iceCreateSession config PjIceSessRoleControlling $ \ice -> do
                         rinfo <- iceRemoteInfo ice
                         res <- runExceptT $ sendToPeer discoveryPeer $
-                            DiscoveryConnectionRequest (emptyConnection (storedRef $ idData self) ref) { dconnIceSession = Just rinfo }
+                            DiscoveryConnectionRequest (emptyConnection (storedRef $ idData self) ref) { dconnIceInfo = Just rinfo }
                         case res of
                             Right _ -> return ()
                             Left err -> putStrLn $ "Discovery: failed to send connection request: " ++ err
@@ -285,10 +285,10 @@ instance Service DiscoveryService where
                         Just config -> do
                             liftIO $ void $ iceCreateSession config PjIceSessRoleControlled $ \ice -> do
                                 rinfo <- iceRemoteInfo ice
-                                res <- runExceptT $ sendToPeer peer $ DiscoveryConnectionResponse rconn { dconnIceSession = Just rinfo }
+                                res <- runExceptT $ sendToPeer peer $ DiscoveryConnectionResponse rconn { dconnIceInfo = Just rinfo }
                                 case res of
                                     Right _ -> do
-                                        case dconnIceSession conn of
+                                        case dconnIceInfo conn of
                                             Just prinfo -> iceConnect ice prinfo $ void $ serverPeerIce server ice
                                             Nothing -> putStrLn $ "Discovery: connection request without ICE remote info"
                                     Left err -> putStrLn $ "Discovery: failed to send connection response: " ++ err
@@ -327,7 +327,7 @@ instance Service DiscoveryService where
 
                         | Just dp <- M.lookup (refDigest $ dconnTarget conn) dpeers
                         , Just ice <- dpIceSession dp
-                        , Just rinfo <- dconnIceSession conn -> do
+                        , Just rinfo <- dconnIceInfo conn -> do
                             liftIO $ iceConnect ice rinfo $ void $ serverPeerIce server ice
 
                         | otherwise -> svcPrint $ "Discovery: connection request failed"
