@@ -771,12 +771,12 @@ cmdChatrooms = do
 
 cmdChatroomCreatePublic :: Command
 cmdChatroomCreatePublic = do
+    term <- asks ciTerminal
     name <- asks ciLine >>= \case
         line | not (null line) -> return $ T.pack line
         _ -> liftIO $ do
-            T.putStr $ T.pack "Name: "
-            hFlush stdout
-            T.getLine
+            setPrompt term "Name: "
+            getInputLine term $ KeepPrompt . maybe T.empty T.pack
 
     ensureWatchedChatrooms
     void $ createChatroom
@@ -964,11 +964,15 @@ cmdIceConnect :: Command
 cmdIceConnect = do
     s:_ <- gets csIceSessions
     server <- asks ciServer
-    let loadInfo = BC.getLine >>= \case line | BC.null line -> return []
-                                             | otherwise    -> (line:) <$> loadInfo
+    term <- asks ciTerminal
+    let loadInfo =
+            getInputLine term (KeepPrompt . maybe BC.empty BC.pack) >>= \case
+                line | BC.null line -> return []
+                     | otherwise    -> (line :) <$> loadInfo
     Right remote <- liftIO $ do
         st <- memoryStorage
         pst <- derivePartialStorage st
+        setPrompt term ""
         rbytes <- (BL.fromStrict . BC.unlines) <$> loadInfo
         copyRef st =<< storeRawBytes pst (BL.fromChunks [ BC.pack "rec ", BC.pack (show (BL.length rbytes)), BC.singleton '\n' ] `BL.append` rbytes)
     liftIO $ iceConnect s (load remote) $ void $ serverPeerIce server s
