@@ -1,12 +1,11 @@
 module Erebos.State (
     LocalState(..),
-    SharedState, SharedType(..),
+    SharedState(..), SharedType(..),
     SharedTypeID, mkSharedTypeID,
 
+    MonadStorage(..),
     MonadHead(..),
     updateLocalHead_,
-
-    loadLocalStateHead,
 
     updateSharedState, updateSharedState_,
     lookupSharedValue, makeSharedStateUpdate,
@@ -15,8 +14,6 @@ module Erebos.State (
     headLocalIdentity,
 
     mergeSharedIdentity,
-    updateSharedIdentity,
-    interactiveIdentityUpdate,
 ) where
 
 import Control.Monad.Except
@@ -24,15 +21,9 @@ import Control.Monad.Reader
 
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as BC
-import Data.Foldable
-import Data.Maybe
-import Data.Text qualified as T
-import Data.Text.IO qualified as T
 import Data.Typeable
 import Data.UUID (UUID)
 import Data.UUID qualified as U
-
-import System.IO
 
 import Erebos.Identity
 import Erebos.Object
@@ -106,35 +97,6 @@ instance (HeadType a, MonadIO m) => MonadHead a (ReaderT (Head a) m) where
         snd <$> updateHead h f
 
 
-loadLocalStateHead :: MonadIO m => Storage -> m (Head LocalState)
-loadLocalStateHead st = loadHeads st >>= \case
-    (h:_) -> return h
-    [] -> liftIO $ do
-        putStr "Name: "
-        hFlush stdout
-        name <- T.getLine
-
-        putStr "Device: "
-        hFlush stdout
-        devName <- T.getLine
-
-        owner <- if
-            | T.null name -> return Nothing
-            | otherwise -> Just <$> createIdentity st (Just name) Nothing
-
-        identity <- createIdentity st (if T.null devName then Nothing else Just devName) owner
-
-        shared <- wrappedStore st $ SharedState
-            { ssPrev = []
-            , ssType = Just $ sharedTypeID @(Maybe ComposedIdentity) Proxy
-            , ssValue = [storedRef $ idExtData $ fromMaybe identity owner]
-            }
-        storeHead st $ LocalState
-            { lsIdentity = idExtData identity
-            , lsShared = [ shared ]
-            , lsOther = []
-            }
-
 localIdentity :: LocalState -> UnifiedIdentity
 localIdentity ls = maybe (error "failed to verify local identity")
     (updateOwners $ maybe [] idExtDataF $ lookupSharedValue $ lsShared ls)
@@ -178,33 +140,3 @@ mergeSharedIdentity = updateLocalHead $ updateSharedState $ \case
         identity <- mergeIdentity cidentity
         return (Just $ toComposedIdentity identity, identity)
     Nothing -> throwOtherError "no existing shared identity"
-
-updateSharedIdentity :: (MonadHead LocalState m, MonadError e m, FromErebosError e) => m ()
-updateSharedIdentity = updateLocalHead_ $ updateSharedState_ $ \case
-    Just identity -> do
-        Just . toComposedIdentity <$> interactiveIdentityUpdate identity
-    Nothing -> throwOtherError "no existing shared identity"
-
-interactiveIdentityUpdate :: (Foldable f, MonadStorage m, MonadIO m, MonadError e m, FromErebosError e) => Identity f -> m UnifiedIdentity
-interactiveIdentityUpdate identity = do
-    let public = idKeyIdentity identity
-
-    name <- liftIO $ do
-        T.putStr $ T.concat $ concat
-            [ [ T.pack "Name" ]
-            , case idName identity of
-                   Just name -> [T.pack " [", name, T.pack "]"]
-                   Nothing -> []
-            , [ T.pack ": " ]
-            ]
-        hFlush stdout
-        T.getLine
-
-    if  | T.null name -> mergeIdentity identity
-        | otherwise -> do
-            secret <- loadKey public
-            maybe (throwOtherError "created invalid identity") return . validateIdentity =<<
-                mstore =<< sign secret =<< mstore (emptyIdentityData public)
-                { iddPrev = toList $ idDataF identity
-                , iddName = Just name
-                }

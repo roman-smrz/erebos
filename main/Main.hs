@@ -57,6 +57,7 @@ import Erebos.Storage
 import Erebos.Storage.Merge
 import Erebos.Sync
 
+import State
 import Terminal
 import Test
 import Version
@@ -235,17 +236,20 @@ main = do
             Nothing -> error "ref does not exist"
             Just ref -> print $ storedGeneration (wrappedLoad ref :: Stored Object)
 
-        ["update-identity"] -> either (fail . showErebosError) return <=< runExceptT $ do
-            runReaderT updateSharedIdentity =<< loadLocalStateHead st
+        ["update-identity"] -> do
+            withTerminal noCompletion $ \term -> do
+                either (fail . showErebosError) return <=< runExceptT $ do
+                    runReaderT (updateSharedIdentity term) =<< loadLocalStateHead term st
 
         ("update-identity" : srefs) -> do
-            sequence <$> mapM (readRef st . BC.pack) srefs >>= \case
-                Nothing -> error "ref does not exist"
-                Just refs
-                    | Just idt <- validateIdentityF $ map wrappedLoad refs -> do
-                        BC.putStrLn . showRefDigest . refDigest . storedRef . idData =<<
-                            (either (fail . showErebosError) return <=< runExceptT $ runReaderT (interactiveIdentityUpdate idt) st)
-                    | otherwise -> error "invalid identity"
+            withTerminal noCompletion $ \term -> do
+                sequence <$> mapM (readRef st . BC.pack) srefs >>= \case
+                    Nothing -> error "ref does not exist"
+                    Just refs
+                        | Just idt <- validateIdentityF $ map wrappedLoad refs -> do
+                            BC.putStrLn . showRefDigest . refDigest . storedRef . idData =<<
+                                (either (fail . showErebosError) return <=< runExceptT $ runReaderT (interactiveIdentityUpdate term idt) st)
+                        | otherwise -> error "invalid identity"
 
         ["test"] -> runTestTool st
 
@@ -277,7 +281,7 @@ main = do
 
 interactiveLoop :: Storage -> Options -> IO ()
 interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
-    erebosHead <- liftIO $ loadLocalStateHead st
+    erebosHead <- liftIO $ loadLocalStateHead term st
     void $ printLine term $ T.unpack $ displayIdentity $ headLocalIdentity erebosHead
 
     let tui = hasTerminalUI term
@@ -392,6 +396,7 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
                               mzero
             res <- liftIO $ runExceptT $ flip execStateT cstate { csHead = h } $ runReaderT cmd CommandInput
                 { ciServer = server
+                , ciTerminal = term
                 , ciLine = line
                 , ciPrint = extPrintLn
                 , ciOptions = opts
@@ -427,6 +432,7 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
 
 data CommandInput = CommandInput
     { ciServer :: Server
+    , ciTerminal :: Terminal
     , ciLine :: String
     , ciPrint :: String -> IO ()
     , ciOptions :: Options
@@ -662,7 +668,8 @@ cmdHistory = void $ do
 
 cmdUpdateIdentity :: Command
 cmdUpdateIdentity = void $ do
-    runReaderT updateSharedIdentity =<< gets csHead
+    term <- asks ciTerminal
+    runReaderT (updateSharedIdentity term) =<< gets csHead
 
 cmdAttach :: Command
 cmdAttach = attachToOwner =<< getSelectedPeer

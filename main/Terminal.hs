@@ -13,6 +13,7 @@ module Terminal (
     clearBottomLines,
 
     CompletionFunc, Completion,
+    noCompletion,
     simpleCompletion,
     completeWordWithPrev,
 ) where
@@ -287,6 +288,9 @@ displayWidth = \case
 type CompletionFunc m = ( String, String ) -> m ( String, [ Completion ] )
 
 data Completion
+
+noCompletion :: Monad m => CompletionFunc m
+noCompletion ( l, _ ) = return ( l, [] )
 
 completeWordWithPrev :: Maybe Char -> [ Char ] -> (String -> String -> m [ Completion ]) -> CompletionFunc m
 completeWordWithPrev = error "TODO"

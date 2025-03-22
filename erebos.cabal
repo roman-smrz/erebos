@@ -185,6 +185,7 @@ executable erebos
     main-is:             Main.hs
     other-modules:
         Paths_erebos
+        State
         Terminal
         Test
         Test.Service
