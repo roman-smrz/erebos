@@ -553,8 +553,13 @@ commandCompletion = completeWordWithPrev Nothing [ ' ', '\t', '\n', '\r' ] $ cur
     sortedCommandNames = sort $ map fst commands
 
 
+cmdPutStrLn :: String -> Command
+cmdPutStrLn str = do
+    term <- asks ciTerminal
+    void $ liftIO $ printLine term str
+
 cmdUnknown :: String -> Command
-cmdUnknown cmd = liftIO $ putStrLn $ "Unknown command: " ++ cmd
+cmdUnknown cmd = cmdPutStrLn $ "Unknown command: " ++ cmd
 
 cmdPeers :: Command
 cmdPeers = do
@@ -562,7 +567,7 @@ cmdPeers = do
     set <- asks ciSetContextOptions
     set $ map (SelectedPeer . fst) peers
     forM_ (zip [1..] peers) $ \(i :: Int, (_, name)) -> do
-        liftIO $ putStrLn $ "[" ++ show i ++ "] " ++ name
+        cmdPutStrLn $ "[" ++ show i ++ "] " ++ name
 
 cmdPeerAdd :: Command
 cmdPeerAdd = void $ do
@@ -621,7 +626,7 @@ cmdMembers :: Command
 cmdMembers = do
     Just room <- findChatroomByStateData . head . roomStateData =<< getSelectedChatroom
     forM_ (chatroomMembers room) $ \x -> do
-        liftIO $ putStrLn $ maybe "<unnamed>" T.unpack $ idName x
+        cmdPutStrLn $ maybe "<unnamed>" T.unpack $ idName x
 
 
 cmdSelectContext :: Command
@@ -644,7 +649,7 @@ cmdSend = void $ do
     sendMessage conv (T.pack text) >>= \case
         Just msg -> do
             tzone <- liftIO $ getCurrentTimeZone
-            liftIO $ putStrLn $ formatMessage tzone msg
+            cmdPutStrLn $ formatMessage tzone msg
         Nothing -> return ()
 
 cmdDelete :: Command
@@ -658,9 +663,9 @@ cmdHistory = void $ do
     case conversationHistory conv of
         thread@(_:_) -> do
             tzone <- liftIO $ getCurrentTimeZone
-            liftIO $ mapM_ (putStrLn . formatMessage tzone) $ reverse $ take 50 thread
+            mapM_ (cmdPutStrLn . formatMessage tzone) $ reverse $ take 50 thread
         [] -> do
-            liftIO $ putStrLn $ "<empty history>"
+            cmdPutStrLn $ "<empty history>"
 
 cmdUpdateIdentity :: Command
 cmdUpdateIdentity = void $ do
@@ -763,7 +768,7 @@ cmdChatrooms = do
     set <- asks ciSetContextOptions
     set $ map SelectedChatroom chatroomList
     forM_ (zip [1..] chatroomList) $ \(i :: Int, rstate) -> do
-        liftIO $ putStrLn $ "[" ++ show i ++ "] " ++ maybe "<unnamed>" T.unpack (roomName =<< roomStateRoom rstate)
+        cmdPutStrLn $ "[" ++ show i ++ "] " ++ maybe "<unnamed>" T.unpack (roomName =<< roomStateRoom rstate)
 
 cmdChatroomCreatePublic :: Command
 cmdChatroomCreatePublic = do
@@ -788,8 +793,8 @@ cmdContacts = do
         verbose = "-v" `elem` args
     set <- asks ciSetContextOptions
     set $ map SelectedContact contacts
-    forM_ (zip [1..] contacts) $ \(i :: Int, c) -> liftIO $ do
-        T.putStrLn $ T.concat
+    forM_ (zip [1..] contacts) $ \(i :: Int, c) -> do
+        cmdPutStrLn $ T.unpack $ T.concat
             [ "[", T.pack (show i), "] ", contactName c
             , case contactIdentity c of
                    Just idt | cname <- displayIdentity idt
@@ -815,36 +820,36 @@ cmdConversations = do
     set <- asks ciSetContextOptions
     set $ map SelectedConversation conversations
     forM_ (zip [1..] conversations) $ \(i :: Int, conv) -> do
-        liftIO $ putStrLn $ "[" ++ show i ++ "] " ++ T.unpack (conversationName conv)
+        cmdPutStrLn $ "[" ++ show i ++ "] " ++ T.unpack (conversationName conv)
 
 cmdDetails :: Command
 cmdDetails = do
     gets csContext >>= \case
         SelectedPeer peer -> do
-            liftIO $ putStr $ unlines
+            cmdPutStrLn $ unlines
                 [ "Network peer:"
                 , "  " <> show (peerAddress peer)
                 ]
             peerIdentity peer >>= \case
-                PeerIdentityUnknown _ -> liftIO $ do
-                    putStrLn $ "unknown identity"
-                PeerIdentityRef wref _ -> liftIO $ do
-                    putStrLn $ "Identity ref:"
-                    putStrLn $ "  " <> BC.unpack (showRefDigest $ wrDigest wref)
+                PeerIdentityUnknown _ -> do
+                    cmdPutStrLn $ "unknown identity"
+                PeerIdentityRef wref _ -> do
+                    cmdPutStrLn $ "Identity ref:"
+                    cmdPutStrLn $ "  " <> BC.unpack (showRefDigest $ wrDigest wref)
                 PeerIdentityFull pid -> printContactOrIdentityDetails pid
 
         SelectedContact contact -> do
             printContactDetails contact
 
         SelectedChatroom rstate -> do
-            liftIO $ putStrLn $ "Chatroom: " <> (T.unpack $ fromMaybe (T.pack "<unnamed>") $ roomName =<< roomStateRoom rstate)
+            cmdPutStrLn $ "Chatroom: " <> (T.unpack $ fromMaybe (T.pack "<unnamed>") $ roomName =<< roomStateRoom rstate)
 
         SelectedConversation conv -> do
             case conversationPeer conv of
                 Just pid -> printContactOrIdentityDetails pid
-                Nothing -> liftIO $ putStrLn $ "(conversation without peer)"
+                Nothing -> cmdPutStrLn $ "(conversation without peer)"
 
-        NoContext -> liftIO $ putStrLn "nothing selected"
+        NoContext -> cmdPutStrLn "nothing selected"
   where
     printContactOrIdentityDetails cid = do
         contacts <- fromSetBy (comparing contactName) . lookupSharedValue . lsShared . fromStored <$> getLocalHead
@@ -852,11 +857,11 @@ cmdDetails = do
             Just contact -> printContactDetails contact
             Nothing -> printIdentityDetails cid
 
-    printContactDetails contact = liftIO $ do
-        putStrLn $ "Contact:"
+    printContactDetails contact = do
+        cmdPutStrLn $ "Contact:"
         prefix <- case contactCustomName contact of
             Just name -> do
-                putStrLn $ "  " <> T.unpack name
+                cmdPutStrLn $ "  " <> T.unpack name
                 return $ Just "alias of"
             Nothing -> do
                 return $ Nothing
@@ -865,15 +870,15 @@ cmdDetails = do
             Just cid -> do
                 printIdentityDetailsBody prefix cid
             Nothing -> do
-                putStrLn $ "  (without erebos identity)"
+                cmdPutStrLn $ "  (without erebos identity)"
 
-    printIdentityDetails identity = liftIO $ do
-        putStrLn $ "Identity:"
+    printIdentityDetails identity = do
+        cmdPutStrLn $ "Identity:"
         printIdentityDetailsBody Nothing identity
 
     printIdentityDetailsBody prefix identity = do
         forM_ (zip (False : repeat True) $ unfoldOwners identity) $ \(owned, cpid) -> do
-            putStrLn $ unwords $ concat
+            cmdPutStrLn $ unwords $ concat
                 [ [ "  " ]
                 , if owned then [ "owned by" ] else maybeToList prefix
                 , [ maybe "<unnamed>" T.unpack (idName cpid) ]
