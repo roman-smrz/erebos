@@ -285,11 +285,7 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
     void $ printLine term $ T.unpack $ displayIdentity $ headLocalIdentity erebosHead
 
     let tui = hasTerminalUI term
-    let extPrint = void . printLine term
-    let extPrintLn str = do
-            let str' = case reverse str of ('\n':_) -> str
-                                           _ -> str ++ "\n";
-            extPrint $! str' -- evaluate str before calling extPrint to avoid blinking
+    let extPrintLn = void . printLine term
 
     let getInputLinesTui :: Either CommandState String -> MaybeT IO String
         getInputLinesTui eprompt = do
