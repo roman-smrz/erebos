@@ -129,7 +129,8 @@ getInputLine term@Terminal {..} handleResult = do
         prompt <- atomically $ do
             writeTVar termShowPrompt True
             readTVar termPrompt
-        putStr prompt
+        putStr $ prompt <> "\ESC[K"
+        drawBottomLines term
         hFlush stdout
     (handleResult <$> go) >>= \case
         KeepPrompt x -> do
