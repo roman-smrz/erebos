@@ -25,6 +25,9 @@ import Control.Exception
 import Control.Monad
 
 import Data.Char
+import Data.List
+import Data.Text (Text)
+import Data.Text qualified as T
 
 import System.IO
 import System.Console.ANSI
@@ -33,6 +36,7 @@ import System.Console.ANSI
 data Terminal = Terminal
     { termLock :: MVar ()
     , termAnsi :: Bool
+    , termCompletionFunc :: CompletionFunc IO
     , termPrompt :: TVar String
     , termShowPrompt :: TVar Bool
     , termInput :: TVar ( String, String )
@@ -65,8 +69,8 @@ data InputHandling a
 hasTerminalUI :: Terminal -> Bool
 hasTerminalUI = termAnsi
 
-initTerminal :: IO Terminal
-initTerminal = do
+initTerminal :: CompletionFunc IO -> IO Terminal
+initTerminal termCompletionFunc = do
     termLock <- newMVar ()
     termAnsi <- hNowSupportsANSI stdout
     termPrompt <- newTVarIO ""
@@ -79,8 +83,8 @@ bracketSet :: IO a -> (a -> IO b) -> a -> IO c -> IO c
 bracketSet get set val = bracket (get <* set val) set . const
 
 withTerminal :: CompletionFunc IO -> (Terminal -> IO a) -> IO a
-withTerminal _ act = do
-    term <- initTerminal
+withTerminal compl act = do
+    term <- initTerminal compl
 
     bracketSet (hGetEcho stdin) (hSetEcho stdin) False $
         bracketSet (hGetBuffering stdin) (hSetBuffering stdin) NoBuffering $
@@ -134,10 +138,10 @@ getInputLine term@Terminal {..} handleResult = do
         hFlush stdout
     (handleResult <$> go) >>= \case
         KeepPrompt x -> do
-            termPutStr term "\n"
+            termPutStr term "\n\ESC[J"
             return x
         ErasePrompt x -> do
-            termPutStr term "\r\ESC[K"
+            termPutStr term "\r\ESC[J"
             return x
   where
     go = getInput >>= \case
@@ -146,7 +150,37 @@ getInputLine term@Terminal {..} handleResult = do
                 ( pre, post ) <- readTVar termInput
                 writeTVar termInput ( "", "" )
                 writeTVar termShowPrompt False
+                writeTVar termBottomLines []
                 return $ Just $ pre ++ post
+
+        InputChar '\t' -> do
+            options <- withMVar termLock $ const $ do
+                ( pre, post ) <- atomically $ readTVar termInput
+                let updatePrompt pre' = do
+                        prompt <- atomically $ do
+                            writeTVar termInput ( pre', post )
+                            getCurrentPromptLine term
+                        putStr $ "\r" <> prompt
+                        hFlush stdout
+
+                termCompletionFunc ( T.pack pre, T.pack post ) >>= \case
+
+                    ( unused, [ compl ] ) -> do
+                        updatePrompt $ T.unpack unused ++ T.unpack (replacement compl) ++ if isFinished compl then " " else ""
+                        return []
+
+                    ( unused, completions@(c : cs) ) -> do
+                        let commonPrefixes' x y = fmap (\( common, _, _ ) -> common) $ T.commonPrefixes x y
+                        case foldl' (\mbcommon cur -> commonPrefixes' cur =<< mbcommon) (Just $ replacement c) (fmap replacement cs) of
+                            Just common -> updatePrompt $ T.unpack unused ++ T.unpack common
+                            Nothing -> return ()
+                        return $ map replacement completions
+
+                    ( _, [] ) -> do
+                        return []
+
+            printBottomLines term $ T.unpack $ T.unlines options
+            go
 
         InputChar c | isPrint c -> withInput $ \case
             ( _, post ) -> do
@@ -286,15 +320,21 @@ displayWidth = \case
     [] -> 0
 
 
-type CompletionFunc m = ( String, String ) -> m ( String, [ Completion ] )
+type CompletionFunc m = ( Text, Text ) -> m ( Text, [ Completion ] )
 
-data Completion
+data Completion = Completion
+    { replacement :: Text
+    , isFinished :: Bool
+    }
 
 noCompletion :: Monad m => CompletionFunc m
 noCompletion ( l, _ ) = return ( l, [] )
 
-completeWordWithPrev :: Maybe Char -> [ Char ] -> (String -> String -> m [ Completion ]) -> CompletionFunc m
-completeWordWithPrev = error "TODO"
+completeWordWithPrev :: Monad m => Maybe Char -> [ Char ] -> (String -> String -> m [ Completion ]) -> CompletionFunc m
+completeWordWithPrev _ spaceChars fun ( l, _ ) = do
+    let lastSpaceIndex = snd $ T.foldl' (\( i, found ) c -> if c `elem` spaceChars then ( i + 1, i ) else ( i + 1, found )) ( 1, 0 ) l
+    let ( pre, word ) = T.splitAt lastSpaceIndex l
+    ( pre, ) <$> fun (T.unpack pre) (T.unpack word)
 
 simpleCompletion :: String -> Completion
-simpleCompletion = error "TODO"
+simpleCompletion str = Completion (T.pack str) True
