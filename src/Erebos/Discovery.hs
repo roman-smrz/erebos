@@ -352,4 +352,5 @@ instance Service DiscoveryService where
 #endif
             ]
 
-        sendToPeer peer $ DiscoverySelf addrs Nothing
+        when (not $ null addrs) $ do
+            sendToPeer peer $ DiscoverySelf addrs Nothing
