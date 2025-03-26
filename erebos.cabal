@@ -45,6 +45,7 @@ source-repository head
 common common
     ghc-options:
         -Wall
+        -Wno-x-partial
         -fdefer-typed-holes
 
     if flag(ci)
