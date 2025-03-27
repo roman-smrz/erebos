@@ -567,7 +567,7 @@ watchHeadRaw st tid hid sel cb = do
                  True -> return ilist
                  False -> do
                      void $ watchDir manager (headTypePath spath tid) (const True) $ \case
-                         Added { eventPath = fpath } | Just ihid <- HeadID <$> U.fromString (takeFileName fpath) -> do
+                         ev@Added {} | Just ihid <- HeadID <$> U.fromString (takeFileName (eventPath ev)) -> do
                              loadHeadRaw st tid ihid >>= \case
                                  Just ref -> do
                                      (_, _, iwl) <- readMVar mvar
