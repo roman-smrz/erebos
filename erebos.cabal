@@ -40,7 +40,7 @@ Flag ci
 
 source-repository head
     type:       git
-    location:   git://erebosprotocol.net/erebos
+    location:   https://code.erebosprotocol.net/erebos
 
 common common
     ghc-options:
