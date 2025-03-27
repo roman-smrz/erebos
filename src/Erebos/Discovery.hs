@@ -60,6 +60,8 @@ data DiscoveryConnection = DiscoveryConnection
     , dconnAddress :: Maybe Text
 #ifdef ENABLE_ICE_SUPPORT
     , dconnIceInfo :: Maybe IceRemoteInfo
+#else
+    , dconnIceInfo :: Maybe (Stored Object)
 #endif
     }
 
@@ -67,9 +69,7 @@ emptyConnection :: Ref -> Ref -> DiscoveryConnection
 emptyConnection dconnSource dconnTarget = DiscoveryConnection {..}
   where
     dconnAddress = Nothing
-#ifdef ENABLE_ICE_SUPPORT
     dconnIceInfo = Nothing
-#endif
 
 instance Storable DiscoveryService where
     store' x = storeRec $ do
@@ -96,9 +96,7 @@ instance Storable DiscoveryService where
                   storeRawRef "source" $ dconnSource conn
                   storeRawRef "target" $ dconnTarget conn
                   storeMbText "address" $ dconnAddress conn
-#ifdef ENABLE_ICE_SUPPORT
                   storeMbRef "ice-info" $ dconnIceInfo conn
-#endif
 
     load' = loadRec $ msum
             [ do
@@ -130,9 +128,7 @@ instance Storable DiscoveryService where
                       <$> loadRawRef "source"
                       <*> loadRawRef "target"
                       <*> loadMbText "address"
-#ifdef ENABLE_ICE_SUPPORT
                       <*> loadMbRef "ice-info"
-#endif
 
 data DiscoveryPeer = DiscoveryPeer
     { dpPriority :: Int
@@ -163,13 +159,19 @@ instance Service DiscoveryService where
             peer <- asks svcPeer
             let insertHelper new old | dpPriority new > dpPriority old = new
                                      | otherwise                       = old
-            matchedAddrs <- fmap catMaybes $ forM addrs $ \addr -> case words (T.unpack addr) of
-                [ipaddr, port] | DatagramAddress paddr <- peerAddress peer -> do
+            matchedAddrs <- fmap catMaybes $ forM addrs $ \addr -> if
+                | addr == T.pack "ICE" -> do
+                    return $ Just addr
+
+                | [ ipaddr, port ] <- words (T.unpack addr)
+                , DatagramAddress paddr <- peerAddress peer -> do
                     saddr <- liftIO $ head <$> getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just ipaddr) (Just port)
                     return $ if paddr == addrAddress saddr
                                 then Just addr
                                 else Nothing
-                _ -> return Nothing
+
+                | otherwise -> return Nothing
+
             forM_ (idDataF =<< unfoldOwners pid) $ \s ->
                 svcModifyGlobal $ M.insertWith insertHelper (refDigest $ storedRef s) DiscoveryPeer
                     { dpPriority = fromMaybe 0 priority
@@ -179,39 +181,34 @@ instance Service DiscoveryService where
                     , dpIceSession = Nothing
 #endif
                     }
-            let matchedAddrs' = matchedAddrs
-#ifdef ENABLE_ICE_SUPPORT
-                    ++ filter (== T.pack "ICE") addrs
-#endif
             attrs <- asks svcAttributes
-            replyPacket $ DiscoveryAcknowledged matchedAddrs'
+            replyPacket $ DiscoveryAcknowledged matchedAddrs
                 (discoveryStunServer attrs)
                 (discoveryStunPort attrs)
                 (discoveryTurnServer attrs)
                 (discoveryTurnPort attrs)
 
-        DiscoveryAcknowledged addrs stunServer stunPort turnServer turnPort -> do
+        DiscoveryAcknowledged _ stunServer stunPort turnServer turnPort -> do
 #ifdef ENABLE_ICE_SUPPORT
-            when (T.pack "ICE" `elem` addrs) $ do
-                paddr <- asks (peerAddress . svcPeer) >>= return . \case
-                    (DatagramAddress saddr) -> case IP.fromSockAddr saddr of
-                        Just (IP.IPv6 ipv6, _)
-                            | (0, 0, 0xffff, ipv4) <- IP.fromIPv6w ipv6
-                            -> Just $ T.pack $ show (IP.toIPv4w ipv4)
-                        Just (addr, _)
-                            -> Just $ T.pack $ show addr
-                        _ -> Nothing
+            paddr <- asks (peerAddress . svcPeer) >>= return . \case
+                (DatagramAddress saddr) -> case IP.fromSockAddr saddr of
+                    Just (IP.IPv6 ipv6, _)
+                        | (0, 0, 0xffff, ipv4) <- IP.fromIPv6w ipv6
+                        -> Just $ T.pack $ show (IP.toIPv4w ipv4)
+                    Just (addr, _)
+                        -> Just $ T.pack $ show addr
                     _ -> Nothing
+                _ -> Nothing
 
-                let toIceServer Nothing Nothing = Nothing
-                    toIceServer Nothing (Just port) = ( , port) <$> paddr
-                    toIceServer (Just server) Nothing = Just ( server, 0 )
-                    toIceServer (Just server) (Just port) = Just ( server, port )
+            let toIceServer Nothing Nothing = Nothing
+                toIceServer Nothing (Just port) = ( , port) <$> paddr
+                toIceServer (Just server) Nothing = Just ( server, 0 )
+                toIceServer (Just server) (Just port) = Just ( server, port )
 
-                cfg <- liftIO $ iceCreateConfig
-                    (toIceServer stunServer stunPort)
-                    (toIceServer turnServer turnPort)
-                svcSet cfg
+            cfg <- liftIO $ iceCreateConfig
+                (toIceServer stunServer stunPort)
+                (toIceServer turnServer turnPort)
+            svcSet cfg
 #endif
             return ()
 
@@ -274,11 +271,11 @@ instance Service DiscoveryService where
                         svcPrint $ "Discovery: invalid address in result: " ++ T.unpack addr
 
         DiscoveryConnectionRequest conn -> do
-#ifdef ENABLE_ICE_SUPPORT
             self <- svcSelf
             let rconn = emptyConnection (dconnSource conn) (dconnTarget conn)
             if refDigest (dconnTarget conn) `elem` (map (refDigest . storedRef) $ idDataF =<< unfoldOwners self)
                then do
+#ifdef ENABLE_ICE_SUPPORT
                     -- request for us, create ICE sesssion
                     server <- asks svcServer
                     peer <- asks svcPeer
@@ -295,6 +292,9 @@ instance Service DiscoveryService where
                                     Left err -> putStrLn $ "Discovery: failed to send connection response: " ++ err
                         Nothing -> do
                             svcPrint $ "Discovery: ICE request from peer without ICE configuration"
+#else
+                    return ()
+#endif
 
                else do
                     -- request to some of our peers, relay
@@ -306,17 +306,14 @@ instance Service DiscoveryService where
                                 | Just dpeer <- dpPeer dp -> do
                                     sendToPeer dpeer $ DiscoveryConnectionRequest conn
                                 | otherwise -> svcPrint $ "Discovery: failed to relay connection request"
-#else
-            return ()
-#endif
 
         DiscoveryConnectionResponse conn -> do
-#ifdef ENABLE_ICE_SUPPORT
             self <- svcSelf
             dpeers <- svcGetGlobal
             if refDigest (dconnSource conn) `elem` (map (refDigest . storedRef) $ idDataF =<< unfoldOwners self)
                then do
                     -- response to our request, try to connect to the peer
+#ifdef ENABLE_ICE_SUPPORT
                     server <- asks svcServer
                     if  | Just addr <- dconnAddress conn
                         , [ipaddr, port] <- words (T.unpack addr) -> do
@@ -332,15 +329,15 @@ instance Service DiscoveryService where
                             liftIO $ iceConnect ice rinfo $ void $ serverPeerIce server ice
 
                         | otherwise -> svcPrint $ "Discovery: connection request failed"
+#else
+                    return ()
+#endif
                else do
                     -- response to relayed request
                     case M.lookup (refDigest $ dconnSource conn) dpeers of
                         Just dp | Just dpeer <- dpPeer dp -> do
                             sendToPeer dpeer $ DiscoveryConnectionResponse conn
                         _ -> svcPrint $ "Discovery: failed to relay connection response"
-#else
-            return ()
-#endif
 
     serviceNewPeer = do
         server <- asks svcServer
@@ -356,4 +353,5 @@ instance Service DiscoveryService where
 #endif
             ]
 
-        sendToPeer peer $ DiscoverySelf addrs Nothing
+        when (not $ null addrs) $ do
+            sendToPeer peer $ DiscoverySelf addrs Nothing

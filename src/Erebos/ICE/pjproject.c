@@ -397,7 +397,7 @@ void ice_send(pj_ice_strans * strans, const char * data, size_t len)
 		return;
 	}
 
-	pj_status_t status = pj_ice_strans_sendto(strans, 1, data, len,
+	pj_status_t status = pj_ice_strans_sendto2(strans, 1, data, len,
 			&ice.def_addr, pj_sockaddr_get_len(&ice.def_addr));
 	if (status != PJ_SUCCESS && status != PJ_EPENDING)
 		ice_perror("error sending data", status);

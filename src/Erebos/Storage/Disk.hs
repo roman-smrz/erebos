@@ -94,7 +94,7 @@ instance StorageBackend DiskStorage where
                 True -> return ilist
                 False -> do
                     void $ watchDir manager (headTypePath dirPath tid) (const True) $ \case
-                        Added { eventPath = fpath } | Just ihid <- HeadID <$> U.fromString (takeFileName fpath) -> do
+                        ev@Added {} | Just ihid <- HeadID <$> U.fromString (takeFileName (eventPath ev)) -> do
                             backendLoadHead st tid ihid >>= \case
                                 Just dgst -> do
                                     (_, _, iwl) <- readMVar dirWatchers

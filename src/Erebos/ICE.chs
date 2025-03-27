@@ -19,7 +19,7 @@ module Erebos.ICE (
 ) where
 
 import Control.Arrow
-import Control.Concurrent.MVar
+import Control.Concurrent
 import Control.Monad
 import Control.Monad.Identity
 
@@ -144,7 +144,11 @@ iceCreateConfig stun turn =
 iceCreateSession :: IceConfig -> IceSessionRole -> (IceSession -> IO ()) -> IO IceSession
 iceCreateSession icfg@(IceConfig fcfg) role cb = do
     rec sptr <- newStablePtr sess
-        cbptr <- newStablePtr $ cb sess
+        cbptr <- newStablePtr $ do
+            -- The callback may be called directly from pj_ice_strans_create or later
+            -- from a different thread; make sure we use a different thread here 
+            -- to avoid deadlock on accessing 'sess'.
+            forkIO $ cb sess
         sess <- IceSession
             <$> (withForeignPtr fcfg $ \cfg ->
                     {#call ice_create #} (castPtr cfg) (fromIntegral $ fromEnum role) (castStablePtrToPtr sptr) (castStablePtrToPtr cbptr)
