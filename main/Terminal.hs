@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP #-}
+
 module Terminal (
     Terminal,
     hasTerminalUI,
@@ -72,7 +74,11 @@ hasTerminalUI = termAnsi
 initTerminal :: CompletionFunc IO -> IO Terminal
 initTerminal termCompletionFunc = do
     termLock <- newMVar ()
+#if MIN_VERSION_ansi_terminal(1, 0, 1)
     termAnsi <- hNowSupportsANSI stdout
+#else
+    termAnsi <- hSupportsANSI stdout
+#endif
     termPrompt <- newTVarIO ""
     termShowPrompt <- newTVarIO False
     termInput <- newTVarIO ( "", "" )
