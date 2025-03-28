@@ -1,5 +1,12 @@
 # Revision history for erebos
 
+## 0.1.8 -- 2025-03-28
+
+* Discovery service without requiring ICE support
+* Added `/delete` command to delete chatrooms for current user
+* Ignore record items with unexpected type
+* Support GHC 9.12
+
 ## 0.1.7 -- 2024-10-30
 
 * Chatroom-specific identity

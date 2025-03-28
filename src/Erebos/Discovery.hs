@@ -301,11 +301,10 @@ instance Service DiscoveryService where
                     mbdp <- M.lookup (refDigest $ dconnTarget conn) <$> svcGetGlobal
                     case mbdp of
                         Nothing -> replyPacket $ DiscoveryConnectionResponse rconn
-                        Just dp | addr : _ <- dpAddress dp -> do
-                                    replyPacket $ DiscoveryConnectionResponse rconn { dconnAddress = Just addr }
-                                | Just dpeer <- dpPeer dp -> do
-                                    sendToPeer dpeer $ DiscoveryConnectionRequest conn
-                                | otherwise -> svcPrint $ "Discovery: failed to relay connection request"
+                        Just dp
+                            | Just dpeer <- dpPeer dp -> do
+                                sendToPeer dpeer $ DiscoveryConnectionRequest conn
+                            | otherwise -> svcPrint $ "Discovery: failed to relay connection request"
 
         DiscoveryConnectionResponse conn -> do
             self <- svcSelf
