@@ -22,9 +22,9 @@ module Erebos.Object.Internal (
     Store, StoreRec,
     evalStore, evalStoreObject,
     storeBlob, storeRec, storeZero,
-    storeEmpty, storeInt, storeNum, storeText, storeBinary, storeDate, storeUUID, storeRef, storeRawRef,
-    storeMbEmpty, storeMbInt, storeMbNum, storeMbText, storeMbBinary, storeMbDate, storeMbUUID, storeMbRef, storeMbRawRef,
-    storeZRef,
+    storeEmpty, storeInt, storeNum, storeText, storeBinary, storeDate, storeUUID, storeRef, storeRawRef, storeWeak, storeRawWeak,
+    storeMbEmpty, storeMbInt, storeMbNum, storeMbText, storeMbBinary, storeMbDate, storeMbUUID, storeMbRef, storeMbRawRef, storeMbWeak, storeMbRawWeak,
+    storeZRef, storeZWeak,
     storeRecItems,
 
     Load, LoadRec,
@@ -33,9 +33,9 @@ module Erebos.Object.Internal (
     loadRecCurrentRef, loadRecItems,
 
     loadBlob, loadRec, loadZero,
-    loadEmpty, loadInt, loadNum, loadText, loadBinary, loadDate, loadUUID, loadRef, loadRawRef,
-    loadMbEmpty, loadMbInt, loadMbNum, loadMbText, loadMbBinary, loadMbDate, loadMbUUID, loadMbRef, loadMbRawRef,
-    loadTexts, loadBinaries, loadRefs, loadRawRefs,
+    loadEmpty, loadInt, loadNum, loadText, loadBinary, loadDate, loadUUID, loadRef, loadRawRef, loadRawWeak,
+    loadMbEmpty, loadMbInt, loadMbNum, loadMbText, loadMbBinary, loadMbDate, loadMbUUID, loadMbRef, loadMbRawRef, loadMbRawWeak,
+    loadTexts, loadBinaries, loadRefs, loadRawRefs, loadRawWeaks,
     loadZRef,
 
     Stored,
@@ -121,6 +121,7 @@ copyRecItem' st = \case
     RecDate x -> return $ return $ RecDate x
     RecUUID x -> return $ return $ RecUUID x
     RecRef x -> fmap RecRef <$> copyRef' st x
+    RecWeak x -> return $ return $ RecWeak x
     RecUnknown t x -> return $ return $ RecUnknown t x
 
 copyObject' :: forall c c'. (StorageCompleteness c, StorageCompleteness c') => Storage' c' -> Object' c -> IO (c (Object' c'))
@@ -164,6 +165,7 @@ data RecItem' c
     | RecDate ZonedTime
     | RecUUID UUID
     | RecRef (Ref' c)
+    | RecWeak RefDigest
     | RecUnknown ByteString ByteString
     deriving (Show)
 
@@ -202,6 +204,7 @@ serializeRecItem name (RecBinary x) = [name, BC.pack ":b ", showHex x, BC.single
 serializeRecItem name (RecDate x) = [name, BC.pack ":d", BC.singleton ' ', BC.pack (formatTime defaultTimeLocale "%s %z" x), BC.singleton '\n']
 serializeRecItem name (RecUUID x) = [name, BC.pack ":u", BC.singleton ' ', U.toASCIIBytes x, BC.singleton '\n']
 serializeRecItem name (RecRef x) = [name, BC.pack ":r ", showRef x, BC.singleton '\n']
+serializeRecItem name (RecWeak x) = [name, BC.pack ":w ", showRefDigest x, BC.singleton '\n']
 serializeRecItem name (RecUnknown t x) = [ name, BC.singleton ':', t, BC.singleton ' ', x, BC.singleton '\n' ]
 
 lazyLoadObject :: forall c. StorageCompleteness c => Ref' c -> LoadResult c (Object' c)
@@ -268,6 +271,7 @@ unsafeDeserializeObject st bytes =
                           "d" -> RecDate <$> parseTimeM False defaultTimeLocale "%s %z" (BC.unpack content)
                           "u" -> RecUUID <$> U.fromASCIIBytes content
                           "r" -> RecRef . Ref st <$> readRefDigest content
+                          "w" -> RecWeak <$> readRefDigest content
                           _   -> Nothing
               return (name, val)
 
@@ -518,6 +522,33 @@ storeZRef name x = StoreRecM $ do
         return $ if isZeroRef ref then []
                                   else [(BC.pack name, RecRef ref)]
 
+storeWeak :: Storable a => StorageCompleteness c => String -> a -> StoreRec c
+storeWeak name x = StoreRecM $ do
+    s <- ask
+    tell $ (:[]) $ do
+        ref <- store s x
+        return [ ( BC.pack name, RecWeak $ refDigest ref ) ]
+
+storeMbWeak :: Storable a => StorageCompleteness c => String -> Maybe a -> StoreRec c
+storeMbWeak name = maybe (return ()) (storeWeak name)
+
+storeRawWeak :: StorageCompleteness c => String -> RefDigest -> StoreRec c
+storeRawWeak name dgst = StoreRecM $ do
+    tell $ (:[]) $ do
+        return [ ( BC.pack name, RecWeak dgst ) ]
+
+storeMbRawWeak :: StorageCompleteness c => String -> Maybe RefDigest -> StoreRec c
+storeMbRawWeak name = maybe (return ()) (storeRawWeak name)
+
+storeZWeak :: (ZeroStorable a, StorageCompleteness c) => String -> a -> StoreRec c
+storeZWeak name x = StoreRecM $ do
+    s <- ask
+    tell $ (:[]) $ do
+        ref <- store s x
+        return $ if isZeroRef ref then []
+                                  else [ ( BC.pack name, RecWeak $ refDigest ref ) ]
+
+
 storeRecItems :: StorageCompleteness c => [ ( ByteString, RecItem ) ] -> StoreRec c
 storeRecItems items = StoreRecM $ do
     st <- ask
@@ -653,6 +684,21 @@ loadZRef name = loadMbRef name >>= \case
                     Nothing -> do Ref st _ <- loadRecCurrentRef
                                   return $ fromZero st
                     Just x  -> return x
+
+loadRawWeak :: String -> LoadRec RefDigest
+loadRawWeak name = maybe (throwOtherError $ "Missing record item '"++name++"'") return =<< loadMbRawWeak name
+
+loadMbRawWeak :: String -> LoadRec (Maybe RefDigest)
+loadMbRawWeak name = listToMaybe <$> loadRawWeaks name
+
+loadRawWeaks :: String -> LoadRec [ RefDigest ]
+loadRawWeaks name = mapMaybe p <$> loadRecItems
+  where
+    bname = BC.pack name
+    p ( name', RecRef x )  | name' == bname = Just (refDigest x)
+    p ( name', RecWeak x ) | name' == bname = Just x
+    p _                                     = Nothing
+
 
 
 type Stored a = Stored' Complete a

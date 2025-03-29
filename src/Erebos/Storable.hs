@@ -14,9 +14,9 @@ module Erebos.Storable (
 
     Store, StoreRec,
     storeBlob, storeRec, storeZero,
-    storeEmpty, storeInt, storeNum, storeText, storeBinary, storeDate, storeUUID, storeRef, storeRawRef,
-    storeMbEmpty, storeMbInt, storeMbNum, storeMbText, storeMbBinary, storeMbDate, storeMbUUID, storeMbRef, storeMbRawRef,
-    storeZRef,
+    storeEmpty, storeInt, storeNum, storeText, storeBinary, storeDate, storeUUID, storeRef, storeRawRef, storeWeak, storeRawWeak,
+    storeMbEmpty, storeMbInt, storeMbNum, storeMbText, storeMbBinary, storeMbDate, storeMbUUID, storeMbRef, storeMbRawRef, storeMbWeak, storeMbRawWeak,
+    storeZRef, storeZWeak,
     storeRecItems,
 
     Load, LoadRec,
@@ -24,9 +24,9 @@ module Erebos.Storable (
     loadRecCurrentRef, loadRecItems,
 
     loadBlob, loadRec, loadZero,
-    loadEmpty, loadInt, loadNum, loadText, loadBinary, loadDate, loadUUID, loadRef, loadRawRef,
-    loadMbEmpty, loadMbInt, loadMbNum, loadMbText, loadMbBinary, loadMbDate, loadMbUUID, loadMbRef, loadMbRawRef,
-    loadTexts, loadBinaries, loadRefs, loadRawRefs,
+    loadEmpty, loadInt, loadNum, loadText, loadBinary, loadDate, loadUUID, loadRef, loadRawRef, loadRawWeak,
+    loadMbEmpty, loadMbInt, loadMbNum, loadMbText, loadMbBinary, loadMbDate, loadMbUUID, loadMbRef, loadMbRawRef, loadMbRawWeak,
+    loadTexts, loadBinaries, loadRefs, loadRawRefs, loadRawWeaks,
     loadZRef,
 
     Stored,
