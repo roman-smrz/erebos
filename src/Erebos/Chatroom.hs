@@ -293,7 +293,7 @@ createChatroom rdName rdDescription = do
         , rsdSubscribe = Just True
         }
 
-    updateLocalHead $ updateSharedState $ \rooms -> do
+    updateLocalState $ updateSharedState $ \rooms -> do
         st <- getStorage
         (, cstate) <$> storeSetAdd st cstate rooms
 
@@ -302,7 +302,7 @@ findAndUpdateChatroomState
     => (ChatroomState -> Maybe (m ChatroomState))
     -> m (Maybe ChatroomState)
 findAndUpdateChatroomState f = do
-    updateLocalHead $ updateSharedState $ \roomSet -> do
+    updateLocalState $ updateSharedState $ \roomSet -> do
         let roomList = fromSetBy (comparing $ roomName <=< roomStateRoom) roomSet
         case catMaybes $ map (\x -> (x,) <$> f x) roomList of
             ((orig, act) : _) -> do
@@ -523,7 +523,7 @@ instance Service ChatroomService where
                 }
 
         when (not $ null chatRoomInfo) $ do
-            updateLocalHead_ $ updateSharedState_ $ \roomSet -> do
+            updateLocalState_ $ updateSharedState_ $ \roomSet -> do
                 let rooms = fromSetBy (comparing $ roomName <=< roomStateRoom) roomSet
                     upd set (roomInfo :: Stored (Signed ChatroomData)) = do
                         let currentRoots = storedRoots roomInfo
@@ -562,7 +562,7 @@ instance Service ChatroomService where
                 svcModify $ \ps -> ps { psSubscribedTo = filter (/= leastRoot) (psSubscribedTo ps) }
 
         when (not (null chatRoomMessage)) $ do
-            updateLocalHead_ $ updateSharedState_ $ \roomSet -> do
+            updateLocalState_ $ updateSharedState_ $ \roomSet -> do
                 let rooms = fromSetBy (comparing $ roomName <=< roomStateRoom) roomSet
                     upd set (msgData :: Stored (Signed ChatMessageData))
                         | Just msg <- validateSingleMessage msgData = do

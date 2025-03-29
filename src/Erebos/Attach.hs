@@ -52,7 +52,7 @@ instance PairingResult AttachIdentity where
             guard $ iddPrev (fromSigned $ idData identity) == [eiddStoredBase curid]
             return (identity, keys)
 
-    pairingFinalizeRequest (identity, keys) = updateLocalHead_ $ \slocal -> do
+    pairingFinalizeRequest (identity, keys) = updateLocalState_ $ \slocal -> do
         let owner = finalOwner identity
         st <- getStorage
         pkeys <- mapM (copyStored st) [ idKeyIdentity owner, idKeyMessage owner ]

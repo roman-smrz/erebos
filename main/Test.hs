@@ -454,7 +454,8 @@ cmdCreateIdentity = do
             _ -> return []
 
         storeHead st $ LocalState
-            { lsIdentity = idExtData identity
+            { lsPrev = Nothing
+            , lsIdentity = idExtData identity
             , lsShared = shared
             , lsOther = []
             }
@@ -646,7 +647,7 @@ cmdWatchSharedIdentity = do
 cmdUpdateLocalIdentity :: Command
 cmdUpdateLocalIdentity = do
     [name] <- asks tiParams
-    updateLocalHead_ $ \ls -> do
+    updateLocalState_ $ \ls -> do
         Just identity <- return $ validateExtendedIdentity $ lsIdentity $ fromStored ls
         let public = idKeyIdentity identity
 
@@ -661,7 +662,7 @@ cmdUpdateLocalIdentity = do
 cmdUpdateSharedIdentity :: Command
 cmdUpdateSharedIdentity = do
     [name] <- asks tiParams
-    updateLocalHead_ $ updateSharedState_ $ \case
+    updateLocalState_ $ updateSharedState_ $ \case
         Nothing -> throwOtherError "no existing shared identity"
         Just identity -> do
             let public = idKeyIdentity identity
@@ -731,7 +732,7 @@ cmdContactSetName :: Command
 cmdContactSetName = do
     [cid, name] <- asks tiParams
     contact <- getContact cid
-    updateLocalHead_ $ updateSharedState_ $ contactSetName contact name
+    updateLocalState_ $ updateSharedState_ $ contactSetName contact name
     cmdOut "contact-set-name-done"
 
 cmdDmSendPeer :: Command

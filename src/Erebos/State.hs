@@ -7,6 +7,7 @@ module Erebos.State (
     MonadHead(..),
     updateLocalHead_,
 
+    updateLocalState, updateLocalState_,
     updateSharedState, updateSharedState_,
     lookupSharedValue, makeSharedStateUpdate,
 
@@ -33,7 +34,8 @@ import Erebos.Storage.Head
 import Erebos.Storage.Merge
 
 data LocalState = LocalState
-    { lsIdentity :: Stored (Signed ExtendedIdentityData)
+    { lsPrev :: Maybe RefDigest
+    , lsIdentity :: Stored (Signed ExtendedIdentityData)
     , lsShared :: [Stored SharedState]
     , lsOther :: [ ( ByteString, RecItem ) ]
     }
@@ -55,11 +57,13 @@ class Mergeable a => SharedType a where
 
 instance Storable LocalState where
     store' LocalState {..} = storeRec $ do
+        mapM_ (storeRawWeak "PREV") lsPrev
         storeRef "id" lsIdentity
         mapM_ (storeRef "shared") lsShared
         storeRecItems lsOther
 
     load' = loadRec $ do
+        lsPrev <- loadMbRawWeak "PREV"
         lsIdentity <- loadRef "id"
         lsShared <- loadRefs "shared"
         lsOther <- filter ((`notElem` [ BC.pack "id", BC.pack "shared" ]) . fst) <$> loadRecItems
@@ -106,6 +110,17 @@ headLocalIdentity :: Head LocalState -> UnifiedIdentity
 headLocalIdentity = localIdentity . headObject
 
 
+updateLocalState :: forall m b. MonadHead LocalState m => (Stored LocalState -> m ( Stored LocalState, b )) -> m b
+updateLocalState f = updateLocalHead $ \ls -> do
+    ( ls', x ) <- f ls
+    (, x) <$> if ls' == ls
+      then return ls'
+      else mstore (fromStored ls') { lsPrev = Just $ refDigest (storedRef ls) }
+
+updateLocalState_ :: forall m. MonadHead LocalState m => (Stored LocalState -> m (Stored LocalState)) -> m ()
+updateLocalState_ f = updateLocalState (fmap (,()) . f)
+
+
 updateSharedState_ :: forall a m. (SharedType a, MonadHead LocalState m) => (a -> m a) -> Stored LocalState -> m (Stored LocalState)
 updateSharedState_ f = fmap fst <$> updateSharedState (fmap (,()) . f)
 
@@ -135,7 +150,7 @@ makeSharedStateUpdate st val prev = liftIO $ wrappedStore st SharedState
 
 
 mergeSharedIdentity :: (MonadHead LocalState m, MonadError e m, FromErebosError e) => m UnifiedIdentity
-mergeSharedIdentity = updateLocalHead $ updateSharedState $ \case
+mergeSharedIdentity = updateLocalState $ updateSharedState $ \case
     Just cidentity -> do
         identity <- mergeIdentity cidentity
         return (Just $ toComposedIdentity identity, identity)

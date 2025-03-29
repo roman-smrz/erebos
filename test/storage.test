@@ -470,6 +470,7 @@ test LocalStateKeepUnknown:
 		send "load $s3"
 
 		expect /load-type rec [0-9]*/
+		expect /load-line PREV:w $s2/
 		expect /load-line id:r ($refpat)/ capture id2
 		guard (id1 /= id2)
 		expect /load-line TEST:i 123/

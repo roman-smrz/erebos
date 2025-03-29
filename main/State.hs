@@ -44,14 +44,15 @@ loadLocalStateHead term st = loadHeads st >>= \case
             , ssValue = [ storedRef $ idExtData $ fromMaybe identity owner ]
             }
         storeHead st $ LocalState
-            { lsIdentity = idExtData identity
+            { lsPrev = Nothing
+            , lsIdentity = idExtData identity
             , lsShared = [ shared ]
             , lsOther = []
             }
 
 
 updateSharedIdentity :: (MonadHead LocalState m, MonadError e m, FromErebosError e) => Terminal -> m ()
-updateSharedIdentity term = updateLocalHead_ $ updateSharedState_ $ \case
+updateSharedIdentity term = updateLocalState_ $ updateSharedState_ $ \case
     Just identity -> do
         Just . toComposedIdentity <$> interactiveIdentityUpdate term identity
     Nothing -> throwOtherError "no existing shared identity"

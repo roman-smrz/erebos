@@ -158,7 +158,7 @@ findMsgProperty pid sel mss = concat $ flip findProperty mss $ \x -> do
 
 sendDirectMessage :: (Foldable f, Applicative f, MonadHead LocalState m)
                   => Identity f -> Text -> m (Stored DirectMessage)
-sendDirectMessage pid text = updateLocalHead $ \ls -> do
+sendDirectMessage pid text = updateLocalState $ \ls -> do
     let self = localIdentity $ fromStored ls
         powner = finalOwner pid
     flip updateSharedState ls $ \(DirectMessageThreads prev _) -> do
@@ -188,7 +188,7 @@ syncDirectMessageToPeer (DirectMessageThreads mss _) = do
     peer <- asks svcPeer
     let thread = messageThreadFor pid mss
     mapM_ (sendToPeerStored peer) $ msgHead thread
-    updateLocalHead_ $ \ls -> do
+    updateLocalState_ $ \ls -> do
         let powner = finalOwner pid
         flip updateSharedState_ ls $ \unchanged@(DirectMessageThreads prev _) -> do
             let ready = findMsgProperty powner msReady prev

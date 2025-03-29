@@ -23,7 +23,7 @@ instance Service SyncService where
         pid <- asks svcPeerIdentity
         self <- svcSelf
         when (finalOwner pid `sameIdentity` finalOwner self) $ do
-            updateLocalHead_ $ \ls -> do
+            updateLocalState_ $ \ls -> do
                 let current = sort $ lsShared $ fromStored ls
                     updated = filterAncestors (added : current)
                 if current /= updated
