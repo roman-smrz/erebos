@@ -1,5 +1,9 @@
 # Revision history for erebos
 
+## 0.1.8.1 -- 2025-03-29
+
+* Fix build from sdist (add missing include)
+
 ## 0.1.8 -- 2025-03-28
 
 * Discovery service without requiring ICE support
