@@ -1,7 +1,7 @@
 Cabal-Version:       3.0
 
 Name:                erebos
-Version:             0.1.8
+Version:             0.1.8.1
 Synopsis:            Decentralized messaging and synchronization
 Description:
     Library and simple CLI interface implementing the Erebos identity
@@ -29,6 +29,7 @@ Extra-Doc-Files:
     CHANGELOG.md
 Extra-Source-Files:
     src/Erebos/ICE/pjproject.h
+    src/Erebos/Network/ifaddrs.h
 
 Flag ice
     Description:    Enable peer discovery with ICE support using pjproject
@@ -132,6 +133,8 @@ library
         src/Erebos/Network/ifaddrs.c
     include-dirs:
         src
+    includes:
+        src/Erebos/Network/ifaddrs.h
 
     if flag(ice)
         exposed-modules:
