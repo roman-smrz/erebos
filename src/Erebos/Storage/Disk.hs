@@ -18,7 +18,6 @@ import Data.ByteString.Lazy.Char8 qualified as BLC
 import Data.Function
 import Data.List
 import Data.Maybe
-import Data.UUID qualified as U
 
 import System.Directory
 import System.FSNotify
@@ -31,6 +30,7 @@ import Erebos.Storage.Backend
 import Erebos.Storage.Head
 import Erebos.Storage.Internal
 import Erebos.Storage.Platform
+import Erebos.UUID qualified as U
 
 
 data DiskStorage = StorageDir

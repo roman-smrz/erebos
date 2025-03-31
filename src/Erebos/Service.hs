@@ -29,14 +29,14 @@ import Control.Monad.Writer
 
 import Data.Kind
 import Data.Typeable
-import Data.UUID (UUID)
-import qualified Data.UUID as U
 
 import Erebos.Identity
 import {-# SOURCE #-} Erebos.Network
 import Erebos.State
 import Erebos.Storable
 import Erebos.Storage.Head
+import Erebos.UUID (UUID)
+import Erebos.UUID qualified as U
 
 class (
         Typeable s, Storable s,

@@ -74,13 +74,14 @@ import Data.Time.Calendar
 import Data.Time.Clock
 import Data.Time.Format
 import Data.Time.LocalTime
-import Data.UUID (UUID)
-import qualified Data.UUID as U
 
 import System.IO.Unsafe
 
 import Erebos.Error
 import Erebos.Storage.Internal
+import Erebos.UUID (UUID)
+import Erebos.UUID qualified as U
+import Erebos.Util
 
 
 zeroRef :: Storage' c -> Ref' c

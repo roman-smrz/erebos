@@ -28,13 +28,12 @@ import Control.Monad.Reader
 
 import Data.Bifunctor
 import Data.Typeable
-import Data.UUID qualified as U
-import Data.UUID.V4 qualified as U
 
 import Erebos.Object
 import Erebos.Storable
 import Erebos.Storage.Backend
 import Erebos.Storage.Internal
+import Erebos.UUID qualified as U
 
 
 -- | Represents loaded Erebos storage head, along with the object it pointed to

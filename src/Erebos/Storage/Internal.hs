@@ -4,28 +4,27 @@ import Control.Arrow
 import Control.Concurrent
 import Control.DeepSeq
 import Control.Exception
-import Control.Monad
 import Control.Monad.Identity
 
 import Crypto.Hash
 
 import Data.Bits
-import Data.ByteArray (ByteArray, ByteArrayAccess, ScrubbedBytes)
+import Data.ByteArray (ByteArrayAccess, ScrubbedBytes)
 import Data.ByteArray qualified as BA
 import Data.ByteString (ByteString)
-import Data.ByteString qualified as B
 import Data.ByteString.Char8 qualified as BC
 import Data.ByteString.Lazy qualified as BL
-import Data.Char
 import Data.HashTable.IO qualified as HT
 import Data.Hashable
 import Data.Kind
 import Data.Typeable
-import Data.UUID (UUID)
 
 import Foreign.Storable (peek)
 
 import System.IO.Unsafe (unsafePerformIO)
+
+import Erebos.UUID (UUID)
+import Erebos.Util
 
 
 data Storage' c = forall bck. (StorageBackend bck, BackendCompleteness bck ~ c) => Storage
@@ -204,26 +203,6 @@ refDigestFromByteString = fmap RefDigest . digestFromByteString
 
 hashToRefDigest :: BL.ByteString -> RefDigest
 hashToRefDigest = RefDigest . hashFinalize . hashUpdates hashInit . BL.toChunks
-
-showHex :: ByteArrayAccess ba => ba -> ByteString
-showHex = B.concat . map showHexByte . BA.unpack
-    where showHexChar x | x < 10    = x + o '0'
-                        | otherwise = x + o 'a' - 10
-          showHexByte x = B.pack [ showHexChar (x `div` 16), showHexChar (x `mod` 16) ]
-          o = fromIntegral . ord
-
-readHex :: ByteArray ba => ByteString -> Maybe ba
-readHex = return . BA.concat <=< readHex'
-    where readHex' bs | B.null bs = Just []
-          readHex' bs = do (bx, bs') <- B.uncons bs
-                           (by, bs'') <- B.uncons bs'
-                           x <- hexDigit bx
-                           y <- hexDigit by
-                           (B.singleton (x * 16 + y) :) <$> readHex' bs''
-          hexDigit x | x >= o '0' && x <= o '9' = Just $ x - o '0'
-                     | x >= o 'a' && x <= o 'z' = Just $ x - o 'a' + 10
-                     | otherwise                = Nothing
-          o = fromIntegral . ord
 
 
 newtype Generation = Generation Int

@@ -23,8 +23,6 @@ import Control.Monad.Reader
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as BC
 import Data.Typeable
-import Data.UUID (UUID)
-import Data.UUID qualified as U
 
 import Erebos.Identity
 import Erebos.Object
@@ -32,6 +30,8 @@ import Erebos.PubKey
 import Erebos.Storable
 import Erebos.Storage.Head
 import Erebos.Storage.Merge
+import Erebos.UUID (UUID)
+import Erebos.UUID qualified as U
 
 data LocalState = LocalState
     { lsPrev :: Maybe RefDigest

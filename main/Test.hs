@@ -26,7 +26,6 @@ import Data.Text qualified as T
 import Data.Text.Encoding
 import Data.Text.IO qualified as T
 import Data.Typeable
-import Data.UUID qualified as U
 
 import Network.Socket
 
@@ -51,6 +50,7 @@ import Erebos.Storage
 import Erebos.Storage.Head
 import Erebos.Storage.Merge
 import Erebos.Sync
+import Erebos.UUID qualified as U
 
 import Test.Service
 
