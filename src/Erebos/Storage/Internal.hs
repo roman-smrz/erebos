@@ -195,10 +195,10 @@ showRefDigest = showRefDigestParts >>> \(alg, hex) -> alg <> BC.pack "#" <> hex
 readRefDigest :: ByteString -> Maybe RefDigest
 readRefDigest x = case BC.split '#' x of
                        [alg, dgst] | BA.convert alg == BC.pack "blake2" ->
-                           refDigestFromByteString =<< readHex @ByteString dgst
+                           refDigestFromByteString =<< readHex dgst
                        _ -> Nothing
 
-refDigestFromByteString :: ByteArrayAccess ba => ba -> Maybe RefDigest
+refDigestFromByteString :: ByteString -> Maybe RefDigest
 refDigestFromByteString = fmap RefDigest . digestFromByteString
 
 hashToRefDigest :: BL.ByteString -> RefDigest

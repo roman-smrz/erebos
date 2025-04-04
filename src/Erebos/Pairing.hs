@@ -17,9 +17,10 @@ import Control.Monad.Reader
 import Crypto.Random
 
 import Data.Bits
-import Data.ByteArray (Bytes, convert)
-import qualified Data.ByteArray as BA
-import qualified Data.ByteString.Char8 as BC
+import Data.ByteArray qualified as BA
+import Data.ByteString (ByteString)
+import Data.ByteString qualified as BS
+import Data.ByteString.Char8 qualified as BC
 import Data.Kind
 import Data.Maybe
 import Data.Typeable
@@ -34,16 +35,16 @@ import Erebos.State
 import Erebos.Storable
 
 data PairingService a = PairingRequest (Stored (Signed IdentityData)) (Stored (Signed IdentityData)) RefDigest
-                      | PairingResponse Bytes
-                      | PairingRequestNonce Bytes
+                      | PairingResponse ByteString
+                      | PairingRequestNonce ByteString
                       | PairingAccept a
                       | PairingReject
 
 data PairingState a = NoPairing
-                    | OurRequest UnifiedIdentity UnifiedIdentity Bytes
+                    | OurRequest UnifiedIdentity UnifiedIdentity ByteString
                     | OurRequestConfirm (Maybe (PairingVerifiedResult a))
                     | OurRequestReady
-                    | PeerRequest UnifiedIdentity UnifiedIdentity Bytes RefDigest
+                    | PeerRequest UnifiedIdentity UnifiedIdentity ByteString RefDigest
                     | PeerRequestConfirm
                     | PairingDone
 
@@ -88,7 +89,7 @@ instance Storable a => Storable (PairingService a) where
 
     load' = do
         res <- loadRec $ do
-            (req :: Maybe Bytes) <- loadMbBinary "request"
+            (req :: Maybe ByteString) <- loadMbBinary "request"
             idReq <- loadMbRef "id-req"
             idRsp <- loadMbRef "id-rsp"
             rsp <- loadMbBinary "response"
@@ -171,7 +172,7 @@ instance PairingResult a => Service (PairingService a) where
         x@(OurRequestReady, _) -> reject $ uncurry PairingUnexpectedMessage x
 
         (PeerRequest peer self nonce dgst, PairingRequestNonce pnonce) -> do
-            if dgst == nonceDigest peer self pnonce BA.empty
+            if dgst == nonceDigest peer self pnonce BS.empty
                then do hook <- asks $ pairingHookRequestNonce . svcAttributes
                        hook $ confirmationNumber $ nonceDigest peer self pnonce nonce
                        svcSet PeerRequestConfirm
@@ -188,12 +189,12 @@ reject reason = do
     replyPacket PairingReject
 
 
-nonceDigest :: UnifiedIdentity -> UnifiedIdentity -> Bytes -> Bytes -> RefDigest
+nonceDigest :: UnifiedIdentity -> UnifiedIdentity -> ByteString -> ByteString -> RefDigest
 nonceDigest idReq idRsp nonceReq nonceRsp = hashToRefDigest $ serializeObject $ Rec
         [ (BC.pack "id-req", RecRef $ storedRef $ idData idReq)
         , (BC.pack "id-rsp", RecRef $ storedRef $ idData idRsp)
-        , (BC.pack "nonce-req", RecBinary $ convert nonceReq)
-        , (BC.pack "nonce-rsp", RecBinary $ convert nonceRsp)
+        , (BC.pack "nonce-req", RecBinary nonceReq)
+        , (BC.pack "nonce-rsp", RecBinary nonceRsp)
         ]
 
 confirmationNumber :: RefDigest -> String
@@ -212,7 +213,7 @@ pairingRequest _ peer = do
         PeerIdentityFull pid -> return pid
         _ -> throwOtherError "incomplete peer identity"
     sendToPeerWith @(PairingService a) peer $ \case
-        NoPairing -> return (Just $ PairingRequest (idData self) (idData pid) (nonceDigest self pid nonce BA.empty), OurRequest self pid nonce)
+        NoPairing -> return (Just $ PairingRequest (idData self) (idData pid) (nonceDigest self pid nonce BS.empty), OurRequest self pid nonce)
         _ -> throwOtherError "already in progress"
 
 pairingAccept :: forall a m e proxy. (PairingResult a, MonadIO m, MonadError e m, FromErebosError e) => proxy a -> Peer -> m ()
