@@ -31,8 +31,9 @@ import Data.List
 import Data.Text (Text)
 import Data.Text qualified as T
 
-import System.IO
 import System.Console.ANSI
+import System.IO
+import System.IO.Error
 
 
 data Terminal = Terminal
@@ -107,7 +108,7 @@ termPutStr Terminal {..} str = do
 
 getInput :: IO Input
 getInput = do
-    getChar >>= \case
+    handleJust (guard . isEOFError) (\() -> return InputEnd) $ getChar >>= \case
         '\ESC' -> do
             esc <- readEsc
             case parseEsc esc of
