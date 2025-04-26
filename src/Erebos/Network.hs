@@ -14,7 +14,12 @@ module Erebos.Network (
     PeerIdentity(..), peerIdentity,
     WaitingRef, wrDigest,
     Service(..),
+
+    PeerAddressType(..),
+    receivedFromCustomAddress,
+
     serverPeer,
+    serverPeerCustom,
 #ifdef ENABLE_ICE_SUPPORT
     serverPeerIce,
 #endif
@@ -36,13 +41,14 @@ import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.State
 
+import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as BC
 import Data.ByteString.Lazy qualified as BL
 import Data.Function
 import Data.IP qualified as IP
 import Data.List
 import Data.Map (Map)
-import qualified Data.Map as M
+import Data.Map qualified as M
 import Data.Maybe
 import Data.Typeable
 import Data.Word
@@ -56,7 +62,7 @@ import Foreign.Storable as F
 import GHC.Conc.Sync (unsafeIOToSTM)
 
 import Network.Socket hiding (ControlMessage)
-import qualified Network.Socket.ByteString as S
+import Network.Socket.ByteString qualified as S
 
 import Erebos.Error
 #ifdef ENABLE_ICE_SUPPORT
@@ -157,12 +163,19 @@ setPeerChannel Peer {..} ch = do
 instance Eq Peer where
     (==) = (==) `on` peerIdentityVar
 
-data PeerAddress = DatagramAddress SockAddr
+class (Eq addr, Ord addr, Show addr, Typeable addr) => PeerAddressType addr where
+    sendBytesToAddress :: addr -> ByteString -> IO ()
+
+data PeerAddress
+    = forall addr. PeerAddressType addr => CustomPeerAddress addr
+    | DatagramAddress SockAddr
 #ifdef ENABLE_ICE_SUPPORT
-                 | PeerIceSession IceSession
+    | PeerIceSession IceSession
 #endif
 
 instance Show PeerAddress where
+    show (CustomPeerAddress addr) = show addr
+
     show (DatagramAddress saddr) = unwords $ case IP.fromSockAddr saddr of
         Just (IP.IPv6 ipv6, port)
             | (0, 0, 0xffff, ipv4) <- IP.fromIPv6w ipv6
@@ -170,22 +183,32 @@ instance Show PeerAddress where
         Just (addr, port)
             -> [show addr, show port]
         _ -> [show saddr]
+
 #ifdef ENABLE_ICE_SUPPORT
     show (PeerIceSession ice) = show ice
 #endif
 
 instance Eq PeerAddress where
+    CustomPeerAddress addr == CustomPeerAddress addr'
+        | Just addr'' <- cast addr' = addr == addr''
     DatagramAddress addr == DatagramAddress addr' = addr == addr'
 #ifdef ENABLE_ICE_SUPPORT
     PeerIceSession ice   == PeerIceSession ice'   = ice == ice'
-    _                    == _                     = False
 #endif
+    _                    == _                     = False
 
 instance Ord PeerAddress where
+    compare (CustomPeerAddress addr) (CustomPeerAddress addr')
+        | Just addr'' <- cast addr' = compare addr addr''
+        | otherwise = compare (typeOf addr) (typeOf addr')
+    compare (CustomPeerAddress _   ) _                         = LT
+    compare _                        (CustomPeerAddress _    ) = GT
+
     compare (DatagramAddress addr) (DatagramAddress addr') = compare addr addr'
 #ifdef ENABLE_ICE_SUPPORT
     compare (DatagramAddress _   ) _                       = LT
     compare _                      (DatagramAddress _    ) = GT
+
     compare (PeerIceSession ice  ) (PeerIceSession ice')   = compare ice ice'
 #endif
 
@@ -198,9 +221,10 @@ peerIdentity :: MonadIO m => Peer -> m PeerIdentity
 peerIdentity = liftIO . atomically . readTVar . peerIdentityVar
 
 
-data PeerState = PeerInit [(SecurityRequirement, TransportPacket Ref, [TransportHeaderItem])]
-               | PeerConnected (Connection PeerAddress)
-               | PeerDropped
+data PeerState
+    = PeerInit [ ( SecurityRequirement, TransportPacket Ref, [ TransportHeaderItem ] ) ]
+    | PeerConnected (Connection PeerAddress)
+    | PeerDropped
 
 
 lookupServiceType :: [TransportHeaderItem] -> Maybe ServiceID
@@ -316,8 +340,9 @@ startServer serverOptions serverOrigHead logd' serverServices = do
 
             forkServerThread server $ forever $ do
                 (paddr, msg) <- readFlowIO serverRawPath
-                handle (\(e :: IOException) -> atomically . logd $ "failed to send packet to " ++ show paddr ++ ": " ++ show e) $ do
+                handle (\(e :: SomeException) -> atomically . logd $ "failed to send packet to " ++ show paddr ++ ": " ++ show e) $ do
                     case paddr of
+                        CustomPeerAddress addr -> sendBytesToAddress addr msg
                         DatagramAddress addr -> void $ S.sendTo sock msg addr
 #ifdef ENABLE_ICE_SUPPORT
                         PeerIceSession ice   -> iceSend ice msg
@@ -790,6 +815,10 @@ notifyServicesOfPeer peer@Peer { peerServer_ = Server {..} } = do
             runPeerServiceOn (Just (service, attrs)) peer serviceNewPeer
 
 
+receivedFromCustomAddress :: PeerAddressType addr => Server -> addr -> ByteString -> IO ()
+receivedFromCustomAddress Server {..} addr msg = do
+    writeFlowIO serverRawPath ( CustomPeerAddress addr, msg )
+
 mkPeer :: Server -> PeerAddress -> IO Peer
 mkPeer peerServer_ peerAddress = do
     peerState <- newTVarIO (PeerInit [])
@@ -807,6 +836,9 @@ serverPeer server paddr = do
                 -> IP.toSockAddr (IP.IPv6 $ IP.toIPv6w (0, 0, 0xffff, IP.fromIPv4w ipv4), port)
             _   -> paddr
     serverPeer' server (DatagramAddress paddr')
+
+serverPeerCustom :: PeerAddressType addr => Server -> addr -> IO Peer
+serverPeerCustom server addr = serverPeer' server (CustomPeerAddress addr)
 
 #ifdef ENABLE_ICE_SUPPORT
 serverPeerIce :: Server -> IceSession -> IO Peer

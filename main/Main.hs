@@ -61,6 +61,7 @@ import State
 import Terminal
 import Test
 import Version
+import WebSocket
 
 data Options = Options
     { optServer :: ServerOptions
@@ -68,6 +69,7 @@ data Options = Options
     , optStorage :: StorageOption
     , optChatroomAutoSubscribe :: Maybe Int
     , optDmBotEcho :: Maybe Text
+    , optWebSocketServer :: Maybe Int
     , optShowHelp :: Bool
     , optShowVersion :: Bool
     }
@@ -90,6 +92,7 @@ defaultOptions = Options
     , optStorage = DefaultStorage
     , optChatroomAutoSubscribe = Nothing
     , optDmBotEcho = Nothing
+    , optWebSocketServer = Nothing
     , optShowHelp = False
     , optShowVersion = False
     }
@@ -144,6 +147,9 @@ options =
     , Option [] ["dm-bot-echo"]
         (ReqArg (\prefix -> \opts -> opts { optDmBotEcho = Just (T.pack prefix) }) "<prefix>")
         "automatically reply to direct messages with the same text prefixed with <prefix>"
+    , Option [] [ "websocket-server" ]
+        (ReqArg (\value -> \opts -> opts { optWebSocketServer = Just (read value) }) "<port>")
+        "start WebSocket server on given port"
     , Option ['h'] ["help"]
         (NoArg $ \opts -> opts { optShowHelp = True })
         "show this help and exit"
@@ -361,6 +367,10 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
     server <- liftIO $ do
         startServer (optServer opts) erebosHead extPrintLn $
             map soptService $ filter soptEnabled $ optServices opts
+
+    case optWebSocketServer opts of
+        Just port -> startWebsocketServer server "::" port extPrintLn
+        Nothing -> return ()
 
     void $ liftIO $ forkIO $ void $ forever $ do
         peer <- getNextPeerChange server

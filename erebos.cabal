@@ -206,6 +206,7 @@ executable erebos
         Test.Service
         Version
         Version.Git
+        WebSocket
     autogen-modules:
         Paths_erebos
 
@@ -223,6 +224,7 @@ executable erebos
         time,
         transformers >= 0.5 && <0.7,
         uuid-types,
+        websockets ^>= { 0.12.7, 0.13 },
 
     if !flag(cryptonite)
         build-depends:
