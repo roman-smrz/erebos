@@ -184,9 +184,8 @@ updateSharedIdentity = updateLocalHead_ $ updateSharedState_ $ \case
     Nothing -> throwError "no existing shared identity"
 
 interactiveIdentityUpdate :: (Foldable f, MonadStorage m, MonadIO m, MonadError String m) => Identity f -> m UnifiedIdentity
-interactiveIdentityUpdate identity = do
-    let public = idKeyIdentity identity
-
+interactiveIdentityUpdate fidentity = do
+    identity <- mergeIdentity fidentity
     name <- liftIO $ do
         T.putStr $ T.concat $ concat
             [ [ T.pack "Name" ]
@@ -198,11 +197,11 @@ interactiveIdentityUpdate identity = do
         hFlush stdout
         T.getLine
 
-    if  | T.null name -> mergeIdentity identity
+    if  | T.null name -> return identity
         | otherwise -> do
-            secret <- loadKey public
-            maybe (throwError "created invalid identity") return . validateIdentity =<<
-                mstore =<< sign secret =<< mstore (emptyIdentityData public)
-                { iddPrev = toList $ idDataF identity
-                , iddName = Just name
+            secret <- loadKey $ idKeyIdentity identity
+            maybe (throwError "created invalid identity") return . validateExtendedIdentity =<<
+                mstore =<< sign secret =<< mstore . ExtendedIdentityData =<< return (emptyIdentityExtension $ idData identity)
+                { idePrev = toList $ idExtDataF identity
+                , ideName = Just name
                 }
