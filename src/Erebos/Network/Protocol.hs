@@ -36,6 +36,7 @@ import Control.Applicative
 import Control.Concurrent
 import Control.Concurrent.Async
 import Control.Concurrent.STM
+import Control.Exception
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Trans
@@ -510,8 +511,10 @@ erebosNetworkProtocol initialIdentity gLog gDataFlow gControlFlow = do
 
             race_ (waitTill next) waitForUpdate
 
-    race_ signalTimeouts $ forever $ join $ atomically $
-        passUpIncoming gs <|> processIncoming gs <|> processOutgoing gs
+    race_ signalTimeouts $ forever $ do
+        io <- atomically $ do
+            passUpIncoming gs <|> processIncoming gs <|> processOutgoing gs
+        catch io $ \(e :: SomeException) -> atomically $ gLog $ "exception during network protocol handling: " <> show e
 
 
 getConnection :: GlobalState addr -> addr -> STM (Connection addr)
