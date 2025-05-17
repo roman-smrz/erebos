@@ -479,7 +479,10 @@ getSelectedChatroom = gets csContext >>= \case
     _ -> throwError "no chatroom selected"
 
 getSelectedConversation :: CommandM Conversation
-getSelectedConversation = gets csContext >>= \case
+getSelectedConversation = gets csContext >>= getConversationFromContext
+
+getConversationFromContext :: CommandContext -> CommandM Conversation
+getConversationFromContext = \case
     SelectedPeer peer -> peerIdentity peer >>= \case
         PeerIdentityFull pid -> directMessageConversation $ finalOwner pid
         _ -> throwError "incomplete peer identity"
@@ -492,6 +495,13 @@ getSelectedConversation = gets csContext >>= \case
             Nothing -> throwError "invalid chatroom"
     SelectedConversation conv -> reloadConversation conv
     _ -> throwError "no contact, peer or conversation selected"
+
+getSelectedOrManualContext :: CommandM CommandContext
+getSelectedOrManualContext = do
+    asks ciLine >>= \case
+        "" -> gets csContext
+        str | all isDigit str -> getContextByIndex (read str)
+        _ -> throwError "invalid index"
 
 commands :: [(String, Command)]
 commands =
@@ -609,19 +619,22 @@ cmdMembers = do
     forM_ (chatroomMembers room) $ \x -> do
         liftIO $ putStrLn $ maybe "<unnamed>" T.unpack $ idName x
 
+getContextByIndex :: Int -> CommandM CommandContext
+getContextByIndex n = do
+    join (asks ciContextOptions) >>= \ctxs -> if
+        | n > 0, (ctx : _) <- drop (n - 1) ctxs -> return ctx
+        | otherwise -> throwError "invalid index"
 
 cmdSelectContext :: Command
 cmdSelectContext = do
     n <- read <$> asks ciLine
-    join (asks ciContextOptions) >>= \ctxs -> if
-        | n > 0, (ctx : _) <- drop (n - 1) ctxs -> do
-            modify $ \s -> s { csContext = ctx }
-            case ctx of
-                SelectedChatroom rstate -> do
-                    when (not (roomStateSubscribe rstate)) $ do
-                        chatroomSetSubscribe (head $ roomStateData rstate) True
-                _ -> return ()
-        | otherwise -> throwError "invalid index"
+    ctx <- getContextByIndex n
+    modify $ \s -> s { csContext = ctx }
+    case ctx of
+        SelectedChatroom rstate -> do
+            when (not (roomStateSubscribe rstate)) $ do
+                chatroomSetSubscribe (head $ roomStateData rstate) True
+        _ -> return ()
 
 cmdSend :: Command
 cmdSend = void $ do
@@ -635,12 +648,12 @@ cmdSend = void $ do
 
 cmdDelete :: Command
 cmdDelete = void $ do
-    deleteConversation =<< getSelectedConversation
+    deleteConversation =<< getConversationFromContext =<< getSelectedOrManualContext
     modify $ \s -> s { csContext = NoContext }
 
 cmdHistory :: Command
 cmdHistory = void $ do
-    conv <- getSelectedConversation
+    conv <- getConversationFromContext =<< getSelectedOrManualContext
     case conversationHistory conv of
         thread@(_:_) -> do
             tzone <- liftIO $ getCurrentTimeZone
@@ -804,7 +817,7 @@ cmdConversations = do
 
 cmdDetails :: Command
 cmdDetails = do
-    gets csContext >>= \case
+    getSelectedOrManualContext >>= \case
         SelectedPeer peer -> do
             liftIO $ putStr $ unlines
                 [ "Network peer:"
