@@ -102,11 +102,13 @@ Test chatroom [19:03] Some Name: Hi
 `<message>`  
 : Send `<message>` to selected conversation.
 
-`/history`  
-: Show message history of the selected conversation.
+`/history [<number>]`  
+: Show message history of the selected conversation, or the one identified by
+  `<number>` if given.
 
-`/details`  
-: Show information about the selected conversations, contact or peer.
+`/details [<number>]`  
+: Show information about the selected conversations, contact or peer; or the
+  one identified by `<number>` if given.
 
 ### Chatrooms
 
@@ -137,12 +139,13 @@ are signed, so message author can not be forged.
 : Leave the chatroom. User will no longer be listed as a member and erebos tool
   will no longer collect message of this chatroom.
 
-`/delete`
-: Delete the chatroom; this action is only synchronized with devices belonging
-to the current user and does not affect the chatroom state for others. Due to
-the storage design, the chatroom data will not be purged from the local state
-history, but the chatroom will no longer be listed as available and no futher
-updates for this chatroom will be collected or shared with other peers.
+`/delete [<number>]`  
+: Delete the chatroom (currently selected one, or the one identified by
+  `<number>`); this action is only synchronized with devices belonging to the
+  current user and does not affect the chatroom state for others. Due to the
+  storage design, the chatroom data will not be purged from the local state
+  history, but the chatroom will no longer be listed as available and no futher
+  updates for this chatroom will be collected or shared with other peers.
 
 ### Add contacts
 
