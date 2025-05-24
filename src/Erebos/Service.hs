@@ -32,10 +32,10 @@ import Data.Typeable
 
 import Erebos.Identity
 import {-# SOURCE #-} Erebos.Network
+import Erebos.Network.Protocol
 import Erebos.State
 import Erebos.Storable
 import Erebos.Storage.Head
-import Erebos.UUID (UUID)
 import Erebos.UUID qualified as U
 
 class (
@@ -103,9 +103,6 @@ someServiceEmptyGlobalState (SomeService p _) = SomeServiceGlobalState p (emptyS
 
 data SomeStorageWatcher s = forall a. Eq a => SomeStorageWatcher (Stored LocalState -> a) (a -> ServiceHandler s ())
 
-
-newtype ServiceID = ServiceID UUID
-    deriving (Eq, Ord, Show, StorableUUID)
 
 mkServiceID :: String -> ServiceID
 mkServiceID = maybe (error "Invalid service ID") ServiceID . U.fromString

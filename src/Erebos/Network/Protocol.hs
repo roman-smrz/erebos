@@ -3,6 +3,7 @@ module Erebos.Network.Protocol (
     transportToObject,
     TransportHeader(..),
     TransportHeaderItem(..),
+    ServiceID(..),
     SecurityRequirement(..),
 
     WaitingRef(..),
@@ -69,9 +70,9 @@ import Erebos.Flow
 import Erebos.Identity
 import Erebos.Network.Channel
 import Erebos.Object
-import Erebos.Service
 import Erebos.Storable
 import Erebos.Storage
+import Erebos.UUID (UUID)
 
 
 protocolVersion :: Text
@@ -107,6 +108,9 @@ data TransportHeaderItem
     | ServiceRef RefDigest
     | StreamOpen Word8
     deriving (Eq, Show)
+
+newtype ServiceID = ServiceID UUID
+    deriving (Eq, Ord, Show, StorableUUID)
 
 newtype Cookie = Cookie ByteString
     deriving (Eq, Show)
