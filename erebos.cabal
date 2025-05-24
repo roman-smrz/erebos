@@ -108,8 +108,6 @@ library
         Erebos.Error
         Erebos.Identity
         Erebos.Network
-        Erebos.Network.Channel
-        Erebos.Network.Protocol
         Erebos.Object
         Erebos.Pairing
         Erebos.PubKey
@@ -126,6 +124,8 @@ library
 
     other-modules:
         Erebos.Flow
+        Erebos.Network.Channel
+        Erebos.Network.Protocol
         Erebos.Object.Internal
         Erebos.Storage.Disk
         Erebos.Storage.Internal
