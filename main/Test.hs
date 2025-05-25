@@ -44,6 +44,7 @@ import Erebos.Object
 import Erebos.Pairing
 import Erebos.PubKey
 import Erebos.Service
+import Erebos.Service.Stream
 import Erebos.Set
 import Erebos.State
 import Erebos.Storable
@@ -66,8 +67,15 @@ data TestState = TestState
 
 data RunningServer = RunningServer
     { rsServer :: Server
-    , rsPeers :: MVar (Int, [(Int, Peer)])
+    , rsPeers :: MVar ( Int, [ TestPeer ] )
     , rsPeerThread :: ThreadId
+    }
+
+data TestPeer = TestPeer
+    { tpIndex :: Int
+    , tpPeer :: Peer
+    , tpStreamReaders :: MVar [ (Int, StreamReader ) ]
+    , tpStreamWriters :: MVar [ (Int, StreamWriter ) ]
     }
 
 initTestState :: TestState
@@ -137,17 +145,20 @@ cmdOut line = do
 
 
 getPeer :: Text -> CommandM Peer
-getPeer spidx = do
+getPeer spidx = tpPeer <$> getTestPeer spidx
+
+getTestPeer :: Text -> CommandM TestPeer
+getTestPeer spidx = do
     Just RunningServer {..} <- gets tsServer
-    Just peer <- lookup (read $ T.unpack spidx) . snd <$> liftIO (readMVar rsPeers)
+    Just peer <- find (((read $ T.unpack spidx) ==) . tpIndex) . snd <$> liftIO (readMVar rsPeers)
     return peer
 
-getPeerIndex :: MVar (Int, [(Int, Peer)]) -> ServiceHandler (PairingService a) Int
+getPeerIndex :: MVar ( Int, [ TestPeer ] ) -> ServiceHandler s Int
 getPeerIndex pmvar = do
     peer <- asks svcPeer
-    maybe 0 fst . find ((==peer) . snd) . snd <$> liftIO (readMVar pmvar)
+    maybe 0 tpIndex . find ((peer ==) . tpPeer) . snd <$> liftIO (readMVar pmvar)
 
-pairingAttributes :: PairingResult a => proxy (PairingService a) -> Output -> MVar (Int, [(Int, Peer)]) -> String -> PairingAttributes a
+pairingAttributes :: PairingResult a => proxy (PairingService a) -> Output -> MVar ( Int, [ TestPeer ] ) -> String -> PairingAttributes a
 pairingAttributes _ out peers prefix = PairingAttributes
     { pairingHookRequest = return ()
 
@@ -267,6 +278,9 @@ commands = map (T.pack *** id)
     , ("peer-drop", cmdPeerDrop)
     , ("peer-list", cmdPeerList)
     , ("test-message-send", cmdTestMessageSend)
+    , ("test-stream-open", cmdTestStreamOpen)
+    , ("test-stream-close", cmdTestStreamClose)
+    , ("test-stream-send", cmdTestStreamSend)
     , ("local-state-get", cmdLocalStateGet)
     , ("local-state-replace", cmdLocalStateReplace)
     , ("local-state-wait", cmdLocalStateWait)
@@ -501,7 +515,20 @@ cmdStartServer = do
             { testMessageReceived = \obj otype len sref -> do
                 liftIO $ do
                     void $ store (headStorage h) obj
-                    outLine out $ unwords ["test-message-received", otype, len, sref]
+                    outLine out $ unwords [ "test-message-received", otype, len, sref ]
+            , testStreamsReceived = \streams -> do
+                pidx <- getPeerIndex rsPeers
+                liftIO $ do
+                    nums <- mapM getStreamReaderNumber streams
+                    outLine out $ unwords $ "test-stream-open-from" : show pidx : map show nums
+                    forM_ (zip nums streams) $ \( num, stream ) -> void $ forkIO $ do
+                        let go = readStreamPacket stream >>= \case
+                                StreamData seqNum bytes -> do
+                                    outLine out $ unwords [ "test-stream-received", show pidx, show num, show seqNum, BC.unpack bytes ]
+                                    go
+                                StreamClosed seqNum -> do
+                                    outLine out $ unwords [ "test-stream-closed-from", show pidx, show num, show seqNum ]
+                        go
             }
         sname -> throwOtherError $ "unknown service `" <> T.unpack sname <> "'"
 
@@ -510,15 +537,23 @@ cmdStartServer = do
     rsPeerThread <- liftIO $ forkIO $ void $ forever $ do
         peer <- getNextPeerChange rsServer
 
-        let printPeer (idx, p) = do
-                params <- peerIdentity p >>= return . \case
+        let printPeer TestPeer {..} = do
+                params <- peerIdentity tpPeer >>= return . \case
                     PeerIdentityFull pid -> ("id":) $ map (maybe "<unnamed>" T.unpack . idName) (unfoldOwners pid)
-                    _ -> [ "addr", show (peerAddress p) ]
-                outLine out $ unwords $ [ "peer", show idx ] ++ params
+                    _ -> [ "addr", show (peerAddress tpPeer) ]
+                outLine out $ unwords $ [ "peer", show tpIndex ] ++ params
 
-            update (nid, []) = printPeer (nid, peer) >> return (nid + 1, [(nid, peer)])
-            update cur@(nid, p:ps) | snd p == peer = printPeer p >> return cur
-                                   | otherwise = fmap (p:) <$> update (nid, ps)
+            update ( tpIndex, [] ) = do
+                tpPeer <- return peer
+                tpStreamReaders <- newMVar []
+                tpStreamWriters <- newMVar []
+                let tp = TestPeer {..}
+                printPeer tp
+                return ( tpIndex + 1, [ tp ] )
+
+            update cur@( nid, p : ps )
+                | tpPeer p == peer = printPeer p >> return cur
+                | otherwise = fmap (p :) <$> update ( nid, ps )
 
         modifyMVar_ rsPeers update
 
@@ -555,10 +590,10 @@ cmdPeerList = do
     peers <- liftIO $ getCurrentPeerList rsServer
     tpeers <- liftIO $ readMVar rsPeers
     forM_ peers $ \peer -> do
-        Just (n, _) <- return $ find ((peer==).snd) . snd $ tpeers
+        Just tp <- return $ find ((peer ==) . tpPeer) . snd $ tpeers
         mbpid <- peerIdentity peer
         cmdOut $ unwords $ concat
-            [ [ "peer-list-item", show n ]
+            [ [ "peer-list-item", show (tpIndex tp) ]
             , [ "addr", show (peerAddress peer) ]
             , case mbpid of PeerIdentityFull pid -> ("id":) $ map (maybe "<unnamed>" T.unpack . idName) (unfoldOwners pid)
                             _ -> []
@@ -574,6 +609,40 @@ cmdTestMessageSend = do
     peer <- getPeer spidx
     sendManyToPeer peer $ map (TestMessage . wrappedLoad) refs
     cmdOut "test-message-send done"
+
+cmdTestStreamOpen :: Command
+cmdTestStreamOpen = do
+    spidx : rest <- asks tiParams
+    tp <- getTestPeer spidx
+    count <- case rest of
+        [] -> return 1
+        tcount : _ -> return $ read $ T.unpack tcount
+
+    out <- asks tiOutput
+    runPeerService (tpPeer tp) $ do
+        streams <- openTestStreams count
+        afterCommit $ do
+            nums <- mapM getStreamWriterNumber streams
+            modifyMVar_ (tpStreamWriters tp) $ return . (++ zip nums streams)
+            outLine out $ unwords $ "test-stream-open-done"
+                : T.unpack spidx
+                : map show nums
+
+cmdTestStreamClose :: Command
+cmdTestStreamClose = do
+    [ spidx, sid ] <- asks tiParams
+    tp <- getTestPeer spidx
+    Just stream <- lookup (read $ T.unpack sid) <$> liftIO (readMVar (tpStreamWriters tp))
+    liftIO $ closeStream stream
+    cmdOut $ unwords [ "test-stream-close-done", T.unpack spidx, T.unpack sid ]
+
+cmdTestStreamSend :: Command
+cmdTestStreamSend = do
+    [ spidx, sid, content ] <- asks tiParams
+    tp <- getTestPeer spidx
+    Just stream <- lookup (read $ T.unpack sid) <$> liftIO (readMVar (tpStreamWriters tp))
+    liftIO $ writeStream stream $ encodeUtf8 content
+    cmdOut $ unwords [ "test-stream-send-done", T.unpack spidx, T.unpack sid ]
 
 cmdLocalStateGet :: Command
 cmdLocalStateGet = do

@@ -182,6 +182,58 @@ test ManyStreams:
 			expect /test-message-received blob 100[2-4] $ref/ from p2
 
 
+test ServiceStreams:
+	let services = "test"
+
+	spawn as p1
+	spawn as p2
+	send "create-identity Device1" to p1
+	send "create-identity Device2" to p2
+	send "start-server services $services" to p1
+	send "start-server services $services" to p2
+	expect from p1:
+		/peer 1 addr ${p2.node.ip} 29665/
+		/peer 1 id Device2/
+	expect from p2:
+		/peer 1 addr ${p1.node.ip} 29665/
+		/peer 1 id Device1/
+
+	send "test-stream-open 1" to p1
+	expect /test-stream-open-done 1 ([0-9]+)/ from p1 capture stream1
+	expect /test-stream-open-from 1 $stream1/ from p2
+
+	send "test-stream-send 1 $stream1 hello" to p1
+	expect /test-stream-send-done 1 $stream1/ from p1
+	expect /test-stream-received 1 $stream1 0 hello/ from p2
+
+	send "test-stream-close 1 $stream1" to p1
+	expect /test-stream-close-done 1 $stream1/ from p1
+	expect /test-stream-closed-from 1 $stream1 1/ from p2
+
+	send "test-stream-open 1 8" to p2
+	expect /test-stream-open-done 1 ([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+)/ from p2 capture stream2_1, stream2_2, stream2_3, stream2_4, stream2_5, stream2_6, stream2_7, stream2_8
+	expect /test-stream-open-from 1 $stream2_1 $stream2_2 $stream2_3 $stream2_4 $stream2_5 $stream2_6 $stream2_7 $stream2_8/ from p1
+
+	let streams2 = [ stream2_1, stream2_2, stream2_3, stream2_4, stream2_5, stream2_6, stream2_7, stream2_8 ]
+	with p2:
+		for i in [ 1..20 ]:
+			for s in streams2:
+				send "test-stream-send 1 $s hello$i"
+		for i in [ 1..20 ]:
+			for s in streams2:
+				expect /test-stream-send-done 1 $s/
+		for s in streams2:
+			send "test-stream-close 1 $s"
+		for s in streams2:
+			expect /test-stream-close-done 1 $s/
+	with p1:
+		for i in [ 1..20 ]:
+			for s in streams2:
+				expect /test-stream-received 1 $s ${i-1} hello$i/
+		for s in streams2:
+			expect /test-stream-closed-from 1 $s 20/
+
+
 test MultipleServiceRefs:
 	let services = "test"
 

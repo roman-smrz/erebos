@@ -113,10 +113,13 @@ data ServiceInput s = ServiceInput
     , svcPeerIdentity :: UnifiedIdentity
     , svcServer :: Server
     , svcPrintOp :: String -> IO ()
+    , svcNewStreams :: [ RawStreamReader ]
     }
 
-data ServiceReply s = ServiceReply (Either s (Stored s)) Bool
-                    | ServiceFinally (IO ())
+data ServiceReply s
+    = ServiceReply (Either s (Stored s)) Bool
+    | ServiceOpenStream (RawStreamWriter -> IO ())
+    | ServiceFinally (IO ())
 
 data ServiceHandlerState s = ServiceHandlerState
     { svcValue :: ServiceState s

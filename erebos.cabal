@@ -112,6 +112,7 @@ library
         Erebos.Pairing
         Erebos.PubKey
         Erebos.Service
+        Erebos.Service.Stream
         Erebos.Set
         Erebos.State
         Erebos.Storable
