@@ -1,7 +1,7 @@
 module discovery
 
 test ManualDiscovery:
-	let services = "discovery,test"
+	let services = "discovery"
 	let refpat = /blake2#[0-9a-f]*/
 
 	subnet sd
@@ -23,27 +23,6 @@ test ManualDiscovery:
 
 	expect /create-identity-done ref $refpat.*/ from p2
 	expect /create-identity-done ref $refpat.*/ from pd
-
-	# TODO: avoid the need to send identity objects with weak refs
-	for p in [ p1, p2 ]:
-		with p:
-			send "start-server services $services"
-	send "peer-add ${p2.node.ip}" to p1
-	expect from p1:
-		/peer 1 addr ${p2.node.ip} 29665/
-		/peer 1 id Device2 Owner2/
-	expect from p2:
-		/peer 1 addr ${p1.node.ip} 29665/
-		/peer 1 id Device1 Owner1/
-	for r in [ p1base, p1obase ]:
-		with p1:
-			send "test-message-send 1 $r"
-			expect /test-message-send done/
-		with p2:
-			expect /test-message-received rec [0-9]+ $r/
-	for p in [ p1, p2 ]:
-		send "stop-server" to p
-		expect /stop-server-done/ from p
 
 	# Test discovery using owner and device identities:
 	for id in [ p1obase, p1base ]:
