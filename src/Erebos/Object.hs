@@ -13,8 +13,9 @@ module Erebos.Object (
     RecItem, RecItem'(..),
 
     Ref, PartialRef, RefDigest,
-    refDigest,
-    readRef, showRef, showRefDigest,
+    refDigest, refFromDigest,
+    readRef, showRef,
+    readRefDigest, showRefDigest,
     refDigestFromByteString, hashToRefDigest,
     copyRef, partialRef, partialRefFromDigest,
 ) where

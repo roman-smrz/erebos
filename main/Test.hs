@@ -957,11 +957,10 @@ cmdChatroomMessageSend = do
 
 cmdDiscoveryConnect :: Command
 cmdDiscoveryConnect = do
-    st <- asks tiStorage
     [ tref ] <- asks tiParams
-    Just ref <- liftIO $ readRef st $ encodeUtf8 tref
+    Just dgst <- return $ readRefDigest $ encodeUtf8 tref
 
     Just RunningServer {..} <- gets tsServer
     peers <- liftIO $ getCurrentPeerList rsServer
     forM_ peers $ \peer -> do
-        sendToPeer peer $ DiscoverySearch ref
+        sendToPeer peer $ DiscoverySearch $ Right dgst

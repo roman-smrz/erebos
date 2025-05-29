@@ -2,8 +2,9 @@ module Erebos.Object.Internal (
     Storage, PartialStorage, StorageCompleteness,
 
     Ref, PartialRef, RefDigest,
-    refDigest,
-    readRef, showRef, showRefDigest,
+    refDigest, refFromDigest,
+    readRef, showRef,
+    readRefDigest, showRefDigest,
     refDigestFromByteString, hashToRefDigest,
     copyRef, partialRef, partialRefFromDigest,
 
