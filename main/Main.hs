@@ -923,16 +923,11 @@ cmdDiscoveryInit = void $ do
 
 cmdDiscovery :: Command
 cmdDiscovery = void $ do
-    Just peer <- gets csIcePeer
+    server <- asks ciServer
     sref <- asks ciLine
-    eprint <- asks ciPrint
     case readRefDigest (BC.pack sref) of
         Nothing -> throwOtherError "failed to parse ref"
-        Just dgst -> liftIO $ do
-            res <- runExceptT $ sendToPeer peer $ DiscoverySearch $ Right dgst
-            case res of
-                 Right _ -> return ()
-                 Left err -> eprint err
+        Just dgst -> discoverySearch server dgst
 
 #ifdef ENABLE_ICE_SUPPORT
 

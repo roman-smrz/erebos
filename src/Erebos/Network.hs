@@ -29,6 +29,7 @@ module Erebos.Network (
     sendToPeerStored, sendManyToPeerStored,
     sendToPeerWith,
     runPeerService,
+    modifyServiceGlobalState,
 
     discoveryPort,
 ) where
@@ -962,7 +963,7 @@ sendToPeerWith peer fobj = do
          Left err -> throwError $ fromErebosError err
 
 
-lookupService :: forall s. Service s => Proxy s -> [SomeService] -> Maybe (SomeService, ServiceAttributes s)
+lookupService :: forall s proxy. Service s => proxy s -> [SomeService] -> Maybe (SomeService, ServiceAttributes s)
 lookupService proxy (service@(SomeService (_ :: Proxy t) attr) : rest)
     | Just (Refl :: s :~: t) <- eqT = Just (service, attr)
     | otherwise = lookupService proxy rest
@@ -1017,6 +1018,27 @@ runPeerServiceOn mbservice newStreams peer handler = liftIO $ do
 
         _ -> atomically $ do
             logd $ "unhandled service '" ++ show (toUUID svc) ++ "'"
+
+modifyServiceGlobalState
+    :: forall s a m e proxy. (Service s, MonadIO m, MonadError e m, FromErebosError e)
+    => Server -> proxy s
+    -> (ServiceGlobalState s -> ( ServiceGlobalState s, a ))
+    -> m a
+modifyServiceGlobalState server proxy f = do
+    let svc = serviceID proxy
+    case lookupService proxy (serverServices server) of
+        Just ( service, _ ) -> do
+            liftIO $ atomically $ do
+                global <- takeTMVar (serverServiceStates server)
+                ( global', res ) <- case fromMaybe (someServiceEmptyGlobalState service) $ M.lookup svc global of
+                    SomeServiceGlobalState (_ :: Proxy gs) gs -> do
+                        (Refl :: s :~: gs) <- return $ fromMaybe (error "service ID mismatch in global map") eqT
+                        let ( gs', res ) = f gs
+                        return ( M.insert svc (SomeServiceGlobalState (Proxy @s) gs') global, res )
+                putTMVar (serverServiceStates server) global'
+                return res
+        Nothing -> do
+            throwOtherError $ "unhandled service '" ++ show (toUUID svc) ++ "'"
 
 
 foreign import ccall unsafe "Network/ifaddrs.h join_multicast" cJoinMulticast :: CInt -> Ptr CSize -> IO (Ptr Word32)

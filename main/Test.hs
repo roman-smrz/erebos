@@ -959,8 +959,5 @@ cmdDiscoveryConnect :: Command
 cmdDiscoveryConnect = do
     [ tref ] <- asks tiParams
     Just dgst <- return $ readRefDigest $ encodeUtf8 tref
-
     Just RunningServer {..} <- gets tsServer
-    peers <- liftIO $ getCurrentPeerList rsServer
-    forM_ peers $ \peer -> do
-        sendToPeer peer $ DiscoverySearch $ Right dgst
+    discoverySearch rsServer dgst
