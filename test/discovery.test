@@ -73,3 +73,40 @@ test ManualDiscovery:
 			send "stop-server" to p
 		for p in [ pd, p1, p2 ]:
 			expect /stop-server-done/ from p
+
+	# Test delayed discovery with new peer
+	for id in [ p1obase ]:
+		for p in [ pd, p1, p2 ]:
+			send "start-server services $services" to p
+
+		with p1:
+			send "peer-add ${pd.node.ip}"
+			expect:
+				/peer 1 addr ${pd.node.ip} 29665/
+				/peer 1 id Discovery/
+		expect from pd:
+				/peer [12] addr ${p1.node.ip} 29665/
+				/peer [12] id Device1 Owner1/
+
+		send "discovery-connect $id" to p2
+
+		with p2:
+			send "peer-add ${pd.node.ip}"
+			expect:
+				/peer 1 addr ${pd.node.ip} 29665/
+				/peer 1 id Discovery/
+		expect from pd:
+				/peer [12] addr ${p2.node.ip} 29665/
+				/peer [12] id Device2 Owner2/
+
+		expect from p1:
+			/peer [0-9]+ addr ${p2.node.ip} 29665/
+			/peer [0-9]+ id Device2 Owner2/
+		expect from p2:
+			/peer [0-9]+ addr ${p1.node.ip} 29665/
+			/peer [0-9]+ id Device1 Owner1/
+
+		for p in [ pd, p1, p2 ]:
+			send "stop-server" to p
+		for p in [ pd, p1, p2 ]:
+			expect /stop-server-done/ from p

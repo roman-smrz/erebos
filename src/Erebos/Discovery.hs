@@ -4,6 +4,8 @@ module Erebos.Discovery (
     DiscoveryService(..),
     DiscoveryAttributes(..),
     DiscoveryConnection(..),
+
+    discoverySearch,
 ) where
 
 import Control.Concurrent
@@ -12,9 +14,13 @@ import Control.Monad.Except
 import Control.Monad.Reader
 
 import Data.IP qualified as IP
+import Data.List
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as M
 import Data.Maybe
+import Data.Proxy
+import Data.Set (Set)
+import Data.Set qualified as S
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Word
@@ -152,6 +158,7 @@ data DiscoveryPeerState = DiscoveryPeerState
 
 data DiscoveryGlobalState = DiscoveryGlobalState
     { dgsPeers :: Map RefDigest DiscoveryPeer
+    , dgsSearchingFor :: Set RefDigest
     }
 
 instance Service DiscoveryService where
@@ -168,6 +175,7 @@ instance Service DiscoveryService where
     type ServiceGlobalState DiscoveryService = DiscoveryGlobalState
     emptyServiceGlobalState _ = DiscoveryGlobalState
         { dgsPeers = M.empty
+        , dgsSearchingFor = S.empty
         }
 
     serviceHandler msg = case fromStored msg of
@@ -290,7 +298,7 @@ instance Service DiscoveryService where
         DiscoveryConnectionRequest conn -> do
             self <- svcSelf
             let rconn = emptyConnection (dconnSource conn) (dconnTarget conn)
-            if refDigest (dconnTarget conn) `elem` (map (refDigest . storedRef) $ idDataF =<< unfoldOwners self)
+            if refDigest (dconnTarget conn) `elem` identityDigests self
               then if
 #ifdef ENABLE_ICE_SUPPORT
                 -- request for us, create ICE sesssion
@@ -325,7 +333,7 @@ instance Service DiscoveryService where
         DiscoveryConnectionResponse conn -> do
             self <- svcSelf
             dpeers <- dgsPeers <$> svcGetGlobal
-            if refDigest (dconnSource conn) `elem` (map (refDigest . storedRef) $ idDataF =<< unfoldOwners self)
+            if refDigest (dconnSource conn) `elem` identityDigests self
                then do
                     -- response to our request, try to connect to the peer
                     server <- asks svcServer
@@ -356,6 +364,7 @@ instance Service DiscoveryService where
     serviceNewPeer = do
         server <- asks svcServer
         peer <- asks svcPeer
+        st <- getStorage
 
         let addrToText saddr = do
                 ( addr, port ) <- IP.fromSockAddr saddr
@@ -367,5 +376,34 @@ instance Service DiscoveryService where
 #endif
             ]
 
+        pid <- asks svcPeerIdentity
+        gs <- svcGetGlobal
+        let searchingFor = foldl' (flip S.delete) (dgsSearchingFor gs) (identityDigests pid)
+        svcModifyGlobal $ \s -> s { dgsSearchingFor = searchingFor }
+
         when (not $ null addrs) $ do
             sendToPeer peer $ DiscoverySelf addrs Nothing
+        forM_ searchingFor $ \dgst -> do
+            liftIO (refFromDigest st dgst) >>= \case
+                Just ref -> sendToPeer peer $ DiscoverySearch ref
+                Nothing -> return ()
+
+
+identityDigests :: Foldable f => Identity f -> [ RefDigest ]
+identityDigests pid = map (refDigest . storedRef) $ idDataF =<< unfoldOwners pid
+
+
+discoverySearch :: (MonadIO m, MonadError String m) => Server -> Ref -> m ()
+discoverySearch server ref = do
+    peers <- liftIO $ getCurrentPeerList server
+    match <- forM peers $ \peer -> do
+        peerIdentity peer >>= \case
+            PeerIdentityFull pid -> do
+                return $ refDigest ref `elem` identityDigests pid
+            _ -> return False
+    when (not $ or match) $ do
+        modifyServiceGlobalState server (Proxy @DiscoveryService) $ \s -> (, ()) s
+            { dgsSearchingFor = S.insert (refDigest ref) $ dgsSearchingFor s
+            }
+        forM_ peers $ \peer -> do
+            sendToPeer peer $ DiscoverySearch ref

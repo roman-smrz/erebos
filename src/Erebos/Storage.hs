@@ -4,7 +4,7 @@ module Erebos.Storage (
     deriveEphemeralStorage, derivePartialStorage,
 
     Ref, PartialRef, RefDigest,
-    refDigest,
+    refDigest, refFromDigest,
     readRef, showRef, showRefDigest,
     refDigestFromByteString, hashToRefDigest,
     copyRef, partialRef, partialRefFromDigest,

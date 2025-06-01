@@ -880,8 +880,5 @@ cmdDiscoveryConnect = do
     st <- asks tiStorage
     [ tref ] <- asks tiParams
     Just ref <- liftIO $ readRef st $ encodeUtf8 tref
-
     Just RunningServer {..} <- gets tsServer
-    peers <- liftIO $ getCurrentPeerList rsServer
-    forM_ peers $ \peer -> do
-        sendToPeer peer $ DiscoverySearch ref
+    discoverySearch rsServer ref
