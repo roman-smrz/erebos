@@ -1,6 +1,7 @@
 #include "pjproject.h"
 #include "Erebos/ICE_stub.h"
 
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -14,6 +15,13 @@ static struct
 	pj_pool_t * pool;
 	pj_sockaddr def_addr;
 } ice;
+
+struct erebos_ice_cfg
+{
+	pj_ice_strans_cfg cfg;
+	pj_thread_t * thread;
+	atomic_bool exit;
+};
 
 struct user_data
 {
@@ -30,17 +38,17 @@ static void ice_perror(const char * msg, pj_status_t status)
 	fprintf(stderr, "ICE: %s: %s\n", msg, err);
 }
 
-static int ice_worker_thread(void * vcfg)
+static int ice_worker_thread( void * vcfg )
 {
-	pj_ice_strans_cfg * cfg = (pj_ice_strans_cfg *) vcfg;
+	struct erebos_ice_cfg * ecfg = (struct erebos_ice_cfg *)( vcfg );
 
-	while (true) {
+	while( ! ecfg->exit ){
 		pj_time_val max_timeout = { 0, 0 };
 		pj_time_val timeout = { 0, 0 };
 
 		max_timeout.msec = 500;
 
-		pj_timer_heap_poll(cfg->stun_cfg.timer_heap, &timeout);
+		pj_timer_heap_poll( ecfg->cfg.stun_cfg.timer_heap, &timeout );
 
 		pj_assert(timeout.sec >= 0 && timeout.msec >= 0);
 		if (timeout.msec >= 1000)
@@ -49,7 +57,7 @@ static int ice_worker_thread(void * vcfg)
 		if (PJ_TIME_VAL_GT(timeout, max_timeout))
 			timeout = max_timeout;
 
-		int c = pj_ioqueue_poll(cfg->stun_cfg.ioqueue, &timeout);
+		int c = pj_ioqueue_poll( ecfg->cfg.stun_cfg.ioqueue, &timeout );
 		if (c < 0)
 			pj_thread_sleep(PJ_TIME_VAL_MSEC(timeout));
 	}
@@ -131,80 +139,84 @@ exit:
 	pthread_mutex_unlock(&mutex);
 }
 
-pj_ice_strans_cfg * ice_cfg_create( const char * stun_server, uint16_t stun_port,
+struct erebos_ice_cfg * ice_cfg_create( const char * stun_server, uint16_t stun_port,
 		const char * turn_server, uint16_t turn_port )
 {
 	ice_init();
 
-	pj_ice_strans_cfg * cfg = malloc( sizeof(pj_ice_strans_cfg) );
-	pj_ice_strans_cfg_default( cfg );
+	struct erebos_ice_cfg * ecfg = malloc( sizeof(struct erebos_ice_cfg) );
+	pj_ice_strans_cfg_default( &ecfg->cfg );
+	ecfg->exit = false;
+	ecfg->thread = NULL;
 
-	cfg->stun_cfg.pf = &ice.cp.factory;
+	ecfg->cfg.stun_cfg.pf = &ice.cp.factory;
 	if( pj_timer_heap_create( ice.pool, 100,
-				&cfg->stun_cfg.timer_heap ) != PJ_SUCCESS ){
+				&ecfg->cfg.stun_cfg.timer_heap ) != PJ_SUCCESS ){
 		fprintf( stderr, "pj_timer_heap_create failed\n" );
 		goto fail;
 	}
 
-	if( pj_ioqueue_create( ice.pool, 16, &cfg->stun_cfg.ioqueue ) != PJ_SUCCESS ){
+	if( pj_ioqueue_create( ice.pool, 16, &ecfg->cfg.stun_cfg.ioqueue ) != PJ_SUCCESS ){
 		fprintf( stderr, "pj_ioqueue_create failed\n" );
 		goto fail;
 	}
 
-	pj_thread_t * thread;
 	if( pj_thread_create( ice.pool, NULL, &ice_worker_thread,
-				cfg, 0, 0, &thread ) != PJ_SUCCESS ){
+				ecfg, 0, 0, &ecfg->thread ) != PJ_SUCCESS ){
 		fprintf( stderr, "pj_thread_create failed\n" );
 		goto fail;
 	}
 
-	cfg->af = pj_AF_INET();
-	cfg->opt.aggressive = PJ_TRUE;
+	ecfg->cfg.af = pj_AF_INET();
+	ecfg->cfg.opt.aggressive = PJ_TRUE;
 
 	if( stun_server ){
-		cfg->stun.server.ptr = malloc( strlen( stun_server ));
-		pj_strcpy2( &cfg->stun.server, stun_server );
+		ecfg->cfg.stun.server.ptr = malloc( strlen( stun_server ));
+		pj_strcpy2( &ecfg->cfg.stun.server, stun_server );
 		if( stun_port )
-			cfg->stun.port = stun_port;
+			ecfg->cfg.stun.port = stun_port;
 	}
 
 	if( turn_server ){
-		cfg->turn.server.ptr = malloc( strlen( turn_server ));
-		pj_strcpy2( &cfg->turn.server, turn_server );
+		ecfg->cfg.turn.server.ptr = malloc( strlen( turn_server ));
+		pj_strcpy2( &ecfg->cfg.turn.server, turn_server );
 		if( turn_port )
-			cfg->turn.port = turn_port;
-		cfg->turn.auth_cred.type = PJ_STUN_AUTH_CRED_STATIC;
-		cfg->turn.auth_cred.data.static_cred.data_type = PJ_STUN_PASSWD_PLAIN;
-		cfg->turn.conn_type = PJ_TURN_TP_UDP;
+			ecfg->cfg.turn.port = turn_port;
+		ecfg->cfg.turn.auth_cred.type = PJ_STUN_AUTH_CRED_STATIC;
+		ecfg->cfg.turn.auth_cred.data.static_cred.data_type = PJ_STUN_PASSWD_PLAIN;
+		ecfg->cfg.turn.conn_type = PJ_TURN_TP_UDP;
 	}
 
-	return cfg;
+	return ecfg;
 fail:
-	ice_cfg_free( cfg );
+	ice_cfg_free( ecfg );
 	return NULL;
 }
 
-void ice_cfg_free( pj_ice_strans_cfg * cfg )
+void ice_cfg_free( struct erebos_ice_cfg * ecfg )
 {
-	if( ! cfg )
+	if( ! ecfg )
 		return;
 
-	if( cfg->turn.server.ptr )
-		free( cfg->turn.server.ptr );
+	ecfg->exit = true;
+	pj_thread_join( ecfg->thread );
 
-	if( cfg->stun.server.ptr )
-		free( cfg->stun.server.ptr );
+	if( ecfg->cfg.turn.server.ptr )
+		free( ecfg->cfg.turn.server.ptr );
 
-	if( cfg->stun_cfg.ioqueue )
-		pj_ioqueue_destroy( cfg->stun_cfg.ioqueue );
+	if( ecfg->cfg.stun.server.ptr )
+		free( ecfg->cfg.stun.server.ptr );
 
-	if( cfg->stun_cfg.timer_heap )
-		pj_timer_heap_destroy( cfg->stun_cfg.timer_heap );
+	if( ecfg->cfg.stun_cfg.ioqueue )
+		pj_ioqueue_destroy( ecfg->cfg.stun_cfg.ioqueue );
 
-	free( cfg );
+	if( ecfg->cfg.stun_cfg.timer_heap )
+		pj_timer_heap_destroy( ecfg->cfg.stun_cfg.timer_heap );
+
+	free( ecfg );
 }
 
-pj_ice_strans * ice_create( const pj_ice_strans_cfg * cfg, pj_ice_sess_role role,
+pj_ice_strans * ice_create( const struct erebos_ice_cfg * ecfg, pj_ice_sess_role role,
 		HsStablePtr sptr, HsStablePtr cb )
 {
 	ice_init();
@@ -221,7 +233,7 @@ pj_ice_strans * ice_create( const pj_ice_strans_cfg * cfg, pj_ice_sess_role role
 		.on_ice_complete = cb_on_ice_complete,
 	};
 
-	pj_status_t status = pj_ice_strans_create( NULL, cfg, 1,
+	pj_status_t status = pj_ice_strans_create( NULL, &ecfg->cfg, 1,
 			udata, &icecb, &res );
 
 	if (status != PJ_SUCCESS)
