@@ -3,11 +3,11 @@
 #include <pjnath.h>
 #include <HsFFI.h>
 
-pj_ice_strans_cfg * ice_cfg_create( const char * stun_server, uint16_t stun_port,
+struct erebos_ice_cfg * ice_cfg_create( const char * stun_server, uint16_t stun_port,
 		const char * turn_server, uint16_t turn_port );
-void ice_cfg_free( pj_ice_strans_cfg * cfg );
+void ice_cfg_free( struct erebos_ice_cfg * cfg );
 
-pj_ice_strans * ice_create( const pj_ice_strans_cfg *, pj_ice_sess_role role,
+pj_ice_strans * ice_create( const struct erebos_ice_cfg *, pj_ice_sess_role role,
 		HsStablePtr sptr, HsStablePtr cb );
 void ice_destroy(pj_ice_strans * strans);
 
