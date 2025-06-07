@@ -37,6 +37,13 @@ import Erebos.Service
 import Erebos.Storable
 
 
+#ifndef ENABLE_ICE_SUPPORT
+type IceConfig = ()
+type IceSession = ()
+type IceRemoteInfo = Stored Object
+#endif
+
+
 data DiscoveryService
     = DiscoverySelf [ Text ] (Maybe Int)
     | DiscoveryAcknowledged [ Text ] (Maybe Text) (Maybe Word16) (Maybe Text) (Maybe Word16)
@@ -64,11 +71,7 @@ data DiscoveryConnection = DiscoveryConnection
     { dconnSource :: Either Ref RefDigest
     , dconnTarget :: Either Ref RefDigest
     , dconnAddress :: Maybe Text
-#ifdef ENABLE_ICE_SUPPORT
     , dconnIceInfo :: Maybe IceRemoteInfo
-#else
-    , dconnIceInfo :: Maybe (Stored Object)
-#endif
     }
 
 emptyConnection :: Either Ref RefDigest -> Either Ref RefDigest -> DiscoveryConnection
@@ -154,19 +157,13 @@ data DiscoveryPeer = DiscoveryPeer
     { dpPriority :: Int
     , dpPeer :: Maybe Peer
     , dpAddress :: [ Text ]
-#ifdef ENABLE_ICE_SUPPORT
     , dpIceSession :: Maybe IceSession
-#else
-    , dpIceSession :: Maybe ()
-#endif
     }
 
 data DiscoveryPeerState = DiscoveryPeerState
-#ifdef ENABLE_ICE_SUPPORT
-    { dpsIceConfig :: Maybe IceConfig
-#else
-    { dpsIceConfig :: Maybe ()
-#endif
+    { dpsStunServer :: Maybe ( Text, Word16 )
+    , dpsTurnServer :: Maybe ( Text, Word16 )
+    , dpsIceConfig :: Maybe IceConfig
     }
 
 data DiscoveryGlobalState = DiscoveryGlobalState
@@ -182,7 +179,9 @@ instance Service DiscoveryService where
 
     type ServiceState DiscoveryService = DiscoveryPeerState
     emptyServiceState _ = DiscoveryPeerState
-        { dpsIceConfig = Nothing
+        { dpsStunServer = Nothing
+        , dpsTurnServer = Nothing
+        , dpsIceConfig = Nothing
         }
 
     type ServiceGlobalState DiscoveryService = DiscoveryGlobalState
@@ -226,7 +225,6 @@ instance Service DiscoveryService where
                 (discoveryTurnPort attrs)
 
         DiscoveryAcknowledged _ stunServer stunPort turnServer turnPort -> do
-#ifdef ENABLE_ICE_SUPPORT
             paddr <- asks (peerAddress . svcPeer) >>= return . \case
                 (DatagramAddress saddr) -> case IP.fromSockAddr saddr of
                     Just (IP.IPv6 ipv6, _)
@@ -242,12 +240,10 @@ instance Service DiscoveryService where
                 toIceServer (Just server) Nothing = Just ( server, 0 )
                 toIceServer (Just server) (Just port) = Just ( server, port )
 
-            cfg <- liftIO $ iceCreateConfig
-                (toIceServer stunServer stunPort)
-                (toIceServer turnServer turnPort)
-            svcModify $ \s -> s { dpsIceConfig = cfg }
-#endif
-            return ()
+            svcModify $ \s -> s
+                { dpsStunServer = toIceServer stunServer stunPort
+                , dpsTurnServer = toIceServer turnServer turnPort
+                }
 
         DiscoverySearch edgst -> do
             dpeer <- M.lookup (either refDigest id edgst) . dgsPeers <$> svcGetGlobal
@@ -262,60 +258,61 @@ instance Service DiscoveryService where
             server <- asks svcServer
             st <- getStorage
             self <- svcSelf
-            mbIceConfig <- dpsIceConfig <$> svcGet
             discoveryPeer <- asks svcPeer
             let runAsService = runPeerService @DiscoveryService discoveryPeer
 
-            liftIO $ void $ forkIO $ forM_ addrs $ \addr -> if
+            forM_ addrs $ \addr -> if
                 | addr == T.pack "ICE"
+                -> do
 #ifdef ENABLE_ICE_SUPPORT
-                , Just config <- mbIceConfig
-                -> do
-                    ice <- iceCreateSession config PjIceSessRoleControlling $ \ice -> do
-                        rinfo <- iceRemoteInfo ice
+                    getIceConfig >>= \case
+                        Just config -> void $ liftIO $ forkIO $ do
+                            ice <- iceCreateSession config PjIceSessRoleControlling $ \ice -> do
+                                rinfo <- iceRemoteInfo ice
 
-                        -- Try to promote weak ref to normal one for older peers:
-                        edgst' <- case edgst of
-                            Left  r -> return (Left r)
-                            Right d -> refFromDigest st d >>= \case
-                                Just  r -> return (Left  r)
-                                Nothing -> return (Right d)
+                                -- Try to promote weak ref to normal one for older peers:
+                                edgst' <- case edgst of
+                                    Left  r -> return (Left r)
+                                    Right d -> refFromDigest st d >>= \case
+                                        Just  r -> return (Left  r)
+                                        Nothing -> return (Right d)
 
-                        res <- runExceptT $ sendToPeer discoveryPeer $
-                            DiscoveryConnectionRequest (emptyConnection (Left $ storedRef $ idData self) edgst') { dconnIceInfo = Just rinfo }
-                        case res of
-                            Right _ -> return ()
-                            Left err -> putStrLn $ "Discovery: failed to send connection request: " ++ err
+                                res <- runExceptT $ sendToPeer discoveryPeer $
+                                    DiscoveryConnectionRequest (emptyConnection (Left $ storedRef $ idData self) edgst') { dconnIceInfo = Just rinfo }
+                                case res of
+                                    Right _ -> return ()
+                                    Left err -> putStrLn $ "Discovery: failed to send connection request: " ++ err
 
-                    runAsService $ do
-                        let dp = DiscoveryPeer
-                                { dpPriority = 0
-                                , dpPeer = Nothing
-                                , dpAddress = []
-                                , dpIceSession = Just ice
-                                }
-                        svcModifyGlobal $ \s -> s { dgsPeers = M.insert dgst dp $ dgsPeers s }
-#else
-                -> do
-                    return ()
+                            runAsService $ do
+                                let dp = DiscoveryPeer
+                                        { dpPriority = 0
+                                        , dpPeer = Nothing
+                                        , dpAddress = []
+                                        , dpIceSession = Just ice
+                                        }
+                                svcModifyGlobal $ \s -> s { dgsPeers = M.insert dgst dp $ dgsPeers s }
+
+                        Nothing -> do
+                            return ()
 #endif
+                    return ()
 
                 | [ ipaddr, port ] <- words (T.unpack addr) -> do
-                    saddr <- head <$>
-                        getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just ipaddr) (Just port)
-                    peer <- serverPeer server (addrAddress saddr)
-                    runAsService $ do
-                        let dp = DiscoveryPeer
-                                { dpPriority = 0
-                                , dpPeer = Just peer
-                                , dpAddress = []
-                                , dpIceSession = Nothing
-                                }
-                        svcModifyGlobal $ \s -> s { dgsPeers = M.insert dgst dp $ dgsPeers s }
+                    void $ liftIO $ forkIO $ do
+                        saddr <- head <$>
+                            getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just ipaddr) (Just port)
+                        peer <- serverPeer server (addrAddress saddr)
+                        runAsService $ do
+                            let dp = DiscoveryPeer
+                                    { dpPriority = 0
+                                    , dpPeer = Just peer
+                                    , dpAddress = []
+                                    , dpIceSession = Nothing
+                                    }
+                            svcModifyGlobal $ \s -> s { dgsPeers = M.insert dgst dp $ dgsPeers s }
 
                 | otherwise -> do
-                    runAsService $ do
-                        svcPrint $ "Discovery: invalid address in result: " ++ T.unpack addr
+                    svcPrint $ "Discovery: invalid address in result: " ++ T.unpack addr
 
         DiscoveryConnectionRequest conn -> do
             self <- svcSelf
@@ -327,7 +324,7 @@ instance Service DiscoveryService where
                 | Just prinfo <- dconnIceInfo conn -> do
                     server <- asks svcServer
                     peer <- asks svcPeer
-                    dpsIceConfig <$> svcGet >>= \case
+                    getIceConfig >>= \case
                         Just config -> do
                             liftIO $ void $ iceCreateSession config PjIceSessRoleControlled $ \ice -> do
                                 rinfo <- iceRemoteInfo ice
@@ -336,7 +333,7 @@ instance Service DiscoveryService where
                                     Right _ -> iceConnect ice prinfo $ void $ serverPeerIce server ice
                                     Left err -> putStrLn $ "Discovery: failed to send connection response: " ++ err
                         Nothing -> do
-                            svcPrint $ "Discovery: ICE request from peer without ICE configuration"
+                            return ()
 #endif
 
                 | otherwise -> do
@@ -410,6 +407,26 @@ instance Service DiscoveryService where
 
 identityDigests :: Foldable f => Identity f -> [ RefDigest ]
 identityDigests pid = map (refDigest . storedRef) $ idDataF =<< unfoldOwners pid
+
+
+getIceConfig :: ServiceHandler DiscoveryService (Maybe IceConfig)
+getIceConfig = do
+    dpsIceConfig <$> svcGet >>= \case
+        Just cfg -> return $ Just cfg
+        Nothing -> do
+#ifdef ENABLE_ICE_SUPPORT
+            stun <- dpsStunServer <$> svcGet
+            turn <- dpsTurnServer <$> svcGet
+            liftIO (iceCreateConfig stun turn) >>= \case
+                Just cfg -> do
+                    svcModify $ \s -> s { dpsIceConfig = Just cfg }
+                    return $ Just cfg
+                Nothing -> do
+                    svcPrint $ "Discovery: failed to create ICE config"
+                    return Nothing
+#else
+            return Nothing
+#endif
 
 
 discoverySearch :: (MonadIO m, MonadError e m, FromErebosError e) => Server -> RefDigest -> m ()
