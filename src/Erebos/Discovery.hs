@@ -160,6 +160,14 @@ data DiscoveryPeer = DiscoveryPeer
     , dpIceSession :: Maybe IceSession
     }
 
+emptyPeer :: DiscoveryPeer
+emptyPeer = DiscoveryPeer
+    { dpPriority = 0
+    , dpPeer = Nothing
+    , dpAddress = []
+    , dpIceSession = Nothing
+    }
+
 data DiscoveryPeerState = DiscoveryPeerState
     { dpsStunServer :: Maybe ( Text, Word16 )
     , dpsTurnServer :: Maybe ( Text, Word16 )
@@ -284,13 +292,8 @@ instance Service DiscoveryService where
                                     Left err -> putStrLn $ "Discovery: failed to send connection request: " ++ err
 
                             runAsService $ do
-                                let dp = DiscoveryPeer
-                                        { dpPriority = 0
-                                        , dpPeer = Nothing
-                                        , dpAddress = []
-                                        , dpIceSession = Just ice
-                                        }
-                                svcModifyGlobal $ \s -> s { dgsPeers = M.insert dgst dp $ dgsPeers s }
+                                let upd dp = dp { dpIceSession = Just ice }
+                                svcModifyGlobal $ \s -> s { dgsPeers = M.alter (Just . upd . fromMaybe emptyPeer) dgst $ dgsPeers s }
 
                         Nothing -> do
                             return ()
@@ -303,13 +306,8 @@ instance Service DiscoveryService where
                             getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just ipaddr) (Just port)
                         peer <- serverPeer server (addrAddress saddr)
                         runAsService $ do
-                            let dp = DiscoveryPeer
-                                    { dpPriority = 0
-                                    , dpPeer = Just peer
-                                    , dpAddress = []
-                                    , dpIceSession = Nothing
-                                    }
-                            svcModifyGlobal $ \s -> s { dgsPeers = M.insert dgst dp $ dgsPeers s }
+                            let upd dp = dp { dpPeer = Just peer }
+                            svcModifyGlobal $ \s -> s { dgsPeers = M.alter (Just . upd . fromMaybe emptyPeer) dgst $ dgsPeers s }
 
                 | otherwise -> do
                     svcPrint $ "Discovery: invalid address in result: " ++ T.unpack addr
@@ -361,9 +359,9 @@ instance Service DiscoveryService where
                             saddr <- liftIO $ head <$>
                                 getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just ipaddr) (Just port)
                             peer <- liftIO $ serverPeer server (addrAddress saddr)
+                            let upd dp = dp { dpPeer = Just peer }
                             svcModifyGlobal $ \s -> s
-                                { dgsPeers = M.insert (either refDigest id $ dconnTarget conn)
-                                    (DiscoveryPeer 0 (Just peer) [] Nothing) $ dgsPeers s }
+                                { dgsPeers = M.alter (Just . upd . fromMaybe emptyPeer) (either refDigest id $ dconnTarget conn) $ dgsPeers s }
 
 #ifdef ENABLE_ICE_SUPPORT
                         | Just dp <- M.lookup (either refDigest id $ dconnTarget conn) dpeers
