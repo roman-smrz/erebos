@@ -402,6 +402,12 @@ instance Service DiscoveryService where
         forM_ searchingFor $ \dgst -> do
             sendToPeer peer $ DiscoverySearch (Right dgst)
 
+#ifdef ENABLE_ICE_SUPPORT
+    serviceStopServer _ _ _ pstates = do
+        forM_ pstates $ \( _, DiscoveryPeerState {..} ) -> do
+            mapM_ iceStopThread dpsIceConfig
+#endif
+
 
 identityDigests :: Foldable f => Identity f -> [ RefDigest ]
 identityDigests pid = map (refDigest . storedRef) $ idDataF =<< unfoldOwners pid
