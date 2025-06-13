@@ -216,6 +216,13 @@ void ice_cfg_free( struct erebos_ice_cfg * ecfg )
 	free( ecfg );
 }
 
+void ice_cfg_stop_thread( struct erebos_ice_cfg * ecfg )
+{
+	if( ! ecfg )
+		return;
+	ecfg->exit = true;
+}
+
 pj_ice_strans * ice_create( const struct erebos_ice_cfg * ecfg, pj_ice_sess_role role,
 		HsStablePtr sptr, HsStablePtr cb )
 {

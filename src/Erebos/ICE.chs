@@ -8,6 +8,7 @@ module Erebos.ICE (
     IceRemoteInfo,
 
     iceCreateConfig,
+    iceStopThread,
     iceCreateSession,
     iceDestroy,
     iceRemoteInfo,
@@ -137,6 +138,12 @@ iceCreateConfig stun turn =
         if cfg == nullPtr
           then return Nothing
           else Just . IceConfig <$> newForeignPtr ice_cfg_free cfg
+
+foreign import ccall unsafe "pjproject.h ice_cfg_stop_thread"
+    ice_cfg_stop_thread :: Ptr PjIceStransCfg -> IO ()
+
+iceStopThread :: IceConfig -> IO ()
+iceStopThread (IceConfig fcfg) = withForeignPtr fcfg ice_cfg_stop_thread
 
 {#pointer *pj_ice_strans as ^ #}
 

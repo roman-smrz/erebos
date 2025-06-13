@@ -71,6 +71,9 @@ class (
     serviceStorageWatchers :: proxy s -> [SomeStorageWatcher s]
     serviceStorageWatchers _ = []
 
+    serviceStopServer :: proxy s -> Server -> ServiceGlobalState s -> [ ( Peer, ServiceState s ) ] -> IO ()
+    serviceStopServer _ _ _ _ = return ()
+
 
 data SomeService = forall s. Service s => SomeService (Proxy s) (ServiceAttributes s)
 

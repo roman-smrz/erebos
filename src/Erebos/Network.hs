@@ -392,8 +392,21 @@ startServer serverOptions serverOrigHead logd' serverServices = do
     return server
 
 stopServer :: Server -> IO ()
-stopServer Server {..} = do
-    mapM_ killThread =<< takeMVar serverThreads
+stopServer server@Server {..} = do
+    withMVar serverPeers $ \peers -> do
+        ( global, peerStates ) <- atomically $ (,)
+            <$> takeTMVar serverServiceStates
+            <*> (forM (M.elems peers) $ \p@Peer {..} -> ( p, ) <$> takeTMVar peerServiceState)
+
+        forM_ global $ \(SomeServiceGlobalState (proxy :: Proxy s) gs) -> do
+            ps <- forM peerStates $ \( peer, states ) ->
+                return $ ( peer, ) $ case M.lookup (serviceID proxy) states of
+                    Just (SomeServiceState (_ :: Proxy ps) pstate)
+                        | Just (Refl :: s :~: ps) <- eqT
+                        -> pstate
+                    _ -> emptyServiceState proxy
+            serviceStopServer proxy server gs ps
+        mapM_ killThread =<< takeMVar serverThreads
 
 dataResponseWorker :: Server -> IO ()
 dataResponseWorker server = forever $ do

@@ -6,6 +6,7 @@
 struct erebos_ice_cfg * ice_cfg_create( const char * stun_server, uint16_t stun_port,
 		const char * turn_server, uint16_t turn_port );
 void ice_cfg_free( struct erebos_ice_cfg * cfg );
+void ice_cfg_stop_thread( struct erebos_ice_cfg * cfg );
 
 pj_ice_strans * ice_create( const struct erebos_ice_cfg *, pj_ice_sess_role role,
 		HsStablePtr sptr, HsStablePtr cb );
