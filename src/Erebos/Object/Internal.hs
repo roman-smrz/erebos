@@ -703,8 +703,6 @@ loadRawWeaks name = mapMaybe p <$> loadRecItems
 
 
 
-type Stored a = Stored' Complete a
-
 instance Storable a => Storable (Stored a) where
     store st = copyRef st . storedRef
     store' (Stored _ x) = store' x
@@ -714,10 +712,10 @@ instance ZeroStorable a => ZeroStorable (Stored a) where
     fromZero st = Stored (zeroRef st) $ fromZero st
 
 fromStored :: Stored a -> a
-fromStored (Stored _ x) = x
+fromStored = storedObject'
 
 storedRef :: Stored a -> Ref
-storedRef (Stored ref _) = ref
+storedRef = storedRef'
 
 wrappedStore :: MonadIO m => Storable a => Storage -> a -> m (Stored a)
 wrappedStore st x = do ref <- liftIO $ store st x
@@ -726,9 +724,8 @@ wrappedStore st x = do ref <- liftIO $ store st x
 wrappedLoad :: Storable a => Ref -> Stored a
 wrappedLoad ref = Stored ref (load ref)
 
-copyStored :: forall c c' m a. (StorageCompleteness c, StorageCompleteness c', MonadIO m) =>
-    Storage' c' -> Stored' c a -> m (LoadResult c (Stored' c' a))
-copyStored st (Stored ref' x) = liftIO $ returnLoadResult . fmap (flip Stored x) <$> copyRef' st ref'
+copyStored :: forall m a. MonadIO m => Storage -> Stored a -> m (Stored a)
+copyStored st (Stored ref' x) = liftIO $ returnLoadResult . fmap (\r -> Stored r x) <$> copyRef' st ref'
 
 -- |Passed function needs to preserve the object representation to be safe
 unsafeMapStored :: (a -> b) -> Stored a -> Stored b

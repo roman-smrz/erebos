@@ -20,7 +20,7 @@ module Erebos.Storage.Internal (
 
     Generation(..),
     HeadID(..), HeadTypeID(..),
-    Stored'(..), storedStorage,
+    Stored(..), storedStorage,
 ) where
 
 import Control.Arrow
@@ -37,6 +37,7 @@ import Data.ByteArray qualified as BA
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as BC
 import Data.ByteString.Lazy qualified as BL
+import Data.Function
 import Data.HashTable.IO qualified as HT
 import Data.Hashable
 import Data.Kind
@@ -239,17 +240,20 @@ newtype HeadID = HeadID UUID
 newtype HeadTypeID = HeadTypeID UUID
     deriving (Eq, Ord)
 
-data Stored' c a = Stored (Ref' c) a
+data Stored a = Stored
+    { storedRef' :: Ref
+    , storedObject' :: a
+    }
     deriving (Show)
 
-instance Eq (Stored' c a) where
-    Stored r1 _ == Stored r2 _  =  refDigest r1 == refDigest r2
+instance Eq (Stored a) where
+    (==)  =  (==) `on` (refDigest . storedRef')
 
-instance Ord (Stored' c a) where
-    compare (Stored r1 _) (Stored r2 _) = compare (refDigest r1) (refDigest r2)
+instance Ord (Stored a) where
+    compare  =  compare `on` (refDigest . storedRef')
 
-storedStorage :: Stored' c a -> Storage' c
-storedStorage (Stored (Ref st _) _) = st
+storedStorage :: Stored a -> Storage
+storedStorage = refStorage . storedRef'
 
 
 type Complete = Identity

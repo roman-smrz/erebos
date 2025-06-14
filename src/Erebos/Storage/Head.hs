@@ -113,7 +113,7 @@ loadHeadRaw st@Storage {..} tid hid = do
 -- | Reload the given head from storage, returning `Head' with updated object,
 -- or `Nothing' if there is no longer head with the particular ID in storage.
 reloadHead :: (HeadType a, MonadIO m) => Head a -> m (Maybe (Head a))
-reloadHead (Head hid (Stored (Ref st _) _)) = loadHead st hid
+reloadHead (Head hid val) = loadHead (storedStorage val) hid
 
 -- | Store a new `Head' of type 'a' in the storage.
 storeHead :: forall a m. MonadIO m => HeadType a => Storage -> a -> m (Head a)
@@ -232,8 +232,8 @@ watchHeadWith
     -> (Head a -> b)  -- ^ Selector function
     -> (b -> IO ())  -- ^ Callback
     -> IO WatchedHead  -- ^ Watched head handle
-watchHeadWith (Head hid (Stored (Ref st _) _)) sel cb = do
-    watchHeadRaw st (headTypeID @a Proxy) hid (sel . Head hid . wrappedLoad) cb
+watchHeadWith (Head hid val) sel cb = do
+    watchHeadRaw (storedStorage val) (headTypeID @a Proxy) hid (sel . Head hid . wrappedLoad) cb
 
 -- | Watch the given head using raw IDs and a selector from `Ref'.
 watchHeadRaw :: forall b. Eq b => Storage -> HeadTypeID -> HeadID -> (Ref -> b) -> (b -> IO ()) -> IO WatchedHead

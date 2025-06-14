@@ -52,7 +52,7 @@ merge xs = mergeSorted $ filterAncestors xs
 
 storeMerge :: (Mergeable a, Storable a) => [Stored (Component a)] -> IO (Stored a)
 storeMerge [] = error "merge: empty list"
-storeMerge xs@(Stored ref _ : _) = wrappedStore (refStorage ref) $ mergeSorted $ filterAncestors xs
+storeMerge xs@(x : _) = wrappedStore (storedStorage x) $ mergeSorted $ filterAncestors xs
 
 previous :: Storable a => Stored a -> [Stored a]
 previous (Stored ref _) = case load ref of
