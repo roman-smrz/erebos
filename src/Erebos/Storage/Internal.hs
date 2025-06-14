@@ -1,4 +1,27 @@
-module Erebos.Storage.Internal where
+module Erebos.Storage.Internal (
+    Storage'(..), Storage, PartialStorage,
+    Ref'(..), Ref, PartialRef,
+    RefDigest(..),
+    WatchID, startWatchID, nextWatchID,
+    WatchList(..), WatchListItem(..), watchListAdd, watchListDel,
+
+    refStorage,
+    refDigest, refDigestFromByteString,
+    showRef, showRefDigest, showRefDigestParts,
+    readRefDigest,
+    hashToRefDigest,
+
+    StorageCompleteness(..),
+    StorageBackend(..),
+    Complete, Partial,
+
+    unsafeStoreRawBytes,
+    ioLoadBytesFromStorage,
+
+    Generation(..),
+    HeadID(..), HeadTypeID(..),
+    Stored'(..), storedStorage,
+) where
 
 import Control.Arrow
 import Control.Concurrent
