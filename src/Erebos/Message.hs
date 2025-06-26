@@ -29,6 +29,7 @@ import qualified Data.Text as T
 import Data.Time.Format
 import Data.Time.LocalTime
 
+import Erebos.Discovery
 import Erebos.Identity
 import Erebos.Network
 import Erebos.Service
@@ -103,8 +104,10 @@ instance Service DirectMessage where
 
     serviceNewPeer = syncDirectMessageToPeer . lookupSharedValue . lsShared . fromStored =<< svcGetLocal
 
-    serviceStorageWatchers _ = (:[]) $
-        SomeStorageWatcher (lookupSharedValue . lsShared . fromStored) syncDirectMessageToPeer
+    serviceStorageWatchers _ =
+        [ SomeStorageWatcher (lookupSharedValue . lsShared . fromStored) syncDirectMessageToPeer
+        , GlobalStorageWatcher (lookupSharedValue . lsShared . fromStored) findMissingPeers
+        ]
 
 
 data MessageState = MessageState
@@ -210,12 +213,19 @@ syncDirectMessageToPeer (DirectMessageThreads mss _) = do
               else do
                 return unchanged
 
+findMissingPeers :: Server -> DirectMessageThreads -> ExceptT String IO ()
+findMissingPeers server threads = do
+    forM_ (toThreadList threads) $ \thread -> do
+        when (msgHead thread /= msgReceived thread) $ do
+            mapM_ (discoverySearch server) $ map storedRef $ idDataF $ msgPeer thread
+
 
 data DirectMessageThread = DirectMessageThread
     { msgPeer :: ComposedIdentity
-    , msgHead :: [Stored DirectMessage]
-    , msgSent :: [Stored DirectMessage]
-    , msgSeen :: [Stored DirectMessage]
+    , msgHead :: [ Stored DirectMessage ]
+    , msgSent :: [ Stored DirectMessage ]
+    , msgSeen :: [ Stored DirectMessage ]
+    , msgReceived :: [ Stored DirectMessage ]
     }
 
 threadToList :: DirectMessageThread -> [DirectMessage]
@@ -249,6 +259,7 @@ messageThreadFor peer mss =
          , msgHead = filterAncestors $ ready ++ received
          , msgSent = filterAncestors $ sent ++ received
          , msgSeen = filterAncestors $ ready ++ seen
+         , msgReceived = filterAncestors $ received
          }
 
 

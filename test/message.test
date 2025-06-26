@@ -1,3 +1,7 @@
+module message
+
+import common
+
 test DirectMessage:
 	let services = "contact,dm"
 
@@ -149,3 +153,113 @@ test DirectMessage:
 	send "start-server services $services" to p2
 
 	expect /dm-received from Owner1 text while_peer_offline/ from p2
+
+
+test DirectMessageDiscovery:
+	let services = "dm,discovery"
+
+	subnet sd
+	subnet s1
+	subnet s2
+	subnet s3
+	subnet s4
+
+	spawn on sd as pd
+	spawn on s1 as p1
+	spawn on s2 as p2
+	spawn on s3 as p3
+	spawn on s4 as p4
+
+	send "create-identity Discovery" to pd
+
+	send "create-identity Device1 Owner1" to p1
+	expect /create-identity-done ref ($refpat)/ from p1 capture p1_id
+	send "identity-info $p1_id" to p1
+	expect /identity-info ref $p1_id base ($refpat) owner ($refpat).*/ from p1 capture p1_base, p1_owner
+
+	send "create-identity Device2 Owner2" to p2
+	expect /create-identity-done ref ($refpat)/ from p2 capture p2_id
+	send "identity-info $p2_id" to p2
+	expect /identity-info ref $p2_id base ($refpat) owner ($refpat).*/ from p2 capture p2_base, p2_owner
+	send "identity-info $p2_owner" to p2
+	expect /identity-info ref $p2_owner base ($refpat).*/ from p2 capture p2_obase
+
+	send "create-identity Device3 Owner3" to p3
+	expect /create-identity-done ref ($refpat)/ from p3 capture p3_id
+	send "identity-info $p3_id" to p3
+	expect /identity-info ref $p3_id base ($refpat) owner ($refpat).*/ from p3 capture p3_base, p3_owner
+
+	send "create-identity Device4 Owner4" to p4
+	expect /create-identity-done ref ($refpat)/ from p4 capture p4_id
+	send "identity-info $p4_id" to p4
+	expect /identity-info ref $p4_id base ($refpat) owner ($refpat).*/ from p4 capture p4_base, p4_owner
+
+
+	for p in [ p1, p2, p3, p4 ]:
+		with p:
+			send "start-server services $services"
+
+	for p in [ p2, p3, p4 ]:
+		with p1:
+			send "peer-add ${p.node.ip}"
+			expect:
+				/peer [0-9]+ addr ${p.node.ip} 29665/
+				/peer [0-9]+ id Device. Owner./
+		expect from p:
+			/peer 1 addr ${p1.node.ip} 29665/
+			/peer 1 id Device1 Owner1/
+
+	# Make sure p1 has other identities in storage:
+	for i in [ 1 .. 3 ]:
+		send "dm-send-peer $i init1" to p1
+	for p in [ p2, p3, p4 ]:
+		expect /dm-received from Owner1 text init1/ from p
+		send "dm-send-identity $p1_owner init2" to p
+		expect /dm-received from Owner. text init2/ from p1
+
+	# Restart servers to remove peers:
+	for p in [ p1, p2, p3, p4 ]:
+		with p:
+			send "stop-server"
+	for p in [ p1, p2, p3, p4 ]:
+		with p:
+			expect /stop-server-done/
+
+	# Prepare message before peers connect to discovery
+	send "dm-send-identity $p4_owner hello_to_p4" to p1
+
+	for p in [ p1, p2, p3, p4, pd ]:
+		with p:
+			send "start-server services $services"
+
+	for p in [ p2, p3, p4, p1 ]:
+		with p:
+			send "peer-add ${pd.node.ip}"
+			expect:
+				/peer 1 addr ${pd.node.ip} 29665/
+				/peer 1 id Discovery/
+		expect from pd:
+			/peer [0-9]+ addr ${p.node.ip} 29665/
+			/peer [0-9]+ id Device. Owner./
+
+	multiply_timeout by 2.0
+
+	# Connect via discovery manually, then send message
+	send "discovery-connect $p2_obase" to p1
+	expect from p1:
+		/peer [0-9]+ addr ${p2.node.ip} 29665/
+		/peer [0-9]+ id Device2 Owner2/
+	send "dm-send-identity $p2_owner hello_to_p2" to p1
+	expect /dm-received from Owner1 text hello_to_p2/ from p2
+
+	# Send message, expect automatic discovery
+	send "dm-send-identity $p3_owner hello_to_p3" to p1
+	expect /dm-received from Owner1 text hello_to_p3/ from p3
+
+	# Verify the first message
+	expect /dm-received from Owner1 text hello_to_p4/ from p4
+
+	for p in [ p1, p2, p3, p4, pd ]:
+		send "stop-server" to p
+	for p in [ p1, p2, p3, p4, pd ]:
+		expect /stop-server-done/ from p

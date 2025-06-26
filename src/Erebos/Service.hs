@@ -103,7 +103,9 @@ someServiceEmptyGlobalState :: SomeService -> SomeServiceGlobalState
 someServiceEmptyGlobalState (SomeService p _) = SomeServiceGlobalState p (emptyServiceGlobalState p)
 
 
-data SomeStorageWatcher s = forall a. Eq a => SomeStorageWatcher (Stored LocalState -> a) (a -> ServiceHandler s ())
+data SomeStorageWatcher s
+    = forall a. Eq a => SomeStorageWatcher (Stored LocalState -> a) (a -> ServiceHandler s ())
+    | forall a. Eq a => GlobalStorageWatcher (Stored LocalState -> a) (Server -> a -> ExceptT String IO ())
 
 
 newtype ServiceID = ServiceID UUID

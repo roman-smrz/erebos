@@ -284,6 +284,7 @@ commands = map (T.pack *** id)
     , ("contact-set-name", cmdContactSetName)
     , ("dm-send-peer", cmdDmSendPeer)
     , ("dm-send-contact", cmdDmSendContact)
+    , ("dm-send-identity", cmdDmSendIdentity)
     , ("dm-list-peer", cmdDmListPeer)
     , ("dm-list-contact", cmdDmListContact)
     , ("chatroom-create", cmdChatroomCreate)
@@ -734,6 +735,14 @@ cmdDmSendContact :: Command
 cmdDmSendContact = do
     [cid, msg] <- asks tiParams
     Just to <- contactIdentity <$> getContact cid
+    void $ sendDirectMessage to msg
+
+cmdDmSendIdentity :: Command
+cmdDmSendIdentity = do
+    st <- asks tiStorage
+    [ tid, msg ] <- asks tiParams
+    Just ref <- liftIO $ readRef st $ encodeUtf8 tid
+    Just to <- return $ validateExtendedIdentity $ wrappedLoad ref
     void $ sendDirectMessage to msg
 
 dmList :: Foldable f => Identity f -> Command
