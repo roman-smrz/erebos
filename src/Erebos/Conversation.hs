@@ -71,7 +71,7 @@ directMessageConversation :: MonadHead LocalState m => ComposedIdentity -> m Con
 directMessageConversation peer = do
     (find (sameIdentity peer . msgPeer) . toThreadList . lookupSharedValue . lsShared . fromStored <$> getLocalHead) >>= \case
         Just thread -> return $ DirectMessageConversation thread
-        Nothing -> return $ DirectMessageConversation $ DirectMessageThread peer [] [] []
+        Nothing -> return $ DirectMessageConversation $ DirectMessageThread peer [] [] [] []
 
 chatroomConversation :: MonadHead LocalState m => ChatroomState -> m (Maybe Conversation)
 chatroomConversation rstate = chatroomConversationByStateData (head $ roomStateData rstate)

@@ -327,13 +327,18 @@ startServer serverOptions serverOrigHead logd' serverServices = do
                     announceUpdate idt
 
             forM_ serverServices $ \(SomeService service _) -> do
-                forM_ (serviceStorageWatchers service) $ \(SomeStorageWatcher sel act) -> do
-                    watchHeadWith serverOrigHead (sel . headStoredObject) $ \x -> do
-                        withMVar serverPeers $ mapM_ $ \peer -> atomically $ do
-                            readTVar (peerIdentityVar peer) >>= \case
-                                PeerIdentityFull _ -> writeTQueue serverIOActions $ do
-                                    runPeerService peer $ act x
-                                _ -> return ()
+                forM_ (serviceStorageWatchers service) $ \case
+                    SomeStorageWatcher sel act -> do
+                        watchHeadWith serverOrigHead (sel . headStoredObject) $ \x -> do
+                            withMVar serverPeers $ mapM_ $ \peer -> atomically $ do
+                                readTVar (peerIdentityVar peer) >>= \case
+                                    PeerIdentityFull _ -> writeTQueue serverIOActions $ do
+                                        runPeerService peer $ act x
+                                    _ -> return ()
+                    GlobalStorageWatcher sel act -> do
+                        watchHeadWith serverOrigHead (sel . headStoredObject) $ \x -> do
+                            atomically $ writeTQueue serverIOActions $ do
+                                act server x
 
             forkServerThread server $ forever $ do
                 (msg, saddr) <- S.recvFrom sock 4096
