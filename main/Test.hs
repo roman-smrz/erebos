@@ -316,6 +316,7 @@ commands = map (T.pack *** id)
     , ("chatroom-leave", cmdChatroomLeave)
     , ("chatroom-message-send", cmdChatroomMessageSend)
     , ("discovery-connect", cmdDiscoveryConnect)
+    , ("discovery-tunnel", cmdDiscoveryTunnel)
     ]
 
 cmdStore :: Command
@@ -970,3 +971,10 @@ cmdDiscoveryConnect = do
     Just dgst <- return $ readRefDigest $ encodeUtf8 tref
     Just RunningServer {..} <- gets tsServer
     discoverySearch rsServer dgst
+
+cmdDiscoveryTunnel :: Command
+cmdDiscoveryTunnel = do
+    [ tvia, ttarget ] <- asks tiParams
+    via <- getPeer tvia
+    Just target <- return $ readRefDigest $ encodeUtf8 ttarget
+    liftIO $ discoverySetupTunnel via target
