@@ -11,6 +11,7 @@ import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Trans.Maybe
+import Control.Monad.Writer
 
 import Crypto.Random
 
@@ -113,7 +114,7 @@ availableServices =
         True "peer discovery"
     ]
 
-options :: [OptDescr (Options -> Options)]
+options :: [ OptDescr (Options -> Writer [ String ] Options) ]
 options =
     [ Option ['p'] ["port"]
         (ReqArg (\p -> so $ \opts -> opts { serverPort = read p }) "<port>")
@@ -122,60 +123,64 @@ options =
         (NoArg (so $ \opts -> opts { serverLocalDiscovery = False }))
         "do not send announce packets for local discovery"
     , Option [] [ "storage" ]
-        (ReqArg (\path -> \opts -> opts { optStorage = FilesystemStorage path }) "<path>")
+        (ReqArg (\path -> \opts -> return opts { optStorage = FilesystemStorage path }) "<path>")
         "use storage in <path>"
     , Option [] [ "memory-storage" ]
-        (NoArg (\opts -> opts { optStorage = MemoryStorage }))
+        (NoArg (\opts -> return opts { optStorage = MemoryStorage }))
         "use memory storage"
     , Option [] ["chatroom-auto-subscribe"]
-        (ReqArg (\count -> \opts -> opts { optChatroomAutoSubscribe = Just (read count) }) "<count>")
+        (ReqArg (\count -> \opts -> return opts { optChatroomAutoSubscribe = Just (read count) }) "<count>")
         "automatically subscribe for up to <count> chatrooms"
 #ifdef ENABLE_ICE_SUPPORT
     , Option [] [ "discovery-stun-port" ]
-        (ReqArg (\value -> serviceAttr $ \attrs -> attrs { discoveryStunPort = Just (read value) }) "<port>")
+        (ReqArg (\value -> serviceAttr $ \attrs -> return attrs { discoveryStunPort = Just (read value) }) "<port>")
         "offer specified <port> to discovery peers for STUN protocol"
     , Option [] [ "discovery-stun-server" ]
-        (ReqArg (\value -> serviceAttr $ \attrs -> attrs { discoveryStunServer = Just (read value) }) "<server>")
+        (ReqArg (\value -> serviceAttr $ \attrs -> return attrs { discoveryStunServer = Just (read value) }) "<server>")
         "offer <server> (domain name or IP address) to discovery peers for STUN protocol"
     , Option [] [ "discovery-turn-port" ]
-        (ReqArg (\value -> serviceAttr $ \attrs -> attrs { discoveryTurnPort = Just (read value) }) "<port>")
+        (ReqArg (\value -> serviceAttr $ \attrs -> return attrs { discoveryTurnPort = Just (read value) }) "<port>")
         "offer specified <port> to discovery peers for TURN protocol"
     , Option [] [ "discovery-turn-server" ]
-        (ReqArg (\value -> serviceAttr $ \attrs -> attrs { discoveryTurnServer = Just (read value) }) "<server>")
+        (ReqArg (\value -> serviceAttr $ \attrs -> return attrs { discoveryTurnServer = Just (read value) }) "<server>")
         "offer <server> (domain name or IP address) to discovery peers for TURN protocol"
 #endif
     , Option [] ["dm-bot-echo"]
-        (ReqArg (\prefix -> \opts -> opts { optDmBotEcho = Just (T.pack prefix) }) "<prefix>")
+        (ReqArg (\prefix -> \opts -> return opts { optDmBotEcho = Just (T.pack prefix) }) "<prefix>")
         "automatically reply to direct messages with the same text prefixed with <prefix>"
     , Option [] [ "websocket-server" ]
-        (ReqArg (\value -> \opts -> opts { optWebSocketServer = Just (read value) }) "<port>")
+        (ReqArg (\value -> \opts -> return opts { optWebSocketServer = Just (read value) }) "<port>")
         "start WebSocket server on given port"
     , Option ['h'] ["help"]
-        (NoArg $ \opts -> opts { optShowHelp = True })
+        (NoArg $ \opts -> return opts { optShowHelp = True })
         "show this help and exit"
     , Option ['V'] ["version"]
-        (NoArg $ \opts -> opts { optShowVersion = True })
+        (NoArg $ \opts -> return opts { optShowVersion = True })
         "show version and exit"
     ]
   where
-    so f opts = opts { optServer = f $ optServer opts }
+    so f opts = return opts { optServer = f $ optServer opts }
 
-    updateService :: Service s => (ServiceAttributes s -> ServiceAttributes s) -> SomeService -> SomeService
+    updateService :: (Service s, Monad m, Typeable m) => (ServiceAttributes s -> m (ServiceAttributes s)) -> SomeService -> m SomeService
     updateService f some@(SomeService proxy attrs)
-        | Just f' <- cast f = SomeService proxy (f' attrs)
-        | otherwise = some
+        | Just f' <- cast f = SomeService proxy <$> f' attrs
+        | otherwise = return some
 
-    serviceAttr :: Service s => (ServiceAttributes s -> ServiceAttributes s) -> Options -> Options
-    serviceAttr f opts = opts { optServices = map (\sopt -> sopt { soptService = updateService f (soptService sopt) }) (optServices opts) }
+    serviceAttr :: (Service s, Monad m, Typeable m) => (ServiceAttributes s -> m (ServiceAttributes s)) -> Options -> m Options
+    serviceAttr f opts = do
+        services' <- forM (optServices opts) $ \sopt -> do
+            service <- updateService f (soptService sopt)
+            return sopt { soptService = service }
+        return opts { optServices = services' }
 
-servicesOptions :: [OptDescr (Options -> Options)]
+servicesOptions :: [ OptDescr (Options -> Writer [ String ] Options) ]
 servicesOptions = concatMap helper $ "all" : map soptName availableServices
   where
     helper name =
-        [ Option [] ["enable-" <> name] (NoArg $ so $ change name $ \sopt -> sopt { soptEnabled = True }) ""
-        , Option [] ["disable-" <> name] (NoArg $ so $ change name $ \sopt -> sopt { soptEnabled = False }) ""
+        [ Option [] [ "enable-" <> name ] (NoArg $ so $ change name $ \sopt -> sopt { soptEnabled = True }) ""
+        , Option [] [ "disable-" <> name ] (NoArg $ so $ change name $ \sopt -> sopt { soptEnabled = False }) ""
         ]
-    so f opts = opts { optServices = f $ optServices opts }
+    so f opts = return opts { optServices = f $ optServices opts }
     change :: String -> (ServiceOption -> ServiceOption) -> [ServiceOption] -> [ServiceOption]
     change name f (s : ss)
         | soptName s == name || name == "all"
@@ -193,13 +198,16 @@ getDefaultStorageDir = do
 
 main :: IO ()
 main = do
-    (opts, args) <- (getOpt RequireOrder (options ++ servicesOptions) <$> getArgs) >>= \case
-        (o, args, []) -> do
-            return (foldl (flip id) defaultOptions o, args)
-        (_, _, errs) -> do
+    let printErrors errs = do
             progName <- getProgName
             hPutStrLn stderr $ concat errs <> "Try `" <> progName <> " --help' for more information."
             exitFailure
+    (opts, args) <- (getOpt RequireOrder (options ++ servicesOptions) <$> getArgs) >>= \case
+        (wo, args, []) ->
+            case runWriter (foldM (flip ($)) defaultOptions wo) of
+                ( o, [] )   -> return ( o, args )
+                ( _, errs ) -> printErrors errs
+        (_, _, errs) -> printErrors errs
 
     st <- liftIO $ case optStorage opts of
         DefaultStorage         -> openStorage =<< getDefaultStorageDir
