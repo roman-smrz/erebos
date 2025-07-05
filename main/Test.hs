@@ -227,6 +227,11 @@ directMessageAttributes out = DirectMessageAttributes
     { dmOwnerMismatch = afterCommit $ outLine out "dm-owner-mismatch"
     }
 
+discoveryAttributes :: DiscoveryAttributes
+discoveryAttributes = (defaultServiceAttributes Proxy)
+    { discoveryProvideTunnel = const True
+    }
+
 dmReceivedWatcher :: Output -> Stored DirectMessage -> IO ()
 dmReceivedWatcher out smsg = do
     let msg = fromStored smsg
@@ -510,7 +515,7 @@ cmdStartServer = do
         "attach" -> return $ someServiceAttr $ pairingAttributes (Proxy @AttachService) out rsPeers "attach"
         "chatroom" -> return $ someService @ChatroomService Proxy
         "contact" -> return $ someServiceAttr $ pairingAttributes (Proxy @ContactService) out rsPeers "contact"
-        "discovery" -> return $ someService @DiscoveryService Proxy
+        "discovery" -> return $ someServiceAttr $ discoveryAttributes
         "dm" -> return $ someServiceAttr $ directMessageAttributes out
         "sync" -> return $ someService @SyncService Proxy
         "test" -> return $ someServiceAttr $ (defaultServiceAttributes Proxy)

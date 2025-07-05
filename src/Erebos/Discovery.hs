@@ -59,6 +59,7 @@ data DiscoveryAttributes = DiscoveryAttributes
     , discoveryStunServer :: Maybe Text
     , discoveryTurnPort :: Maybe Word16
     , discoveryTurnServer :: Maybe Text
+    , discoveryProvideTunnel :: Peer -> Bool
     }
 
 defaultDiscoveryAttributes :: DiscoveryAttributes
@@ -67,6 +68,7 @@ defaultDiscoveryAttributes = DiscoveryAttributes
     , discoveryStunServer = Nothing
     , discoveryTurnPort = Nothing
     , discoveryTurnServer = Nothing
+    , discoveryProvideTunnel = const False
     }
 
 data DiscoveryConnection = DiscoveryConnection
@@ -326,6 +328,7 @@ instance Service DiscoveryService where
 
         DiscoveryConnectionRequest conn -> do
             self <- svcSelf
+            attrs <- asks svcAttributes
             let rconn = emptyConnection (dconnSource conn) (dconnTarget conn)
             if either refDigest id (dconnTarget conn) `elem` identityDigests self
               then if
@@ -369,14 +372,17 @@ instance Service DiscoveryService where
                     svcPrint $ "Discovery: unsupported connection request"
 
               else do
-                    -- request to some of our peers, relay
-                    mbdp <- M.lookup (either refDigest id $ dconnTarget conn) . dgsPeers <$> svcGetGlobal
-                    streams <- receivedStreams
-                    case mbdp of
+                -- request to some of our peers, relay
+                peer <- asks svcPeer
+                mbdp <- M.lookup (either refDigest id $ dconnTarget conn) . dgsPeers <$> svcGetGlobal
+                streams <- receivedStreams
+                case mbdp of
                         Nothing -> replyPacket $ DiscoveryConnectionResponse rconn
                         Just dp
                             | Just dpeer <- dpPeer dp -> if
                                 | dconnTunnel conn -> if
+                                    | not (discoveryProvideTunnel attrs peer) -> do
+                                        replyPacket $ DiscoveryConnectionResponse rconn
                                     | fromSource : _ <- streams -> do
                                         void $ liftIO $ forkIO $ runPeerService @DiscoveryService dpeer $ do
                                             toTarget <- openStream

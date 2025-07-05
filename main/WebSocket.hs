@@ -1,4 +1,5 @@
 module WebSocket (
+    WebSocketAddress(..),
     startWebsocketServer,
 ) where
 

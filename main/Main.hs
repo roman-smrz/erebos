@@ -145,6 +145,11 @@ options =
         (ReqArg (\value -> serviceAttr $ \attrs -> return attrs { discoveryTurnServer = Just (read value) }) "<server>")
         "offer <server> (domain name or IP address) to discovery peers for TURN protocol"
 #endif
+    , Option [] [ "discovery-tunnel" ]
+        (OptArg (\value -> \opts -> do
+            fun <- provideTunnelFun value
+            serviceAttr (\attrs -> return attrs { discoveryProvideTunnel = fun }) opts) "<peer-type>")
+        "offer to provide tunnel for peers of given <peer-type>, possible values: all, none, websocket"
     , Option [] ["dm-bot-echo"]
         (ReqArg (\prefix -> \opts -> return opts { optDmBotEcho = Just (T.pack prefix) }) "<prefix>")
         "automatically reply to direct messages with the same text prefixed with <prefix>"
@@ -172,6 +177,18 @@ options =
             service <- updateService f (soptService sopt)
             return sopt { soptService = service }
         return opts { optServices = services' }
+
+    provideTunnelFun :: Maybe String -> Writer [ String ] (Peer -> Bool)
+    provideTunnelFun Nothing = return $ const True
+    provideTunnelFun (Just "all") = return $ const True
+    provideTunnelFun (Just "none") = return $ const False
+    provideTunnelFun (Just "websocket") = return $ \peer ->
+        case peerAddress peer of
+            CustomPeerAddress addr | Just WebSocketAddress {} <- cast addr -> True
+            _ -> False
+    provideTunnelFun (Just name) = do
+        tell [ "Invalid value of --discovery-tunnel: ‘" <> name <> "’\n" ]
+        return $ const False
 
 servicesOptions :: [ OptDescr (Options -> Writer [ String ] Options) ]
 servicesOptions = concatMap helper $ "all" : map soptName availableServices
