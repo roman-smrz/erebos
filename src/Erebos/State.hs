@@ -66,7 +66,7 @@ instance Storable LocalState where
         lsPrev <- loadMbRawWeak "PREV"
         lsIdentity <- loadRef "id"
         lsShared <- loadRefs "shared"
-        lsOther <- filter ((`notElem` [ BC.pack "id", BC.pack "shared" ]) . fst) <$> loadRecItems
+        lsOther <- filter ((`notElem` [ BC.pack "PREV", BC.pack "id", BC.pack "shared" ]) . fst) <$> loadRecItems
         return LocalState {..}
 
 instance HeadType LocalState where
