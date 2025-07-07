@@ -244,8 +244,9 @@ instance Service DiscoveryService where
             dpeer <- M.lookup (refDigest ref) . dgsPeers <$> svcGetGlobal
             replyPacket $ DiscoveryResult ref $ maybe [] dpAddress dpeer
 
-        DiscoveryResult ref [] -> do
-            svcPrint $ "Discovery: " ++ show (refDigest ref) ++ " not found"
+        DiscoveryResult _ [] -> do
+            -- not found
+            return ()
 
         DiscoveryResult ref addrs -> do
             let dgst = refDigest ref
