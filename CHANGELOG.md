@@ -1,5 +1,11 @@
 # Revision history for erebos
 
+## 0.1.9 -- 2025-07-08
+
+* Option to show details or delete a conversation by giving index parameter without first selecting it
+* Improved handling of ICE connections
+* Automatic discovery of peers for pending direct messages
+
 ## 0.1.8.1 -- 2025-03-29
 
 * Fix build from sdist (add missing include)
