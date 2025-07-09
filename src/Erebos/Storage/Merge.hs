@@ -7,7 +7,7 @@ module Erebos.Storage.Merge (
     compareGeneration, generationMax,
     storedGeneration,
 
-    generations,
+    generations, generationsBy,
     ancestors,
     precedes,
     precedesOrEquals,
@@ -100,12 +100,18 @@ storedGeneration x =
 
 -- |Returns list of sets starting with the set of given objects and
 -- intcrementally adding parents.
-generations :: Storable a => [Stored a] -> [Set (Stored a)]
-generations = unfoldr gen . (,S.empty)
-    where gen (hs, cur) = case filter (`S.notMember` cur) hs of
+generations :: Storable a => [ Stored a ] -> [ Set (Stored a) ]
+generations = generationsBy previous
+
+-- |Returns list of sets starting with the set of given objects and
+-- intcrementally adding parents, with the first parameter being
+-- a function to get all the parents of given object.
+generationsBy :: Ord a => (a -> [ a ]) -> [ a ] -> [ Set a ]
+generationsBy parents = unfoldr gen . ( , S.empty )
+    where gen ( hs, cur ) = case filter (`S.notMember` cur) hs of
               []    -> Nothing
               added -> let next = foldr S.insert cur added
-                        in Just (next, (previous =<< added, next))
+                        in Just ( next, ( parents =<< added, next ) )
 
 -- |Returns set containing all given objects and their ancestors
 ancestors :: Storable a => [Stored a] -> Set (Stored a)
