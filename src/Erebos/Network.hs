@@ -23,6 +23,7 @@ module Erebos.Network (
 #ifdef ENABLE_ICE_SUPPORT
     serverPeerIce,
 #endif
+    findPeer,
     dropPeer,
     isPeerDropped,
     sendToPeer, sendManyToPeer,
@@ -878,6 +879,13 @@ serverPeer' server paddr = do
     when hello $ atomically $ do
         writeFlow (serverControlFlow server) (RequestConnection paddr)
     return peer
+
+findPeer :: Server -> (Peer -> IO Bool) -> IO (Maybe Peer)
+findPeer server test = withMVar (serverPeers server) (helper . M.elems)
+  where
+    helper (p : ps) = test p >>= \case True  -> return (Just p)
+                                       False -> helper ps
+    helper []       = return Nothing
 
 dropPeer :: MonadIO m => Peer -> m ()
 dropPeer peer = liftIO $ do
