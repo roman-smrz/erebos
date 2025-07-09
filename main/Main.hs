@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Main (main) where
@@ -43,9 +42,6 @@ import Erebos.Chatroom
 import Erebos.Conversation
 import Erebos.DirectMessage
 import Erebos.Discovery
-#ifdef ENABLE_ICE_SUPPORT
-import Erebos.ICE
-#endif
 import Erebos.Identity
 import Erebos.Network
 import Erebos.Object
@@ -131,7 +127,6 @@ options =
     , Option [] ["chatroom-auto-subscribe"]
         (ReqArg (\count -> \opts -> return opts { optChatroomAutoSubscribe = Just (read count) }) "<count>")
         "automatically subscribe for up to <count> chatrooms"
-#ifdef ENABLE_ICE_SUPPORT
     , Option [] [ "discovery-stun-port" ]
         (ReqArg (\value -> serviceAttr $ \attrs -> return attrs { discoveryStunPort = Just (read value) }) "<port>")
         "offer specified <port> to discovery peers for STUN protocol"
@@ -144,7 +139,6 @@ options =
     , Option [] [ "discovery-turn-server" ]
         (ReqArg (\value -> serviceAttr $ \attrs -> return attrs { discoveryTurnServer = Just (read value) }) "<server>")
         "offer <server> (domain name or IP address) to discovery peers for TURN protocol"
-#endif
     , Option [] [ "discovery-tunnel" ]
         (OptArg (\value -> \opts -> do
             fun <- provideTunnelFun value
@@ -452,9 +446,6 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
     loop $ Just $ CommandState
         { csHead = erebosHead
         , csContext = NoContext
-#ifdef ENABLE_ICE_SUPPORT
-        , csIceSessions = []
-#endif
         , csIcePeer = Nothing
         , csWatchChatrooms = watched
         , csQuit = False
@@ -477,9 +468,6 @@ data CommandInput = CommandInput
 data CommandState = CommandState
     { csHead :: Head LocalState
     , csContext :: CommandContext
-#ifdef ENABLE_ICE_SUPPORT
-    , csIceSessions :: [IceSession]
-#endif
     , csIcePeer :: Maybe Peer
     , csWatchChatrooms :: Maybe WatchedHead
     , csQuit :: Bool
@@ -575,13 +563,6 @@ commands =
     , ("details", cmdDetails)
     , ("discovery-init", cmdDiscoveryInit)
     , ("discovery", cmdDiscovery)
-#ifdef ENABLE_ICE_SUPPORT
-    , ("ice-create", cmdIceCreate)
-    , ("ice-destroy", cmdIceDestroy)
-    , ("ice-show", cmdIceShow)
-    , ("ice-connect", cmdIceConnect)
-    , ("ice-send", cmdIceSend)
-#endif
     , ("join", cmdJoin)
     , ("join-as", cmdJoinAs)
     , ("leave", cmdLeave)
@@ -953,80 +934,6 @@ cmdDiscovery = void $ do
     case readRefDigest (BC.pack sref) of
         Nothing -> throwOtherError "failed to parse ref"
         Just dgst -> discoverySearch server dgst
-
-#ifdef ENABLE_ICE_SUPPORT
-
-cmdIceCreate :: Command
-cmdIceCreate = do
-    let getRole = \case
-            'm':_ -> PjIceSessRoleControlling
-            's':_ -> PjIceSessRoleControlled
-            _ -> PjIceSessRoleUnknown
-
-    ( role, stun, turn ) <- asks (words . ciLine) >>= \case
-        [] -> return ( PjIceSessRoleControlling, Nothing, Nothing )
-        [ role ] -> return
-            ( getRole role, Nothing, Nothing )
-        [ role, server ] -> return
-            ( getRole role
-            , Just ( T.pack server, 0 )
-            , Just ( T.pack server, 0 )
-            )
-        [ role, server, port ] -> return
-            ( getRole role
-            , Just ( T.pack server, read port )
-            , Just ( T.pack server, read port )
-            )
-        [ role, stunServer, stunPort, turnServer, turnPort ] -> return
-            ( getRole role
-            , Just ( T.pack stunServer, read stunPort )
-            , Just ( T.pack turnServer, read turnPort )
-            )
-        _ -> throwOtherError "invalid parameters"
-
-    eprint <- asks ciPrint
-    Just cfg <- liftIO $ iceCreateConfig stun turn
-    sess <- liftIO $ iceCreateSession cfg role $ eprint <=< iceShow
-    modify $ \s -> s { csIceSessions = sess : csIceSessions s }
-
-cmdIceDestroy :: Command
-cmdIceDestroy = do
-    s:ss <- gets csIceSessions
-    modify $ \st -> st { csIceSessions = ss }
-    liftIO $ iceDestroy s
-
-cmdIceShow :: Command
-cmdIceShow = do
-    sess <- gets csIceSessions
-    eprint <- asks ciPrint
-    liftIO $ forM_ (zip [1::Int ..] sess) $ \(i, s) -> do
-        eprint $ "[" ++ show i ++ "]"
-        eprint =<< iceShow s
-
-cmdIceConnect :: Command
-cmdIceConnect = do
-    s:_ <- gets csIceSessions
-    server <- asks ciServer
-    term <- asks ciTerminal
-    let loadInfo =
-            getInputLine term (KeepPrompt . maybe BC.empty BC.pack) >>= \case
-                line | BC.null line -> return []
-                     | otherwise    -> (line :) <$> loadInfo
-    Right remote <- liftIO $ do
-        st <- memoryStorage
-        pst <- derivePartialStorage st
-        setPrompt term ""
-        rbytes <- (BL.fromStrict . BC.unlines) <$> loadInfo
-        copyRef st =<< storeRawBytes pst (BL.fromChunks [ BC.pack "rec ", BC.pack (show (BL.length rbytes)), BC.singleton '\n' ] `BL.append` rbytes)
-    liftIO $ iceConnect s (load remote) $ void $ serverPeerIce server s
-
-cmdIceSend :: Command
-cmdIceSend = void $ do
-    s:_ <- gets csIceSessions
-    server <- asks ciServer
-    liftIO $ serverPeerIce server s
-
-#endif
 
 cmdQuit :: Command
 cmdQuit = modify $ \s -> s { csQuit = True }

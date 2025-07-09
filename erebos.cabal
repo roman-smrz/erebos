@@ -143,7 +143,7 @@ library
         src/Erebos/Network/ifaddrs.h
 
     if flag(ice)
-        exposed-modules:
+        other-modules:
             Erebos.ICE
         c-sources:
             src/Erebos/ICE/pjproject.c
