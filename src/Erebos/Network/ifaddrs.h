@@ -13,6 +13,6 @@ struct InetAddress
 	uint8_t addr[16];
 } __attribute__((packed));
 
-uint32_t * join_multicast(int fd, size_t * count);
-struct InetAddress * local_addresses( size_t * count );
-uint32_t * broadcast_addresses(void);
+uint32_t * erebos_join_multicast(int fd, size_t * count);
+struct InetAddress * erebos_local_addresses( size_t * count );
+uint32_t * erebos_broadcast_addresses(void);

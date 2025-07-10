@@ -126,9 +126,9 @@ instance StorableText IceCandidate where
 data PjIceStransCfg
 newtype IceConfig = IceConfig (ForeignPtr PjIceStransCfg)
 
-foreign import ccall unsafe "pjproject.h &ice_cfg_free"
+foreign import ccall unsafe "pjproject.h &erebos_ice_cfg_free"
     ice_cfg_free :: FunPtr (Ptr PjIceStransCfg -> IO ())
-foreign import ccall unsafe "pjproject.h ice_cfg_create"
+foreign import ccall unsafe "pjproject.h erebos_ice_cfg_create"
     ice_cfg_create :: CString -> Word16 -> CString -> Word16 -> IO (Ptr PjIceStransCfg)
 
 iceCreateConfig :: Maybe ( Text, Word16 ) -> Maybe ( Text, Word16 ) -> IO (Maybe IceConfig)
@@ -140,7 +140,7 @@ iceCreateConfig stun turn =
           then return Nothing
           else Just . IceConfig <$> newForeignPtr ice_cfg_free cfg
 
-foreign import ccall unsafe "pjproject.h ice_cfg_stop_thread"
+foreign import ccall unsafe "pjproject.h erebos_ice_cfg_stop_thread"
     ice_cfg_stop_thread :: Ptr PjIceStransCfg -> IO ()
 
 iceStopThread :: IceConfig -> IO ()
@@ -158,13 +158,13 @@ iceCreateSession icfg@(IceConfig fcfg) role cb = do
             forkIO $ cb sess
         sess <- IceSession
             <$> (withForeignPtr fcfg $ \cfg ->
-                    {#call ice_create #} (castPtr cfg) (fromIntegral $ fromEnum role) (castStablePtrToPtr sptr) (castStablePtrToPtr cbptr)
+                    {#call erebos_ice_create #} (castPtr cfg) (fromIntegral $ fromEnum role) (castStablePtrToPtr sptr) (castStablePtrToPtr cbptr)
                 )
             <*> pure icfg
             <*> (newMVar $ Left [])
     return $ sess
 
-{#fun ice_destroy as ^ { isStrans `IceSession' } -> `()' #}
+{#fun erebos_ice_destroy as iceDestroy { isStrans `IceSession' } -> `()' #}
 
 iceRemoteInfo :: IceSession -> IO IceRemoteInfo
 iceRemoteInfo sess = do
@@ -179,7 +179,7 @@ iceRemoteInfo sess = do
         let cptrs = take maxcand $ iterate (`plusPtr` maxlen) bytes
         pokeArray carr $ take maxcand cptrs
 
-        ncand <- {#call ice_encode_session #} (isStrans sess) ufrag pass def carr (fromIntegral maxlen) (fromIntegral maxcand)
+        ncand <- {#call erebos_ice_encode_session #} (isStrans sess) ufrag pass def carr (fromIntegral maxlen) (fromIntegral maxcand)
         if ncand < 0 then fail "failed to generate ICE remote info"
                      else IceRemoteInfo
                               <$> (T.pack <$> peekCString ufrag)
@@ -196,13 +196,13 @@ iceShow sess = do
 iceConnect :: IceSession -> IceRemoteInfo -> (IO ()) -> IO ()
 iceConnect sess remote cb = do
     cbptr <- newStablePtr $ cb
-    ice_connect sess cbptr
+    erebos_ice_connect sess cbptr
         (iriUsernameFrament remote)
         (iriPassword remote)
         (iriDefaultCandidate remote)
         (iriCandidates remote)
 
-{#fun ice_connect { isStrans `IceSession', castStablePtrToPtr `StablePtr (IO ())',
+{#fun erebos_ice_connect { isStrans `IceSession', castStablePtrToPtr `StablePtr (IO ())',
     withText* `Text',  withText* `Text', withText* `Text', withTextArray* `[Text]'& } -> `()' #}
 
 withText :: Text -> (Ptr CChar -> IO a) -> IO a
@@ -218,7 +218,7 @@ withTextArray tsAll f = helper tsAll []
 withByteStringLen :: Num n => ByteString -> ((Ptr CChar, n) -> IO a) -> IO a
 withByteStringLen t f = unsafeUseAsCStringLen t (f . (id *** fromIntegral))
 
-{#fun ice_send as ^ { isStrans `IceSession', withByteStringLen* `ByteString'& } -> `()' #}
+{#fun erebos_ice_send as iceSend { isStrans `IceSession', withByteStringLen* `ByteString'& } -> `()' #}
 
 foreign export ccall ice_call_cb :: StablePtr (IO ()) -> IO ()
 ice_call_cb :: StablePtr (IO ()) -> IO ()

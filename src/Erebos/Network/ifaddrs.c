@@ -22,7 +22,7 @@
 
 #define DISCOVERY_MULTICAST_GROUP "ff12:b6a4:6b1f:969:caee:acc2:5c93:73e1"
 
-uint32_t * join_multicast(int fd, size_t * count)
+uint32_t * erebos_join_multicast(int fd, size_t * count)
 {
 	size_t capacity = 16;
 	*count = 0;
@@ -117,7 +117,7 @@ static bool copy_local_address( struct InetAddress * dst, const struct sockaddr 
 
 #ifndef _WIN32
 
-struct InetAddress * local_addresses( size_t * count )
+struct InetAddress * erebos_local_addresses( size_t * count )
 {
 	struct ifaddrs * addrs;
 	if( getifaddrs( &addrs ) < 0 )
@@ -153,7 +153,7 @@ struct InetAddress * local_addresses( size_t * count )
 	return ret;
 }
 
-uint32_t * broadcast_addresses(void)
+uint32_t * erebos_broadcast_addresses(void)
 {
 	struct ifaddrs * addrs;
 	if (getifaddrs(&addrs) < 0)
@@ -196,7 +196,7 @@ uint32_t * broadcast_addresses(void)
 
 #pragma comment(lib, "ws2_32.lib")
 
-struct InetAddress * local_addresses( size_t * count )
+struct InetAddress * erebos_local_addresses( size_t * count )
 {
 	* count = 0;
 	struct InetAddress * ret = NULL;
@@ -237,7 +237,7 @@ cleanup:
 	return ret;
 }
 
-uint32_t * broadcast_addresses(void)
+uint32_t * erebos_broadcast_addresses(void)
 {
 	uint32_t * ret = NULL;
 	SOCKET wsock = INVALID_SOCKET;

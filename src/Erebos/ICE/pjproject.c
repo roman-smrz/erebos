@@ -78,7 +78,7 @@ static void cb_on_ice_complete(pj_ice_strans * strans,
 {
 	if (status != PJ_SUCCESS) {
 		ice_perror("cb_on_ice_complete", status);
-		ice_destroy(strans);
+		erebos_ice_destroy(strans);
 		return;
 	}
 
@@ -139,7 +139,7 @@ exit:
 	pthread_mutex_unlock(&mutex);
 }
 
-struct erebos_ice_cfg * ice_cfg_create( const char * stun_server, uint16_t stun_port,
+struct erebos_ice_cfg * erebos_ice_cfg_create( const char * stun_server, uint16_t stun_port,
 		const char * turn_server, uint16_t turn_port )
 {
 	ice_init();
@@ -189,11 +189,11 @@ struct erebos_ice_cfg * ice_cfg_create( const char * stun_server, uint16_t stun_
 
 	return ecfg;
 fail:
-	ice_cfg_free( ecfg );
+	erebos_ice_cfg_free( ecfg );
 	return NULL;
 }
 
-void ice_cfg_free( struct erebos_ice_cfg * ecfg )
+void erebos_ice_cfg_free( struct erebos_ice_cfg * ecfg )
 {
 	if( ! ecfg )
 		return;
@@ -216,14 +216,14 @@ void ice_cfg_free( struct erebos_ice_cfg * ecfg )
 	free( ecfg );
 }
 
-void ice_cfg_stop_thread( struct erebos_ice_cfg * ecfg )
+void erebos_ice_cfg_stop_thread( struct erebos_ice_cfg * ecfg )
 {
 	if( ! ecfg )
 		return;
 	ecfg->exit = true;
 }
 
-pj_ice_strans * ice_create( const struct erebos_ice_cfg * ecfg, pj_ice_sess_role role,
+pj_ice_strans * erebos_ice_create( const struct erebos_ice_cfg * ecfg, pj_ice_sess_role role,
 		HsStablePtr sptr, HsStablePtr cb )
 {
 	ice_init();
@@ -249,7 +249,7 @@ pj_ice_strans * ice_create( const struct erebos_ice_cfg * ecfg, pj_ice_sess_role
 	return res;
 }
 
-void ice_destroy(pj_ice_strans * strans)
+void erebos_ice_destroy(pj_ice_strans * strans)
 {
 	struct user_data * udata = pj_ice_strans_get_user_data(strans);
 	if (udata->sptr)
@@ -264,7 +264,7 @@ void ice_destroy(pj_ice_strans * strans)
 	pj_ice_strans_destroy(strans);
 }
 
-ssize_t ice_encode_session(pj_ice_strans * strans, char * ufrag, char * pass,
+ssize_t erebos_ice_encode_session(pj_ice_strans * strans, char * ufrag, char * pass,
 		char * def, char * candidates[], size_t maxlen, size_t maxcand)
 {
 	int n;
@@ -318,7 +318,7 @@ ssize_t ice_encode_session(pj_ice_strans * strans, char * ufrag, char * pass,
 	return cand_cnt;
 }
 
-void ice_connect(pj_ice_strans * strans, HsStablePtr cb,
+void erebos_ice_connect(pj_ice_strans * strans, HsStablePtr cb,
 		const char * ufrag, const char * pass,
 		const char * defcand, const char * tcandidates[], size_t ncand)
 {
@@ -409,7 +409,7 @@ void ice_connect(pj_ice_strans * strans, HsStablePtr cb,
 	}
 }
 
-void ice_send(pj_ice_strans * strans, const char * data, size_t len)
+void erebos_ice_send(pj_ice_strans * strans, const char * data, size_t len)
 {
 	if (!pj_ice_strans_sess_is_complete(strans)) {
 		fprintf(stderr, "ICE: negotiation has not been started or is in progress\n");
