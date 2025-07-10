@@ -44,6 +44,9 @@ data Terminal = Terminal
     , termShowPrompt :: TVar Bool
     , termInput :: TVar ( String, String )
     , termBottomLines :: TVar [ String ]
+    , termHistory :: TVar [ String ]
+    , termHistoryPos :: TVar Int
+    , termHistoryStash :: TVar ( String, String )
     }
 
 data TerminalLine = TerminalLine
@@ -52,6 +55,8 @@ data TerminalLine = TerminalLine
 
 data Input
     = InputChar Char
+    | InputMoveUp
+    | InputMoveDown
     | InputMoveRight
     | InputMoveLeft
     | InputMoveEnd
@@ -84,6 +89,9 @@ initTerminal termCompletionFunc = do
     termShowPrompt <- newTVarIO False
     termInput <- newTVarIO ( "", "" )
     termBottomLines <- newTVarIO []
+    termHistory <- newTVarIO []
+    termHistoryPos <- newTVarIO 0
+    termHistoryStash <- newTVarIO ( "", "" )
     return Terminal {..}
 
 bracketSet :: IO a -> (a -> IO b) -> a -> IO c -> IO c
@@ -112,6 +120,8 @@ getInput = do
         '\ESC' -> do
             esc <- readEsc
             case parseEsc esc of
+                Just ( 'A' , [] ) -> return InputMoveUp
+                Just ( 'B' , [] ) -> return InputMoveDown
                 Just ( 'C' , [] ) -> return InputMoveRight
                 Just ( 'D' , [] ) -> return InputMoveLeft
                 _ -> return (InputEscape esc)
@@ -119,6 +129,8 @@ getInput = do
         '\DEL' -> return InputBackspace
         '\NAK' -> return InputClear
         '\ETB' -> return InputBackWord
+        '\DLE' -> return InputMoveUp
+        '\SO'  -> return InputMoveDown
         '\SOH' -> return InputMoveStart
         '\ENQ' -> return InputMoveEnd
         '\EOT' -> return InputEnd
@@ -143,7 +155,18 @@ getInputLine term@Terminal {..} handleResult = do
         putStr $ prompt <> "\ESC[K"
         drawBottomLines term
         hFlush stdout
-    (handleResult <$> go) >>= \case
+
+    mbLine <- go
+    forM_ mbLine $ \line -> do
+        let addLine xs
+                | null line = xs
+                | (x : _) <- xs, x == line = xs
+                | otherwise = line : xs
+        atomically $ do
+            writeTVar termHistory . addLine =<< readTVar termHistory
+            writeTVar termHistoryPos 0
+
+    case handleResult mbLine of
         KeepPrompt x -> do
             termPutStr term "\n\ESC[J"
             return x
@@ -195,6 +218,37 @@ getInputLine term@Terminal {..} handleResult = do
                 return $ c : (if null post then "" else "\ESC[s" <> post <> "\ESC[u")
 
         InputChar _ -> go
+
+        InputMoveUp -> withInput $ \prepost -> do
+            hist <- readTVar termHistory
+            pos <- readTVar termHistoryPos
+            case drop pos hist of
+                ( h : _ ) -> do
+                    when (pos == 0) $ do
+                        writeTVar termHistoryStash prepost
+                    writeTVar termHistoryPos (pos + 1)
+                    writeTVar termInput ( h, "" )
+                    ("\r\ESC[K" <>) <$> getCurrentPromptLine term
+                [] -> do
+                    return ""
+
+        InputMoveDown -> withInput $ \_ -> do
+            readTVar termHistoryPos >>= \case
+                0 -> do
+                    return ""
+                1 -> do
+                    writeTVar termHistoryPos 0
+                    writeTVar termInput =<< readTVar termHistoryStash
+                    ("\r\ESC[K" <>) <$> getCurrentPromptLine term
+                pos -> do
+                    writeTVar termHistoryPos (pos - 1)
+                    hist <- readTVar termHistory
+                    case drop (pos - 2) hist of
+                        ( h : _ ) -> do
+                            writeTVar termInput ( h, "" )
+                            ("\r\ESC[K" <>) <$> getCurrentPromptLine term
+                        [] -> do
+                            return ""
 
         InputMoveRight -> withInput $ \case
             ( pre, c : post ) -> do
