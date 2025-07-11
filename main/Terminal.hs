@@ -51,6 +51,7 @@ data Terminal = Terminal
 
 data TerminalLine = TerminalLine
     { tlTerminal :: Terminal
+    , tlLineCount :: Int
     }
 
 data Input
@@ -323,11 +324,13 @@ setPrompt term@Terminal {..} prompt = do
 printLine :: Terminal -> String -> IO TerminalLine
 printLine tlTerminal@Terminal {..} str = do
     withMVar termLock $ \_ -> do
+        let strLines = lines str
+            tlLineCount = length strLines
         promptLine <- atomically $ do
             readTVar termShowPrompt >>= \case
                 True -> getCurrentPromptLine tlTerminal
                 False -> return ""
-        putStr $ "\r\ESC[K" <> str <> "\n\ESC[K" <> promptLine
+        putStr $ "\r\ESC[K" <> unlines strLines <> "\ESC[K" <> promptLine
         drawBottomLines tlTerminal
         hFlush stdout
         return TerminalLine {..}
