@@ -216,6 +216,9 @@ target device with `/<number>`.
 : Drop the currently selected peer. Afterwards, the connection can be
   re-established by either side.
 
+`/identity`  
+: Show details of current identity
+
 `/update-identity`  
 : Interactively update current identity information
 

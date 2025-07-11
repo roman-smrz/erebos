@@ -261,6 +261,14 @@ main = do
             Nothing -> error "ref does not exist"
             Just ref -> print $ storedGeneration (wrappedLoad ref :: Stored Object)
 
+        [ "identity" ] -> do
+            loadHeads st >>= \case
+                (h : _) -> do
+                    T.putStr $ showIdentityDetails $ headLocalIdentity h
+                [] -> do
+                    T.putStrLn "no local state head"
+                    exitFailure
+
         ["update-identity"] -> do
             withTerminal noCompletion $ \term -> do
                 either (fail . showErebosError) return <=< runExceptT $ do
@@ -543,6 +551,7 @@ getSelectedOrManualContext = do
 commands :: [(String, Command)]
 commands =
     [ ("history", cmdHistory)
+    , ("identity", cmdIdentity)
     , ("peers", cmdPeers)
     , ("peer-add", cmdPeerAdd)
     , ("peer-add-public", cmdPeerAddPublic)
@@ -695,6 +704,24 @@ cmdHistory = void $ do
             mapM_ (cmdPutStrLn . formatMessage tzone) $ reverse $ take 50 thread
         [] -> do
             cmdPutStrLn $ "<empty history>"
+
+showIdentityDetails :: Foldable f => Identity f -> Text
+showIdentityDetails identity = T.unlines $ go $ reverse $ unfoldOwners identity
+  where
+    go (i : is) = concat
+        [ maybeToList $ ("Name: " <>) <$> idName i
+        , map (("Ref: " <>) . T.pack . show . refDigest . storedRef) $ idDataF i
+        , map (("ExtRef: " <>) . T.pack . show . refDigest . storedRef) $ filter isExtension $ idExtDataF i
+        , do guard $ not (null is)
+             "" : "Device:" : map ("  " <>) (go is)
+        ]
+    go [] = []
+    isExtension x = case fromSigned x of BaseIdentityData {} -> False
+                                         _ -> True
+
+cmdIdentity :: Command
+cmdIdentity = do
+    cmdPutStrLn . T.unpack . showIdentityDetails . localIdentity . fromStored =<< getLocalHead
 
 cmdUpdateIdentity :: Command
 cmdUpdateIdentity = void $ do
