@@ -1,5 +1,3 @@
-{-# LANGUAGE CPP #-}
-
 module Erebos.Network (
     Server,
     startServer,
@@ -20,9 +18,6 @@ module Erebos.Network (
 
     serverPeer,
     serverPeerCustom,
-#ifdef ENABLE_ICE_SUPPORT
-    serverPeerIce,
-#endif
     findPeer,
     dropPeer,
     isPeerDropped,
@@ -67,9 +62,6 @@ import Network.Socket hiding (ControlMessage)
 import Network.Socket.ByteString qualified as S
 
 import Erebos.Error
-#ifdef ENABLE_ICE_SUPPORT
-import Erebos.ICE
-#endif
 import Erebos.Identity
 import Erebos.Network.Channel
 import Erebos.Network.Protocol
@@ -171,9 +163,6 @@ class (Eq addr, Ord addr, Show addr, Typeable addr) => PeerAddressType addr wher
 data PeerAddress
     = forall addr. PeerAddressType addr => CustomPeerAddress addr
     | DatagramAddress SockAddr
-#ifdef ENABLE_ICE_SUPPORT
-    | PeerIceSession IceSession
-#endif
 
 instance Show PeerAddress where
     show (CustomPeerAddress addr) = show addr
@@ -186,17 +175,10 @@ instance Show PeerAddress where
             -> [show addr, show port]
         _ -> [show saddr]
 
-#ifdef ENABLE_ICE_SUPPORT
-    show (PeerIceSession ice) = show ice
-#endif
-
 instance Eq PeerAddress where
     CustomPeerAddress addr == CustomPeerAddress addr'
         | Just addr'' <- cast addr' = addr == addr''
     DatagramAddress addr == DatagramAddress addr' = addr == addr'
-#ifdef ENABLE_ICE_SUPPORT
-    PeerIceSession ice   == PeerIceSession ice'   = ice == ice'
-#endif
     _                    == _                     = False
 
 instance Ord PeerAddress where
@@ -207,12 +189,6 @@ instance Ord PeerAddress where
     compare _                        (CustomPeerAddress _    ) = GT
 
     compare (DatagramAddress addr) (DatagramAddress addr') = compare addr addr'
-#ifdef ENABLE_ICE_SUPPORT
-    compare (DatagramAddress _   ) _                       = LT
-    compare _                      (DatagramAddress _    ) = GT
-
-    compare (PeerIceSession ice  ) (PeerIceSession ice')   = compare ice ice'
-#endif
 
 
 data PeerIdentity = PeerIdentityUnknown (TVar [UnifiedIdentity -> ExceptT ErebosError IO ()])
@@ -351,9 +327,6 @@ startServer serverOptions serverOrigHead logd' serverServices = do
                     case paddr of
                         CustomPeerAddress addr -> sendBytesToAddress addr msg
                         DatagramAddress addr -> void $ S.sendTo sock msg addr
-#ifdef ENABLE_ICE_SUPPORT
-                        PeerIceSession ice   -> iceSend ice msg
-#endif
 
             forkServerThread server $ forever $ do
                 readFlowIO serverControlFlow >>= \case
@@ -858,15 +831,6 @@ serverPeer server paddr = do
 
 serverPeerCustom :: PeerAddressType addr => Server -> addr -> IO Peer
 serverPeerCustom server addr = serverPeer' server (CustomPeerAddress addr)
-
-#ifdef ENABLE_ICE_SUPPORT
-serverPeerIce :: Server -> IceSession -> IO Peer
-serverPeerIce server@Server {..} ice = do
-    let paddr = PeerIceSession ice
-    peer <- serverPeer' server paddr
-    iceSetChan ice $ mapFlow undefined (paddr,) serverRawPath
-    return peer
-#endif
 
 serverPeer' :: Server -> PeerAddress -> IO Peer
 serverPeer' server paddr = do

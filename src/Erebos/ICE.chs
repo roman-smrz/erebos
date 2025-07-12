@@ -16,7 +16,7 @@ module Erebos.ICE (
     iceConnect,
     iceSend,
 
-    iceSetChan,
+    serverPeerIce,
 ) where
 
 import Control.Arrow
@@ -32,7 +32,6 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as T
 import Data.Text.Read qualified as T
-import Data.Void
 import Data.Word
 
 import Foreign.C.String
@@ -43,7 +42,7 @@ import Foreign.Marshal.Array
 import Foreign.Ptr
 import Foreign.StablePtr
 
-import Erebos.Flow
+import Erebos.Network
 import Erebos.Object
 import Erebos.Storable
 import Erebos.Storage
@@ -53,7 +52,7 @@ import Erebos.Storage
 data IceSession = IceSession
     { isStrans :: PjIceStrans
     , _isConfig :: IceConfig
-    , isChan :: MVar (Either [ByteString] (Flow Void ByteString))
+    , isChan :: MVar (Either [ ByteString ] (ByteString -> IO ()))
     }
 
 instance Eq IceSession where
@@ -64,6 +63,9 @@ instance Ord IceSession where
 
 instance Show IceSession where
     show _ = "<ICE>"
+
+instance PeerAddressType IceSession where
+    sendBytesToAddress = iceSend
 
 
 data IceRemoteInfo = IceRemoteInfo
@@ -224,13 +226,13 @@ foreign export ccall ice_call_cb :: StablePtr (IO ()) -> IO ()
 ice_call_cb :: StablePtr (IO ()) -> IO ()
 ice_call_cb = join . deRefStablePtr
 
-iceSetChan :: IceSession -> Flow Void ByteString -> IO ()
-iceSetChan sess chan = do
+iceSetServer :: IceSession -> Server -> IO ()
+iceSetServer sess server = do
     modifyMVar_ (isChan sess) $ \orig -> do
         case orig of
-             Left buf -> mapM_ (writeFlowIO chan) $ reverse buf
+             Left buf -> mapM_ (receivedFromCustomAddress server sess) $ reverse buf
              Right _ -> return ()
-        return $ Right chan
+        return $ Right $ receivedFromCustomAddress server sess
 
 foreign export ccall ice_rx_data :: StablePtr IceSession -> Ptr CChar -> Int -> IO ()
 ice_rx_data :: StablePtr IceSession -> Ptr CChar -> Int -> IO ()
@@ -238,5 +240,12 @@ ice_rx_data sptr buf len = do
     sess <- deRefStablePtr sptr
     bs <- packCStringLen (buf, len)
     modifyMVar_ (isChan sess) $ \case
-            mc@(Right chan) -> writeFlowIO chan bs >> return mc
-            Left bss -> return $ Left (bs:bss)
+        mc@(Right sendToServer) -> sendToServer bs >> return mc
+        Left bss -> return $ Left (bs : bss)
+
+
+serverPeerIce :: Server -> IceSession -> IO Peer
+serverPeerIce server ice = do
+    peer <- serverPeerCustom server ice
+    iceSetServer ice server
+    return peer
