@@ -203,9 +203,11 @@ getInputLine term@Terminal {..} handleResult = do
                     ( unused, completions@(c : cs) ) -> do
                         let commonPrefixes' x y = fmap (\( common, _, _ ) -> common) $ T.commonPrefixes x y
                         case foldl' (\mbcommon cur -> commonPrefixes' cur =<< mbcommon) (Just $ replacement c) (fmap replacement cs) of
-                            Just common -> updatePrompt $ T.unpack unused ++ T.unpack common
-                            Nothing -> return ()
-                        return $ map replacement completions
+                            Just common | T.unpack common /= pre -> do
+                                updatePrompt $ T.unpack unused ++ T.unpack common
+                                return []
+                            _ -> do
+                                return $ map replacement completions
 
                     ( _, [] ) -> do
                         return []
