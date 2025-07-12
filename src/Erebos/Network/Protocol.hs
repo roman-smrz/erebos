@@ -917,7 +917,10 @@ processOutgoing gs@GlobalState {..} = do
                                 , rsOnAck = rsOnAck rs >> onAck
                                 }) <$> mbReserved
                         sendBytes conn mbReserved' bs
-                    Nothing -> return ()
+                    Nothing -> do
+                        when (isJust mbReserved) $ do
+                            atomically $ do
+                                modifyTVar' cReservedPackets (subtract 1)
 
     let waitUntil :: TimeSpec -> TimeSpec -> STM ()
         waitUntil now till = do
