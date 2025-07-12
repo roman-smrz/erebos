@@ -28,6 +28,8 @@ import Data.Word
 
 import Network.Socket
 
+import Text.Read
+
 #ifdef ENABLE_ICE_SUPPORT
 import Erebos.ICE
 #endif
@@ -222,10 +224,13 @@ instance Service DiscoveryService where
                 | addr == T.pack "ICE" -> do
                     return $ Just addr
 
-                | [ ipaddr, port ] <- words (T.unpack addr)
-                , DatagramAddress paddr <- peerAddress peer -> do
-                    saddr <- liftIO $ head <$> getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just ipaddr) (Just port)
-                    return $ if paddr == addrAddress saddr
+                | [ ipaddrStr, portStr ] <- words (T.unpack addr)
+                , Just ipaddr <- readMaybe ipaddrStr
+                , Just port <- readMaybe portStr
+                , DatagramAddress saddr <- peerAddress peer
+                , Just paddr <- IP.fromSockAddr saddr
+                -> do
+                    return $ if ( ipaddr, port ) == paddr
                                 then Just addr
                                 else Nothing
 
@@ -235,7 +240,7 @@ instance Service DiscoveryService where
                 let dp = DiscoveryPeer
                         { dpPriority = fromMaybe 0 priority
                         , dpPeer = Just peer
-                        , dpAddress = addrs
+                        , dpAddress = matchedAddrs
                         , dpIceSession = Nothing
                         }
                 svcModifyGlobal $ \s -> s { dgsPeers = M.insertWith insertHelper (refDigest $ storedRef sdata) dp $ dgsPeers s }
