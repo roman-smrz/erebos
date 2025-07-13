@@ -93,7 +93,7 @@ test ManualDiscovery:
 
 
 test DiscoveryTunnel:
-	let services = "discovery"
+	let services = "discovery:tunnel"
 
 	subnet sd
 	subnet s1

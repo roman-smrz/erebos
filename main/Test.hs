@@ -229,7 +229,7 @@ directMessageAttributes out = DirectMessageAttributes
 
 discoveryAttributes :: DiscoveryAttributes
 discoveryAttributes = (defaultServiceAttributes Proxy)
-    { discoveryProvideTunnel = const True
+    { discoveryProvideTunnel = const False
     }
 
 dmReceivedWatcher :: Output -> Stored DirectMessage -> IO ()
@@ -507,18 +507,26 @@ cmdStartServer = do
                 | name == "services" -> T.splitOn "," value
                 | otherwise -> parseParams rest
             _ -> []
-    serviceNames <- parseParams <$> asks tiParams
+
+        splitServiceParams svc =
+            case T.splitOn ":" svc of
+                name : params -> ( name, params )
+                _ -> ( svc, [] )
+
+    serviceNames <- map splitServiceParams . parseParams <$> asks tiParams
 
     h <- getOrLoadHead
     rsPeers <- liftIO $ newMVar (1, [])
     services <- forM serviceNames $ \case
-        "attach" -> return $ someServiceAttr $ pairingAttributes (Proxy @AttachService) out rsPeers "attach"
-        "chatroom" -> return $ someService @ChatroomService Proxy
-        "contact" -> return $ someServiceAttr $ pairingAttributes (Proxy @ContactService) out rsPeers "contact"
-        "discovery" -> return $ someServiceAttr $ discoveryAttributes
-        "dm" -> return $ someServiceAttr $ directMessageAttributes out
-        "sync" -> return $ someService @SyncService Proxy
-        "test" -> return $ someServiceAttr $ (defaultServiceAttributes Proxy)
+        ( "attach", _ ) -> return $ someServiceAttr $ pairingAttributes (Proxy @AttachService) out rsPeers "attach"
+        ( "chatroom", _ ) -> return $ someService @ChatroomService Proxy
+        ( "contact", _ ) -> return $ someServiceAttr $ pairingAttributes (Proxy @ContactService) out rsPeers "contact"
+        ( "discovery", params ) -> return $ someServiceAttr $ discoveryAttributes
+            { discoveryProvideTunnel = const $ "tunnel" `elem` params
+            }
+        ( "dm", _ ) -> return $ someServiceAttr $ directMessageAttributes out
+        ( "sync", _ ) -> return $ someService @SyncService Proxy
+        ( "test", _ ) -> return $ someServiceAttr $ (defaultServiceAttributes Proxy)
             { testMessageReceived = \obj otype len sref -> do
                 liftIO $ do
                     void $ store (headStorage h) obj
@@ -537,7 +545,7 @@ cmdStartServer = do
                                     outLine out $ unwords [ "test-stream-closed-from", show pidx, show num, show seqNum ]
                         go
             }
-        sname -> throwOtherError $ "unknown service `" <> T.unpack sname <> "'"
+        ( sname, _ ) -> throwOtherError $ "unknown service `" <> T.unpack sname <> "'"
 
     rsServer <- liftIO $ startServer defaultServerOptions h (B.hPutStr stderr . (`BC.snoc` '\n') . BC.pack) services
 
