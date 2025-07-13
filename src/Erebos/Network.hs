@@ -114,12 +114,16 @@ getNextPeerChange = atomically . readTChan . serverChanPeer
 data ServerOptions = ServerOptions
     { serverPort :: PortNumber
     , serverLocalDiscovery :: Bool
+    , serverErrorPrefix :: String
+    , serverTestLog :: Bool
     }
 
 defaultServerOptions :: ServerOptions
 defaultServerOptions = ServerOptions
     { serverPort = discoveryPort
     , serverLocalDiscovery = True
+    , serverErrorPrefix = ""
+    , serverTestLog = False
     }
 
 
@@ -254,7 +258,16 @@ startServer serverOptions serverOrigHead logd' serverServices = do
 
     let logd = writeTQueue serverErrorLog
     forkServerThread server $ forever $ do
-        logd' =<< atomically (readTQueue serverErrorLog)
+        logd' . (serverErrorPrefix serverOptions <>) =<< atomically (readTQueue serverErrorLog)
+
+    logt <- if
+        | serverTestLog serverOptions -> do
+            serverTestLog <- newTQueueIO
+            forkServerThread server $ forever $ do
+                logd' =<< atomically (readTQueue serverTestLog)
+            return $ writeTQueue serverTestLog
+        | otherwise -> do
+            return $ \_ -> return ()
 
     forkServerThread server $ dataResponseWorker server
     forkServerThread server $ forever $ do
@@ -378,7 +391,7 @@ startServer serverOptions serverOrigHead logd' serverServices = do
                     ReceivedAnnounce addr _ -> do
                         void $ serverPeer' server addr
 
-            erebosNetworkProtocol (headLocalIdentity serverOrigHead) logd protocolRawPath protocolControlFlow
+            erebosNetworkProtocol (headLocalIdentity serverOrigHead) logd logt protocolRawPath protocolControlFlow
 
     forkServerThread server $ withSocketsDo $ do
         let hints = defaultHints

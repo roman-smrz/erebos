@@ -213,6 +213,7 @@ data GlobalState addr = (Eq addr, Show addr) => GlobalState
     , gControlFlow :: Flow (ControlRequest addr) (ControlMessage addr)
     , gNextUp :: TMVar (Connection addr, (Bool, TransportPacket PartialObject))
     , gLog :: String -> STM ()
+    , gTestLog :: String -> STM ()
     , gStorage :: PartialStorage
     , gStartTime :: TimeSpec
     , gNowVar :: TVar TimeSpec
@@ -494,10 +495,11 @@ data ControlMessage addr = NewConnection (Connection addr) (Maybe RefDigest)
 erebosNetworkProtocol :: (Eq addr, Ord addr, Show addr)
                       => UnifiedIdentity
                       -> (String -> STM ())
+                      -> (String -> STM ())
                       -> SymFlow (addr, ByteString)
                       -> Flow (ControlRequest addr) (ControlMessage addr)
                       -> IO ()
-erebosNetworkProtocol initialIdentity gLog gDataFlow gControlFlow = do
+erebosNetworkProtocol initialIdentity gLog gTestLog gDataFlow gControlFlow = do
     gIdentity <- newTVarIO (initialIdentity, [])
     gConnections <- newTVarIO []
     gNextUp <- newEmptyTMVarIO

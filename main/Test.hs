@@ -504,16 +504,18 @@ cmdStartServer = do
 
     let parseParams = \case
             (name : value : rest)
-                | name == "services" -> T.splitOn "," value
+                | name == "services" -> second ( map splitServiceParams (T.splitOn "," value) ++ ) (parseParams rest)
+            (name : rest)
+                | name == "test-log" -> first (\o -> o { serverTestLog = True }) (parseParams rest)
                 | otherwise -> parseParams rest
-            _ -> []
+            _ -> ( defaultServerOptions { serverErrorPrefix = "server-error-message " }, [] )
 
         splitServiceParams svc =
             case T.splitOn ":" svc of
                 name : params -> ( name, params )
                 _ -> ( svc, [] )
 
-    serviceNames <- map splitServiceParams . parseParams <$> asks tiParams
+    ( serverOptions, serviceNames ) <- parseParams <$> asks tiParams
 
     h <- getOrLoadHead
     rsPeers <- liftIO $ newMVar (1, [])
@@ -547,7 +549,9 @@ cmdStartServer = do
             }
         ( sname, _ ) -> throwOtherError $ "unknown service `" <> T.unpack sname <> "'"
 
-    rsServer <- liftIO $ startServer defaultServerOptions h (B.hPutStr stderr . (`BC.snoc` '\n') . BC.pack) services
+    let logPrint str = do BC.hPutStrLn stdout (BC.pack str)
+                          hFlush stdout
+    rsServer <- liftIO $ startServer serverOptions h logPrint services
 
     rsPeerThread <- liftIO $ forkIO $ void $ forever $ do
         peer <- getNextPeerChange rsServer
