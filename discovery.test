@@ -124,7 +124,7 @@ test DiscoveryTunnel:
 
 	for id in [ p1obase ]:
 		for p in [ pd, p1, p2 ]:
-			send "start-server services $services" to p
+			send "start-server services $services test-log" to p
 
 		for p in [ p1, p2 ]:
 			with p:
@@ -137,6 +137,11 @@ test DiscoveryTunnel:
 					/peer [12] id .*/
 
 		send "discovery-tunnel 1 $id" to p2
+
+		expect /net-ostream-open ${pd.node.ip} 29665 1 1/ from p2
+		expect /net-ostream-open ${p1.node.ip} 29665 1 1/ from pd
+		expect /net-ostream-open ${pd.node.ip} 29665 1 1/ from p1
+		expect /net-ostream-open ${p2.node.ip} 29665 1 1/ from pd
 
 		expect from p1:
 			/peer [0-9]+ addr tunnel@.*/
