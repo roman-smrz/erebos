@@ -144,11 +144,19 @@ test DiscoveryTunnel:
 		expect /net-ostream-open ${p2.node.ip} 29665 1 1/ from pd
 
 		expect from p1:
-			/peer [0-9]+ addr tunnel@.*/
-			/peer [0-9]+ id Device2 Owner2/
+			/peer 2 addr tunnel@.*/
+			/peer 2 id Device2 Owner2/
 		expect from p2:
-			/peer [0-9]+ addr tunnel@.*/
-			/peer [0-9]+ id Device1 Owner1/
+			/peer 2 addr tunnel@.*/
+			/peer 2 id Device1 Owner1/
+
+		send "peer-drop 2" to p1
+		send "peer-drop 2" to p2
+
+		expect /net-ostream-close-ack ${pd.node.ip} 29665 1 0/ from p2
+		expect /net-ostream-close-ack ${p1.node.ip} 29665 1 0/ from pd
+		expect /net-ostream-close-ack ${pd.node.ip} 29665 1 0/ from p1
+		expect /net-ostream-close-ack ${p2.node.ip} 29665 1 0/ from pd
 
 		for p in [ pd, p1, p2 ]:
 			send "stop-server" to p
