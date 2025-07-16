@@ -569,6 +569,9 @@ instance PeerAddressType TunnelAddress where
     sendBytesToAddress TunnelAddress {..} bytes = do
         writeStream tunnelWriter bytes
 
+    connectionToAddressClosed TunnelAddress {..} = do
+        closeStream tunnelWriter
+
 relayStream :: StreamReader -> StreamWriter -> IO ()
 relayStream r w = do
     p <- readStreamPacket r
