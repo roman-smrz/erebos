@@ -66,6 +66,7 @@ instance Show IceSession where
 
 instance PeerAddressType IceSession where
     sendBytesToAddress = iceSend
+    connectionToAddressClosed = iceDestroy
 
 
 data IceRemoteInfo = IceRemoteInfo

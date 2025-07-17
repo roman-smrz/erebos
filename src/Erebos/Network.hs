@@ -164,7 +164,6 @@ instance Eq Peer where
 class (Eq addr, Ord addr, Show addr, Typeable addr) => PeerAddressType addr where
     sendBytesToAddress :: addr -> ByteString -> IO ()
     connectionToAddressClosed :: addr -> IO ()
-    connectionToAddressClosed _ = return ()
 
 data PeerAddress
     = forall addr. PeerAddressType addr => CustomPeerAddress addr

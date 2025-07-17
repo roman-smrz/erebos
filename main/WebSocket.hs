@@ -27,8 +27,10 @@ instance Show WebSocketAddress where
     show (WebSocketAddress _ _) = "websocket"
 
 instance PeerAddressType WebSocketAddress where
-  sendBytesToAddress (WebSocketAddress _ conn) msg = do
-      WS.sendDataMessage conn $ WS.Binary $ BL.fromStrict msg
+    sendBytesToAddress (WebSocketAddress _ conn) msg = do
+        WS.sendDataMessage conn $ WS.Binary $ BL.fromStrict msg
+    connectionToAddressClosed (WebSocketAddress _ conn) = do
+        WS.sendClose conn BL.empty
 
 startWebsocketServer :: Server -> String -> Int -> (String -> IO ()) -> IO ()
 startWebsocketServer server addr port logd = do
