@@ -162,3 +162,57 @@ test DiscoveryTunnel:
 			send "stop-server" to p
 		for p in [ pd, p1, p2 ]:
 			expect /stop-server-done/ from p
+
+
+test DiscoveryTunnelRefused:
+	let services = "discovery"
+
+	subnet sd
+	subnet s1
+	subnet s2
+
+	spawn as pd on sd
+	spawn as p1 on s1
+	spawn as p2 on s2
+
+	for n in [ p1.node, p2.node ]:
+		shell on n:
+			nft add table inet filter
+			nft add chain inet filter input '{ type filter hook input priority filter ; policy drop; }'
+			nft add rule inet filter input 'ct state { established, related } accept'
+
+	send "create-identity Discovery" to pd
+	send "create-identity Device1 Owner1" to p1
+	send "create-identity Device2 Owner2" to p2
+
+	expect /create-identity-done ref ($refpat).*/ from p1 capture p1id
+	send "identity-info $p1id" to p1
+	expect /identity-info ref $p1id base ($refpat) owner ($refpat).*/ from p1 capture p1base, p1owner
+	send "identity-info $p1owner" to p1
+	expect /identity-info ref $p1owner base ($refpat).*/ from p1 capture p1obase
+
+	expect /create-identity-done ref $refpat.*/ from p2
+	expect /create-identity-done ref $refpat.*/ from pd
+
+	for id in [ p1obase ]:
+		for p in [ pd, p1, p2 ]:
+			send "start-server services $services test-log" to p
+
+		for p in [ p1, p2 ]:
+			with p:
+				send "peer-add ${pd.node.ip}"
+				expect:
+					/peer 1 addr ${pd.node.ip} 29665/
+					/peer 1 id Discovery/
+			expect from pd:
+					/peer [12] addr ${p.node.ip} 29665/
+					/peer [12] id .*/
+
+		send "discovery-tunnel 1 $id" to p2
+		expect /net-ostream-open ${pd.node.ip} 29665 1 1/ from p2
+		expect /net-ostream-close-ack ${pd.node.ip} 29665 1 0/ from p2
+
+		for p in [ pd, p1, p2 ]:
+			send "stop-server" to p
+		for p in [ pd, p1, p2 ]:
+			expect /stop-server-done/ from p
