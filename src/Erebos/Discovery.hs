@@ -431,7 +431,14 @@ instance Service DiscoveryService where
                                         let addr = TunnelAddress {..}
                                         void $ serverPeerCustom server addr
                                         receiveFromTunnel server addr
-                                [] -> svcPrint $ "Discovery: missing stream in tunnel response"
+                                [] -> do
+                                    svcPrint $ "Discovery: missing stream in tunnel response"
+                                    liftIO $ closeStream tunnelWriter
+
+                        | Just tunnelWriter <- lookup (either refDigest id (dconnTarget conn)) (dpsOurTunnelRequests dps)
+                        -> do
+                            svcPrint $ "Discovery: tunnel request failed"
+                            liftIO $ closeStream tunnelWriter
 
 #ifdef ENABLE_ICE_SUPPORT
                         | Just dp <- M.lookup (either refDigest id $ dconnTarget conn) dpeers
@@ -449,6 +456,7 @@ instance Service DiscoveryService where
 
                 case M.lookup (either refDigest id $ dconnSource conn) dpeers of
                     Just dp | Just dpeer <- dpPeer dp -> if
+                        -- successful tunnel request
                         | dconnTunnel conn
                         , Just ( fromSource, toTarget ) <- lookup (either refDigest id (dconnSource conn)) (dpsRelayedTunnelRequests dps)
                         , fromTarget : _ <- streams
@@ -464,6 +472,12 @@ instance Service DiscoveryService where
                             void $ forkIO $ do
                                 toSource <- readMVar toSourceVar
                                 relayStream fromTarget toSource
+
+                        -- failed tunnel request
+                        | Just ( _, toTarget ) <- lookup (either refDigest id (dconnSource conn)) (dpsRelayedTunnelRequests dps)
+                        -> do
+                            liftIO $ closeStream toTarget
+                            sendToPeer dpeer $ DiscoveryConnectionResponse conn
 
                         | otherwise -> do
                             sendToPeer dpeer $ DiscoveryConnectionResponse conn
