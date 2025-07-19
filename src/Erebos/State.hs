@@ -6,6 +6,7 @@ module Erebos.State (
     MonadStorage(..),
     MonadHead(..),
     updateLocalHead_,
+    LocalHeadT(..),
 
     updateLocalState, updateLocalState_,
     updateSharedState, updateSharedState_,
@@ -17,9 +18,11 @@ module Erebos.State (
     mergeSharedIdentity,
 ) where
 
+import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
 
+import Data.Bifunctor
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as BC
 import Data.Typeable
@@ -99,6 +102,35 @@ instance (HeadType a, MonadIO m) => MonadHead a (ReaderT (Head a) m) where
     updateLocalHead f = do
         h <- ask
         snd <$> updateHead h f
+
+
+newtype LocalHeadT h m a = LocalHeadT { runLocalHeadT :: Storage -> Stored h -> m ( a, Stored h ) }
+
+instance Functor m => Functor (LocalHeadT h m) where
+    fmap f (LocalHeadT act) = LocalHeadT $ \st h -> first f <$> act st h
+
+instance Monad m => Applicative (LocalHeadT h m) where
+    pure x = LocalHeadT $ \_ h -> pure ( x, h )
+    (<*>) = ap
+
+instance Monad m => Monad (LocalHeadT h m) where
+    return = pure
+    LocalHeadT act >>= f = LocalHeadT $ \st h -> do
+        ( x, h' ) <- act st h
+        let (LocalHeadT act') = f x
+        act' st h'
+
+instance MonadIO m => MonadIO (LocalHeadT h m) where
+    liftIO act = LocalHeadT $ \_ h -> ( , h ) <$> liftIO act
+
+instance MonadIO m => MonadStorage (LocalHeadT h m) where
+    getStorage = LocalHeadT $ \st h -> return ( st, h )
+
+instance (HeadType h, MonadIO m) => MonadHead h (LocalHeadT h m) where
+    updateLocalHead f = LocalHeadT $ \st h -> do
+        let LocalHeadT act = f h
+        ( ( h', x ), _ ) <- act st h
+        return ( x, h' )
 
 
 localIdentity :: LocalState -> UnifiedIdentity
