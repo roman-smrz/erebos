@@ -1,4 +1,5 @@
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Erebos.Discovery (
     DiscoveryService(..),
@@ -109,7 +110,7 @@ instance Storable DiscoveryService where
             DiscoveryConnectionResponse conn -> storeConnection "response" conn
 
       where
-        storeConnection ctype DiscoveryConnection {..} = do
+        storeConnection (ctype :: Text) DiscoveryConnection {..} = do
             storeText "connection" $ ctype
             either (storeRawRef "source") (storeRawWeak "source") dconnSource
             either (storeRawRef "target") (storeRawWeak "target") dconnTarget
@@ -147,7 +148,7 @@ instance Storable DiscoveryService where
             , loadConnection "response" DiscoveryConnectionResponse
             ]
       where
-        loadConnection ctype ctor = do
+        loadConnection (ctype :: Text) ctor = do
             ctype' <- loadText "connection"
             guard $ ctype == ctype'
             dconnSource <- msum
