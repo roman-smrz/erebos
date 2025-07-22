@@ -570,7 +570,6 @@ commands =
     , ("contact-reject", cmdContactReject)
     , ("conversations", cmdConversations)
     , ("details", cmdDetails)
-    , ("discovery-init", cmdDiscoveryInit)
     , ("discovery", cmdDiscovery)
     , ("join", cmdJoin)
     , ("join-as", cmdJoinAs)
@@ -940,19 +939,6 @@ cmdDetails = do
                 , [ maybe "<unnamed>" T.unpack (idName cpid) ]
                 , map (BC.unpack . showRefDigest . refDigest . storedRef) $ idExtDataF cpid
                 ]
-
-cmdDiscoveryInit :: Command
-cmdDiscoveryInit = void $ do
-    server <- asks ciServer
-
-    (hostname, port) <- (words <$> asks ciLine) >>= return . \case
-        hostname:p:_ -> (hostname, p)
-        [hostname] -> (hostname, show discoveryPort)
-        [] -> ("discovery.erebosprotocol.net", show discoveryPort)
-    addr:_ <- liftIO $ getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just hostname) (Just port)
-    peer <- liftIO $ serverPeer server (addrAddress addr)
-    sendToPeer peer $ DiscoverySelf [ T.pack "ICE" ] Nothing
-    modify $ \s -> s { csIcePeer = Just peer }
 
 cmdDiscovery :: Command
 cmdDiscovery = void $ do
