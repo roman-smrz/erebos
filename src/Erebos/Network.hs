@@ -63,6 +63,7 @@ import Network.Socket.ByteString qualified as S
 
 import Erebos.Error
 import Erebos.Identity
+import Erebos.Network.Address
 import Erebos.Network.Channel
 import Erebos.Network.Protocol
 import Erebos.Object.Internal
@@ -172,13 +173,10 @@ data PeerAddress
 instance Show PeerAddress where
     show (CustomPeerAddress addr) = show addr
 
-    show (DatagramAddress saddr) = unwords $ case IP.fromSockAddr saddr of
-        Just (IP.IPv6 ipv6, port)
-            | (0, 0, 0xffff, ipv4) <- IP.fromIPv6w ipv6
-            -> [show (IP.toIPv4w ipv4), show port]
-        Just (addr, port)
-            -> [show addr, show port]
-        _ -> [show saddr]
+    show (DatagramAddress saddr) =
+        case inetFromSockAddr saddr of
+            Just ( addr, port ) -> unwords [ show addr, show port ]
+            _ -> show saddr
 
 instance Eq PeerAddress where
     CustomPeerAddress addr == CustomPeerAddress addr'
@@ -1054,25 +1052,6 @@ foreign import ccall unsafe "Network/ifaddrs.h erebos_local_addresses" cLocalAdd
 foreign import ccall unsafe "Network/ifaddrs.h erebos_broadcast_addresses" cBroadcastAddresses :: IO (Ptr Word32)
 foreign import ccall unsafe "stdlib.h free" cFree :: Ptr a -> IO ()
 
-data InetAddress = InetAddress { fromInetAddress :: IP.IP }
-
-instance F.Storable InetAddress where
-    sizeOf _ = sizeOf (undefined :: CInt) + 16
-    alignment _ = 8
-
-    peek ptr = (unpackFamily <$> peekByteOff ptr 0) >>= \case
-        AF_INET -> InetAddress . IP.IPv4 . IP.fromHostAddress <$> peekByteOff ptr (sizeOf (undefined :: CInt))
-        AF_INET6 -> InetAddress . IP.IPv6 . IP.toIPv6b . map fromIntegral <$> peekArray 16 (ptr `plusPtr` sizeOf (undefined :: CInt) :: Ptr Word8)
-        _ -> fail "InetAddress: unknown family"
-
-    poke ptr (InetAddress addr) = case addr of
-        IP.IPv4 ip -> do
-            pokeByteOff ptr 0 (packFamily AF_INET)
-            pokeByteOff ptr (sizeOf (undefined :: CInt)) (IP.toHostAddress ip)
-        IP.IPv6 ip -> do
-            pokeByteOff ptr 0 (packFamily AF_INET6)
-            pokeArray (ptr `plusPtr` sizeOf (undefined :: CInt) :: Ptr Word8) (map fromIntegral $ IP.fromIPv6b ip)
-
 joinMulticast :: Socket -> IO [ Word32 ]
 joinMulticast sock =
     withFdSocket sock $ \fd ->
@@ -1099,7 +1078,7 @@ getServerAddresses Server {..} = do
             count <- fromIntegral <$> peek pcount
             res <- peekArray count ptr
             cFree ptr
-            return $ map (IP.toSockAddr . (, serverPort serverOptions ) . fromInetAddress) res
+            return $ map (inetToSockAddr . (, serverPort serverOptions )) res
 
 getBroadcastAddresses :: PortNumber -> IO [SockAddr]
 getBroadcastAddresses port = do

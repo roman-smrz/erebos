@@ -125,6 +125,7 @@ library
 
     other-modules:
         Erebos.Flow
+        Erebos.Network.Address
         Erebos.Network.Channel
         Erebos.Network.Protocol
         Erebos.Object.Internal
