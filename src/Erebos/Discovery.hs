@@ -15,7 +15,6 @@ import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
 
-import Data.IP qualified as IP
 import Data.List
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as M
@@ -27,8 +26,6 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Word
 
-import Network.Socket
-
 import Text.Read
 
 #ifdef ENABLE_ICE_SUPPORT
@@ -36,6 +33,7 @@ import Erebos.ICE
 #endif
 import Erebos.Identity
 import Erebos.Network
+import Erebos.Network.Address
 import Erebos.Object
 import Erebos.Service
 import Erebos.Service.Stream
@@ -50,12 +48,18 @@ type IceRemoteInfo = Stored Object
 
 
 data DiscoveryService
-    = DiscoverySelf [ Text ] (Maybe Int)
-    | DiscoveryAcknowledged [ Text ] (Maybe Text) (Maybe Word16) (Maybe Text) (Maybe Word16)
+    = DiscoverySelf [ DiscoveryAddress ] (Maybe Int)
+    | DiscoveryAcknowledged [ DiscoveryAddress ] (Maybe Text) (Maybe Word16) (Maybe Text) (Maybe Word16)
     | DiscoverySearch (Either Ref RefDigest)
-    | DiscoveryResult (Either Ref RefDigest) [ Text ]
+    | DiscoveryResult (Either Ref RefDigest) [ DiscoveryAddress ]
     | DiscoveryConnectionRequest DiscoveryConnection
     | DiscoveryConnectionResponse DiscoveryConnection
+
+data DiscoveryAddress
+    = DiscoveryIP InetAddress PortNumber
+    | DiscoveryICE
+    | DiscoveryTunnel
+    | DiscoveryOther Text
 
 data DiscoveryAttributes = DiscoveryAttributes
     { discoveryStunPort :: Maybe Word16
@@ -164,10 +168,33 @@ instance Storable DiscoveryService where
             dconnIceInfo <- loadMbRef "ice-info"
             return $ ctor DiscoveryConnection {..}
 
+instance StorableText DiscoveryAddress where
+    toText = \case
+        DiscoveryIP addr port -> T.unwords [ T.pack $ show addr, T.pack $ show port ]
+        DiscoveryICE -> "ICE"
+        DiscoveryTunnel -> "tunnel"
+        DiscoveryOther str -> str
+
+    fromText str = return $ if
+        | [ addrStr, portStr ] <- T.words str
+        , Just addr <- readMaybe $ T.unpack addrStr
+        , Just port <- readMaybe $ T.unpack portStr
+        -> DiscoveryIP addr port
+
+        | "ice" <- T.toLower str
+        -> DiscoveryICE
+
+        | "tunnel" <- str
+        -> DiscoveryTunnel
+
+        | otherwise
+        -> DiscoveryOther str
+
+
 data DiscoveryPeer = DiscoveryPeer
     { dpPriority :: Int
     , dpPeer :: Maybe Peer
-    , dpAddress :: [ Text ]
+    , dpAddress :: [ DiscoveryAddress ]
     , dpIceSession :: Maybe IceSession
     }
 
@@ -221,21 +248,17 @@ instance Service DiscoveryService where
             peer <- asks svcPeer
             let insertHelper new old | dpPriority new > dpPriority old = new
                                      | otherwise                       = old
-            matchedAddrs <- fmap catMaybes $ forM addrs $ \addr -> if
-                | addr == T.pack "ICE" -> do
-                    return $ Just addr
+            matchedAddrs <- flip filterM addrs $ \case
+                DiscoveryICE -> do
+                    return True
 
-                | [ ipaddrStr, portStr ] <- words (T.unpack addr)
-                , Just ipaddr <- readMaybe ipaddrStr
-                , Just port <- readMaybe portStr
-                , DatagramAddress saddr <- peerAddress peer
-                , Just paddr <- IP.fromSockAddr saddr
-                -> do
-                    return $ if ( ipaddr, port ) == paddr
-                                then Just addr
-                                else Nothing
+                DiscoveryIP ipaddr port
+                  | DatagramAddress saddr <- peerAddress peer
+                  , Just paddr <- inetFromSockAddr saddr
+                  -> do
+                    return $ ( ipaddr, port ) == paddr
 
-                | otherwise -> return Nothing
+                _ -> return False
 
             forM_ (idDataF =<< unfoldOwners pid) $ \sdata -> do
                 let dp = DiscoveryPeer
@@ -254,13 +277,7 @@ instance Service DiscoveryService where
 
         DiscoveryAcknowledged _ stunServer stunPort turnServer turnPort -> do
             paddr <- asks (peerAddress . svcPeer) >>= return . \case
-                (DatagramAddress saddr) -> case IP.fromSockAddr saddr of
-                    Just (IP.IPv6 ipv6, _)
-                        | (0, 0, 0xffff, ipv4) <- IP.fromIPv6w ipv6
-                        -> Just $ T.pack $ show (IP.toIPv4w ipv4)
-                    Just (addr, _)
-                        -> Just $ T.pack $ show addr
-                    _ -> Nothing
+                (DatagramAddress saddr) -> T.pack . show . fst <$> inetFromSockAddr saddr
                 _ -> Nothing
 
             let toIceServer Nothing Nothing = Nothing
@@ -290,9 +307,8 @@ instance Service DiscoveryService where
             discoveryPeer <- asks svcPeer
             let runAsService = runPeerService @DiscoveryService discoveryPeer
 
-            forM_ addrs $ \addr -> if
-                | addr == T.pack "ICE"
-                -> do
+            forM_ addrs $ \case
+                DiscoveryICE -> do
 #ifdef ENABLE_ICE_SUPPORT
                     getIceConfig >>= \case
                         Just config -> void $ liftIO $ forkIO $ do
@@ -321,17 +337,16 @@ instance Service DiscoveryService where
 #endif
                     return ()
 
-                | [ ipaddr, port ] <- words (T.unpack addr) -> do
+                DiscoveryIP ipaddr port -> do
                     void $ liftIO $ forkIO $ do
-                        saddr <- head <$>
-                            getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just ipaddr) (Just port)
-                        peer <- serverPeer server (addrAddress saddr)
+                        let saddr = inetToSockAddr ( ipaddr, port )
+                        peer <- serverPeer server saddr
                         runAsService $ do
                             let upd dp = dp { dpPeer = Just peer }
                             svcModifyGlobal $ \s -> s { dgsPeers = M.alter (Just . upd . fromMaybe emptyPeer) dgst $ dgsPeers s }
 
-                | otherwise -> do
-                    svcPrint $ "Discovery: invalid address in result: " ++ T.unpack addr
+                addr -> do
+                    svcPrint $ "Discovery: invalid address in result: " ++ T.unpack (toText addr)
 
         DiscoveryConnectionRequest conn -> do
             self <- svcSelf
@@ -411,11 +426,14 @@ instance Service DiscoveryService where
               then do
                     -- response to our request, try to connect to the peer
                     server <- asks svcServer
-                    if  | Just addr <- dconnAddress conn
-                        , [ipaddr, port] <- words (T.unpack addr) -> do
-                            saddr <- liftIO $ head <$>
-                                getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just ipaddr) (Just port)
-                            peer <- liftIO $ serverPeer server (addrAddress saddr)
+                    if
+                        | Just addr <- dconnAddress conn
+                        , [ addrStr, portStr ] <- words (T.unpack addr)
+                        , Just ipaddr <- readMaybe addrStr
+                        , Just port <- readMaybe portStr
+                        -> do
+                            let saddr = inetToSockAddr ( ipaddr, port )
+                            peer <- liftIO $ serverPeer server saddr
                             let upd dp = dp { dpPeer = Just peer }
                             svcModifyGlobal $ \s -> s
                                 { dgsPeers = M.alter (Just . upd . fromMaybe emptyPeer) (either refDigest id $ dconnTarget conn) $ dgsPeers s }
@@ -488,13 +506,10 @@ instance Service DiscoveryService where
         server <- asks svcServer
         peer <- asks svcPeer
 
-        let addrToText saddr = do
-                ( addr, port ) <- IP.fromSockAddr saddr
-                Just $ T.pack $ show addr <> " " <> show port
         addrs <- concat <$> sequence
-            [ catMaybes . map addrToText <$> liftIO (getServerAddresses server)
+            [ catMaybes . map (fmap (uncurry DiscoveryIP) . inetFromSockAddr) <$> liftIO (getServerAddresses server)
 #ifdef ENABLE_ICE_SUPPORT
-            , return [ T.pack "ICE" ]
+            , return [ DiscoveryICE ]
 #endif
             ]
 
