@@ -307,46 +307,51 @@ instance Service DiscoveryService where
             discoveryPeer <- asks svcPeer
             let runAsService = runPeerService @DiscoveryService discoveryPeer
 
-            forM_ addrs $ \case
-                DiscoveryICE -> do
-#ifdef ENABLE_ICE_SUPPORT
-                    getIceConfig >>= \case
-                        Just config -> void $ liftIO $ forkIO $ do
-                            ice <- iceCreateSession config PjIceSessRoleControlling $ \ice -> do
-                                rinfo <- iceRemoteInfo ice
-
-                                -- Try to promote weak ref to normal one for older peers:
-                                edgst' <- case edgst of
-                                    Left  r -> return (Left r)
-                                    Right d -> refFromDigest st d >>= \case
-                                        Just  r -> return (Left  r)
-                                        Nothing -> return (Right d)
-
-                                res <- runExceptT $ sendToPeer discoveryPeer $
-                                    DiscoveryConnectionRequest (emptyConnection (Left $ storedRef $ idData self) edgst') { dconnIceInfo = Just rinfo }
-                                case res of
-                                    Right _ -> return ()
-                                    Left err -> putStrLn $ "Discovery: failed to send connection request: " ++ err
-
+            let tryAddresses = \case
+                    DiscoveryIP ipaddr port : _ -> do
+                        void $ liftIO $ forkIO $ do
+                            let saddr = inetToSockAddr ( ipaddr, port )
+                            peer <- serverPeer server saddr
                             runAsService $ do
-                                let upd dp = dp { dpIceSession = Just ice }
+                                let upd dp = dp { dpPeer = Just peer }
                                 svcModifyGlobal $ \s -> s { dgsPeers = M.alter (Just . upd . fromMaybe emptyPeer) dgst $ dgsPeers s }
 
-                        Nothing -> do
-                            return ()
+                    DiscoveryICE : rest -> do
+#ifdef ENABLE_ICE_SUPPORT
+                        getIceConfig >>= \case
+                            Just config -> do
+                                void $ liftIO $ forkIO $ do
+                                    ice <- iceCreateSession config PjIceSessRoleControlling $ \ice -> do
+                                        rinfo <- iceRemoteInfo ice
+
+                                        -- Try to promote weak ref to normal one for older peers:
+                                        edgst' <- case edgst of
+                                            Left  r -> return (Left r)
+                                            Right d -> refFromDigest st d >>= \case
+                                                Just  r -> return (Left  r)
+                                                Nothing -> return (Right d)
+
+                                        res <- runExceptT $ sendToPeer discoveryPeer $
+                                            DiscoveryConnectionRequest (emptyConnection (Left $ storedRef $ idData self) edgst') { dconnIceInfo = Just rinfo }
+                                        case res of
+                                            Right _ -> return ()
+                                            Left err -> putStrLn $ "Discovery: failed to send connection request: " ++ err
+
+                                    runAsService $ do
+                                        let upd dp = dp { dpIceSession = Just ice }
+                                        svcModifyGlobal $ \s -> s { dgsPeers = M.alter (Just . upd . fromMaybe emptyPeer) dgst $ dgsPeers s }
+
+                            Nothing -> do
 #endif
-                    return ()
+                                tryAddresses rest
 
-                DiscoveryIP ipaddr port -> do
-                    void $ liftIO $ forkIO $ do
-                        let saddr = inetToSockAddr ( ipaddr, port )
-                        peer <- serverPeer server saddr
-                        runAsService $ do
-                            let upd dp = dp { dpPeer = Just peer }
-                            svcModifyGlobal $ \s -> s { dgsPeers = M.alter (Just . upd . fromMaybe emptyPeer) dgst $ dgsPeers s }
+                    addr : rest -> do
+                        svcPrint $ "Discovery: unsupported address in result: " ++ T.unpack (toText addr)
+                        tryAddresses rest
 
-                addr -> do
-                    svcPrint $ "Discovery: invalid address in result: " ++ T.unpack (toText addr)
+                    [] -> svcPrint $ "Discovery: no (supported) address received for " <> show dgst
+
+            tryAddresses addrs
 
         DiscoveryConnectionRequest conn -> do
             self <- svcSelf
