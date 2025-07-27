@@ -292,7 +292,12 @@ instance Service DiscoveryService where
 
         DiscoverySearch edgst -> do
             dpeer <- M.lookup (either refDigest id edgst) . dgsPeers <$> svcGetGlobal
-            replyPacket $ DiscoveryResult edgst $ maybe [] dpAddress dpeer
+            peer <- asks svcPeer
+            attrs <- asks svcAttributes
+            let offerTunnel
+                    | discoveryProvideTunnel attrs peer = (++ [ DiscoveryTunnel ])
+                    | otherwise                         = id
+            replyPacket $ DiscoveryResult edgst $ maybe [] (offerTunnel . dpAddress) dpeer
 
         DiscoveryResult _ [] -> do
             -- not found
@@ -344,6 +349,9 @@ instance Service DiscoveryService where
                             Nothing -> do
 #endif
                                 tryAddresses rest
+
+                    DiscoveryTunnel : _ -> do
+                        discoverySetupTunnelResponse dgst
 
                     addr : rest -> do
                         svcPrint $ "Discovery: unsupported address in result: " ++ T.unpack (toText addr)
@@ -629,6 +637,10 @@ receiveFromTunnel server taddr = do
 discoverySetupTunnel :: Peer -> RefDigest -> IO ()
 discoverySetupTunnel via target = do
     runPeerService via $ do
+        discoverySetupTunnelResponse target
+
+discoverySetupTunnelResponse :: RefDigest -> ServiceHandler DiscoveryService ()
+discoverySetupTunnelResponse target = do
         self <- refDigest . storedRef . idData <$> svcSelf
         stream <- openStream
         svcModify $ \s -> s { dpsOurTunnelRequests = ( target, stream ) : dpsOurTunnelRequests s }
