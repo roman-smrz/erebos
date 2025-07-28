@@ -403,7 +403,7 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
         peerIdentity peer >>= \case
             pid@(PeerIdentityFull _) -> do
                 dropped <- isPeerDropped peer
-                let shown = showPeer pid $ peerAddress peer
+                shown <- showPeer pid <$> getPeerAddress peer
                 let update [] = ([(peer, shown)], (Nothing, "NEW"))
                     update ((p,s):ps)
                         | p == peer && dropped = (ps, (Nothing, "DEL"))
@@ -880,9 +880,10 @@ cmdDetails :: Command
 cmdDetails = do
     getSelectedOrManualContext >>= \case
         SelectedPeer peer -> do
+            paddr <- getPeerAddress peer
             cmdPutStrLn $ unlines
                 [ "Network peer:"
-                , "  " <> show (peerAddress peer)
+                , "  " <> show paddr
                 ]
             peerIdentity peer >>= \case
                 PeerIdentityUnknown _ -> do

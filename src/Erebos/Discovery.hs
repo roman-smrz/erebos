@@ -246,19 +246,16 @@ instance Service DiscoveryService where
         DiscoverySelf addrs priority -> do
             pid <- asks svcPeerIdentity
             peer <- asks svcPeer
+            paddrs <- getPeerAddresses peer
+
             let insertHelper new old | dpPriority new > dpPriority old = new
                                      | otherwise                       = old
-            matchedAddrs <- flip filterM addrs $ \case
-                DiscoveryICE -> do
-                    return True
 
-                DiscoveryIP ipaddr port
-                  | DatagramAddress saddr <- peerAddress peer
-                  , Just paddr <- inetFromSockAddr saddr
-                  -> do
-                    return $ ( ipaddr, port ) == paddr
-
-                _ -> return False
+            let matchedAddrs = flip filter addrs $ \case
+                    DiscoveryICE -> True
+                    DiscoveryIP ipaddr port ->
+                        DatagramAddress (inetToSockAddr ( ipaddr, port )) `elem` paddrs
+                    _ -> False
 
             forM_ (idDataF =<< unfoldOwners pid) $ \sdata -> do
                 let dp = DiscoveryPeer

@@ -557,9 +557,12 @@ cmdStartServer = do
         peer <- getNextPeerChange rsServer
 
         let printPeer TestPeer {..} = do
-                params <- peerIdentity tpPeer >>= return . \case
-                    PeerIdentityFull pid -> ("id":) $ map (maybe "<unnamed>" T.unpack . idName) (unfoldOwners pid)
-                    _ -> [ "addr", show (peerAddress tpPeer) ]
+                params <- peerIdentity tpPeer >>= \case
+                    PeerIdentityFull pid -> do
+                        return $ ("id":) $ map (maybe "<unnamed>" T.unpack . idName) (unfoldOwners pid)
+                    _ -> do
+                        paddr <- getPeerAddress tpPeer
+                        return $ [ "addr", show paddr ]
                 outLine out $ unwords $ [ "peer", show tpIndex ] ++ params
 
             update ( tpIndex, [] ) = do
@@ -611,9 +614,10 @@ cmdPeerList = do
     forM_ peers $ \peer -> do
         Just tp <- return $ find ((peer ==) . tpPeer) . snd $ tpeers
         mbpid <- peerIdentity peer
+        paddr <- getPeerAddress peer
         cmdOut $ unwords $ concat
             [ [ "peer-list-item", show (tpIndex tp) ]
-            , [ "addr", show (peerAddress peer) ]
+            , [ "addr", show paddr ]
             , case mbpid of PeerIdentityFull pid -> ("id":) $ map (maybe "<unnamed>" T.unpack . idName) (unfoldOwners pid)
                             _ -> []
             ]

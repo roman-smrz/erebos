@@ -8,7 +8,7 @@ module Erebos.Network (
     ServerOptions(..), serverIdentity, defaultServerOptions,
 
     Peer, peerServer, peerStorage,
-    PeerAddress(..), peerAddress,
+    PeerAddress(..), getPeerAddress, getPeerAddresses,
     PeerIdentity(..), peerIdentity,
     WaitingRef, wrDigest,
     Service(..),
@@ -138,6 +138,14 @@ data Peer = Peer
     , peerServiceState :: TMVar (M.Map ServiceID SomeServiceState)
     , peerWaitingRefs :: TMVar [WaitingRef]
     }
+
+-- | Get current main address of the peer (used to send new packets).
+getPeerAddress :: MonadIO m => Peer -> m PeerAddress
+getPeerAddress = liftIO . return . peerAddress
+
+-- | Get all known addresses of given peer.
+getPeerAddresses :: MonadIO m => Peer -> m [ PeerAddress ]
+getPeerAddresses = fmap (: []) . getPeerAddress
 
 peerServer :: Peer -> Server
 peerServer = peerServer_
