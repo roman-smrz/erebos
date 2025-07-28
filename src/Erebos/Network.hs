@@ -1001,6 +1001,7 @@ runPeerServiceOn mbservice newStreams peer handler = liftIO $ do
                             let inp = ServiceInput
                                     { svcAttributes = attr
                                     , svcPeer = peer
+                                    , svcPeerAddress = peerAddress peer
                                     , svcPeerIdentity = peerId
                                     , svcServer = server
                                     , svcPrintOp = atomically . logd

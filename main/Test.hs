@@ -229,7 +229,7 @@ directMessageAttributes out = DirectMessageAttributes
 
 discoveryAttributes :: DiscoveryAttributes
 discoveryAttributes = (defaultServiceAttributes Proxy)
-    { discoveryProvideTunnel = const False
+    { discoveryProvideTunnel = \_ _ -> False
     }
 
 dmReceivedWatcher :: Output -> Stored DirectMessage -> IO ()
@@ -524,7 +524,7 @@ cmdStartServer = do
         ( "chatroom", _ ) -> return $ someService @ChatroomService Proxy
         ( "contact", _ ) -> return $ someServiceAttr $ pairingAttributes (Proxy @ContactService) out rsPeers "contact"
         ( "discovery", params ) -> return $ someServiceAttr $ discoveryAttributes
-            { discoveryProvideTunnel = const $ "tunnel" `elem` params
+            { discoveryProvideTunnel = \_ _ -> "tunnel" `elem` params
             }
         ( "dm", _ ) -> return $ someServiceAttr $ directMessageAttributes out
         ( "sync", _ ) -> return $ someService @SyncService Proxy

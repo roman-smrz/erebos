@@ -172,17 +172,16 @@ options =
             return sopt { soptService = service }
         return opts { optServices = services' }
 
-    provideTunnelFun :: Maybe String -> Writer [ String ] (Peer -> Bool)
-    provideTunnelFun Nothing = return $ const True
-    provideTunnelFun (Just "all") = return $ const True
-    provideTunnelFun (Just "none") = return $ const False
-    provideTunnelFun (Just "websocket") = return $ \peer ->
-        case peerAddress peer of
-            CustomPeerAddress addr | Just WebSocketAddress {} <- cast addr -> True
-            _ -> False
+    provideTunnelFun :: Maybe String -> Writer [ String ] (Peer -> PeerAddress -> Bool)
+    provideTunnelFun Nothing = return $ \_ _ -> True
+    provideTunnelFun (Just "all") = return $ \_ _ -> True
+    provideTunnelFun (Just "none") = return $ \_ _ -> False
+    provideTunnelFun (Just "websocket") = return $ \_ -> \case
+        CustomPeerAddress addr | Just WebSocketAddress {} <- cast addr -> True
+        _ -> False
     provideTunnelFun (Just name) = do
         tell [ "Invalid value of --discovery-tunnel: ‘" <> name <> "’\n" ]
-        return $ const False
+        return $ \_ _ -> False
 
 servicesOptions :: [ OptDescr (Options -> Writer [ String ] Options) ]
 servicesOptions = concatMap helper $ "all" : map soptName availableServices

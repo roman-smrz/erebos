@@ -66,7 +66,7 @@ data DiscoveryAttributes = DiscoveryAttributes
     , discoveryStunServer :: Maybe Text
     , discoveryTurnPort :: Maybe Word16
     , discoveryTurnServer :: Maybe Text
-    , discoveryProvideTunnel :: Peer -> Bool
+    , discoveryProvideTunnel :: Peer -> PeerAddress -> Bool
     }
 
 defaultDiscoveryAttributes :: DiscoveryAttributes
@@ -75,7 +75,7 @@ defaultDiscoveryAttributes = DiscoveryAttributes
     , discoveryStunServer = Nothing
     , discoveryTurnPort = Nothing
     , discoveryTurnServer = Nothing
-    , discoveryProvideTunnel = const False
+    , discoveryProvideTunnel = \_ _ -> False
     }
 
 data DiscoveryConnection = DiscoveryConnection
@@ -276,7 +276,7 @@ instance Service DiscoveryService where
                 (discoveryTurnPort attrs)
 
         DiscoveryAcknowledged _ stunServer stunPort turnServer turnPort -> do
-            paddr <- asks (peerAddress . svcPeer) >>= return . \case
+            paddr <- asks svcPeerAddress >>= return . \case
                 (DatagramAddress saddr) -> T.pack . show . fst <$> inetFromSockAddr saddr
                 _ -> Nothing
 
@@ -293,10 +293,11 @@ instance Service DiscoveryService where
         DiscoverySearch edgst -> do
             dpeer <- M.lookup (either refDigest id edgst) . dgsPeers <$> svcGetGlobal
             peer <- asks svcPeer
+            paddr <- asks svcPeerAddress
             attrs <- asks svcAttributes
             let offerTunnel
-                    | discoveryProvideTunnel attrs peer = (++ [ DiscoveryTunnel ])
-                    | otherwise                         = id
+                    | discoveryProvideTunnel attrs peer paddr = (++ [ DiscoveryTunnel ])
+                    | otherwise                               = id
             replyPacket $ DiscoveryResult edgst $ maybe [] (offerTunnel . dpAddress) dpeer
 
         DiscoveryResult _ [] -> do
@@ -409,6 +410,7 @@ instance Service DiscoveryService where
               else do
                 -- request to some of our peers, relay
                 peer <- asks svcPeer
+                paddr <- asks svcPeerAddress
                 mbdp <- M.lookup (either refDigest id $ dconnTarget conn) . dgsPeers <$> svcGetGlobal
                 streams <- receivedStreams
                 case mbdp of
@@ -416,7 +418,7 @@ instance Service DiscoveryService where
                         Just dp
                             | Just dpeer <- dpPeer dp -> if
                                 | dconnTunnel conn -> if
-                                    | not (discoveryProvideTunnel attrs peer) -> do
+                                    | not (discoveryProvideTunnel attrs peer paddr) -> do
                                         replyPacket $ DiscoveryConnectionResponse rconn
                                     | fromSource : _ <- streams -> do
                                         void $ liftIO $ forkIO $ runPeerService @DiscoveryService dpeer $ do

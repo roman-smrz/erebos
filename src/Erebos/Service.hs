@@ -115,6 +115,7 @@ mkServiceID = maybe (error "Invalid service ID") ServiceID . U.fromString
 data ServiceInput s = ServiceInput
     { svcAttributes :: ServiceAttributes s
     , svcPeer :: Peer
+    , svcPeerAddress :: PeerAddress
     , svcPeerIdentity :: UnifiedIdentity
     , svcServer :: Server
     , svcPrintOp :: String -> IO ()
