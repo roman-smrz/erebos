@@ -7,6 +7,7 @@ module Erebos.Conversation (
     formatMessage,
 
     Conversation,
+    isSameConversation,
     directMessageConversation,
     chatroomConversation,
     chatroomConversationByStateData,
@@ -35,6 +36,8 @@ import Erebos.DirectMessage
 import Erebos.Identity
 import Erebos.State
 import Erebos.Storable
+import Erebos.Storage.Merge
+import Erebos.Util
 
 
 data Message = DirectMessageMessage DirectMessage Bool
@@ -64,8 +67,17 @@ formatMessage tzone msg = concat
     ]
 
 
-data Conversation = DirectMessageConversation DirectMessageThread
-                  | ChatroomConversation ChatroomState
+data Conversation
+    = DirectMessageConversation DirectMessageThread
+    | ChatroomConversation ChatroomState
+
+isSameConversation :: Conversation -> Conversation -> Bool
+isSameConversation (DirectMessageConversation t) (DirectMessageConversation t')
+    = sameIdentity (msgPeer t) (msgPeer t')
+isSameConversation (ChatroomConversation c) (ChatroomConversation c')
+    = let roots = filterAncestors . concatMap storedRoots . roomStateData
+       in intersectsSorted (roots c) (roots c')
+isSameConversation _ _ = False
 
 directMessageConversation :: MonadHead LocalState m => ComposedIdentity -> m Conversation
 directMessageConversation peer = do
