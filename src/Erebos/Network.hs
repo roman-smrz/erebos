@@ -9,7 +9,7 @@ module Erebos.Network (
 
     Peer, peerServer, peerStorage,
     PeerAddress(..), getPeerAddress, getPeerAddresses,
-    PeerIdentity(..), peerIdentity,
+    PeerIdentity(..), getPeerIdentity,
     WaitingRef, wrDigest,
     Service(..),
 
@@ -202,12 +202,14 @@ instance Ord PeerAddress where
     compare (DatagramAddress addr) (DatagramAddress addr') = compare addr addr'
 
 
-data PeerIdentity = PeerIdentityUnknown (TVar [UnifiedIdentity -> ExceptT ErebosError IO ()])
-                  | PeerIdentityRef WaitingRef (TVar [UnifiedIdentity -> ExceptT ErebosError IO ()])
-                  | PeerIdentityFull UnifiedIdentity
+data PeerIdentity
+    = PeerIdentityUnknown (TVar [ UnifiedIdentity -> ExceptT ErebosError IO () ])
+    | PeerIdentityRef WaitingRef (TVar [ UnifiedIdentity -> ExceptT ErebosError IO () ])
+    | PeerIdentityFull UnifiedIdentity
 
-peerIdentity :: MonadIO m => Peer -> m PeerIdentity
-peerIdentity = liftIO . atomically . readTVar . peerIdentityVar
+-- | Get currently known identity of the given peer
+getPeerIdentity :: MonadIO m => Peer -> m PeerIdentity
+getPeerIdentity = liftIO . atomically . readTVar . peerIdentityVar
 
 
 data PeerState

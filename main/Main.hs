@@ -325,7 +325,7 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
                 Left cstate -> do
                     pname <- case csContext cstate of
                         NoContext -> return ""
-                        SelectedPeer peer -> peerIdentity peer >>= return . \case
+                        SelectedPeer peer -> getPeerIdentity peer >>= return . \case
                             PeerIdentityFull pid -> maybe "<unnamed>" T.unpack $ idName $ finalOwner pid
                             PeerIdentityRef wref _ -> "<" ++ BC.unpack (showRefDigest $ wrDigest wref) ++ ">"
                             PeerIdentityUnknown _  -> "<unknown>"
@@ -400,7 +400,7 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
 
     void $ liftIO $ forkIO $ void $ forever $ do
         peer <- getNextPeerChange server
-        peerIdentity peer >>= \case
+        getPeerIdentity peer >>= \case
             pid@(PeerIdentityFull _) -> do
                 dropped <- isPeerDropped peer
                 shown <- showPeer pid <$> getPeerAddress peer
@@ -527,7 +527,7 @@ getSelectedConversation = gets csContext >>= getConversationFromContext
 
 getConversationFromContext :: CommandContext -> CommandM Conversation
 getConversationFromContext = \case
-    SelectedPeer peer -> peerIdentity peer >>= \case
+    SelectedPeer peer -> getPeerIdentity peer >>= \case
         PeerIdentityFull pid -> directMessageConversation $ finalOwner pid
         _ -> throwOtherError "incomplete peer identity"
     SelectedContact contact -> case contactIdentity contact of
@@ -885,7 +885,7 @@ cmdDetails = do
                 [ "Network peer:"
                 , "  " <> show paddr
                 ]
-            peerIdentity peer >>= \case
+            getPeerIdentity peer >>= \case
                 PeerIdentityUnknown _ -> do
                     cmdPutStrLn $ "unknown identity"
                 PeerIdentityRef wref _ -> do

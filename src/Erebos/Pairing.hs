@@ -209,7 +209,7 @@ pairingRequest :: forall a m e proxy. (PairingResult a, MonadIO m, MonadError e 
 pairingRequest _ peer = do
     self <- liftIO $ serverIdentity $ peerServer peer
     nonce <- liftIO $ getRandomBytes 32
-    pid <- peerIdentity peer >>= \case
+    pid <- getPeerIdentity peer >>= \case
         PeerIdentityFull pid -> return pid
         _ -> throwOtherError "incomplete peer identity"
     sendToPeerWith @(PairingService a) peer $ \case

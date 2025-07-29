@@ -557,7 +557,7 @@ cmdStartServer = do
         peer <- getNextPeerChange rsServer
 
         let printPeer TestPeer {..} = do
-                params <- peerIdentity tpPeer >>= \case
+                params <- getPeerIdentity tpPeer >>= \case
                     PeerIdentityFull pid -> do
                         return $ ("id":) $ map (maybe "<unnamed>" T.unpack . idName) (unfoldOwners pid)
                     _ -> do
@@ -613,7 +613,7 @@ cmdPeerList = do
     tpeers <- liftIO $ readMVar rsPeers
     forM_ peers $ \peer -> do
         Just tp <- return $ find ((peer ==) . tpPeer) . snd $ tpeers
-        mbpid <- peerIdentity peer
+        mbpid <- getPeerIdentity peer
         paddr <- getPeerAddress peer
         cmdOut $ unwords $ concat
             [ [ "peer-list-item", show (tpIndex tp) ]
@@ -830,7 +830,7 @@ cmdContactSetName = do
 cmdDmSendPeer :: Command
 cmdDmSendPeer = do
     [spidx, msg] <- asks tiParams
-    PeerIdentityFull to <- peerIdentity =<< getPeer spidx
+    PeerIdentityFull to <- getPeerIdentity =<< getPeer spidx
     void $ sendDirectMessage to msg
 
 cmdDmSendContact :: Command
@@ -861,7 +861,7 @@ dmList peer = do
 cmdDmListPeer :: Command
 cmdDmListPeer = do
     [spidx] <- asks tiParams
-    PeerIdentityFull to <- peerIdentity =<< getPeer spidx
+    PeerIdentityFull to <- getPeerIdentity =<< getPeer spidx
     dmList to
 
 cmdDmListContact :: Command

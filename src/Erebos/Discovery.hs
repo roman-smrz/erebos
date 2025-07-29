@@ -570,7 +570,7 @@ discoverySearch :: (MonadIO m, MonadError e m, FromErebosError e) => Server -> R
 discoverySearch server dgst = do
     peers <- liftIO $ getCurrentPeerList server
     match <- forM peers $ \peer -> do
-        peerIdentity peer >>= \case
+        getPeerIdentity peer >>= \case
             PeerIdentityFull pid -> do
                 return $ dgst `elem` identityDigests pid
             _ -> return False
