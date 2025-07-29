@@ -369,7 +369,7 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
 
     _ <- liftIO $ do
         tzone <- getCurrentTimeZone
-        watchReceivedMessages erebosHead $ \smsg -> do
+        watchReceivedDirectMessages erebosHead $ \smsg -> do
             let msg = fromStored smsg
             extPrintLn $ formatDirectMessage tzone msg
             case optDmBotEcho opts of

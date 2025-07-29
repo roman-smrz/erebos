@@ -442,7 +442,7 @@ cmdHeadUnwatch = do
 
 initTestHead :: Head LocalState -> Command
 initTestHead h = do
-    _ <- liftIO . watchReceivedMessages h . dmReceivedWatcher =<< asks tiOutput
+    _ <- liftIO . watchReceivedDirectMessages h . dmReceivedWatcher =<< asks tiOutput
     modify $ \s -> s { tsHead = Just h }
 
 loadTestHead :: CommandM (Head LocalState)
@@ -849,10 +849,10 @@ cmdDmSendIdentity = do
 
 dmList :: Foldable f => Identity f -> Command
 dmList peer = do
-    threads <- toThreadList . lookupSharedValue . lsShared . headObject <$> getHead
+    threads <- dmThreadList . lookupSharedValue . lsShared . headObject <$> getHead
     case find (sameIdentity peer . msgPeer) threads of
         Just thread -> do
-            forM_ (reverse $ threadToList thread) $ \DirectMessage {..} -> cmdOut $ "dm-list-item"
+            forM_ (reverse $ dmThreadToList thread) $ \DirectMessage {..} -> cmdOut $ "dm-list-item"
                 <> " from " <> (maybe "<unnamed>" T.unpack $ idName msgFrom)
                 <> " text " <> (T.unpack msgText)
         Nothing -> return ()

@@ -81,7 +81,7 @@ isSameConversation _ _ = False
 
 directMessageConversation :: MonadHead LocalState m => ComposedIdentity -> m Conversation
 directMessageConversation peer = do
-    (find (sameIdentity peer . msgPeer) . toThreadList . lookupSharedValue . lsShared . fromStored <$> getLocalHead) >>= \case
+    (find (sameIdentity peer . msgPeer) . dmThreadList . lookupSharedValue . lsShared . fromStored <$> getLocalHead) >>= \case
         Just thread -> return $ DirectMessageConversation thread
         Nothing -> return $ DirectMessageConversation $ DirectMessageThread peer [] [] [] []
 
@@ -96,8 +96,8 @@ reloadConversation (DirectMessageConversation thread) = directMessageConversatio
 reloadConversation cur@(ChatroomConversation rstate) =
     fromMaybe cur <$> chatroomConversation rstate
 
-lookupConversations :: MonadHead LocalState m => m [Conversation]
-lookupConversations = map DirectMessageConversation . toThreadList . lookupSharedValue . lsShared . fromStored <$> getLocalHead
+lookupConversations :: MonadHead LocalState m => m [ Conversation ]
+lookupConversations = map DirectMessageConversation . dmThreadList . lookupSharedValue . lsShared . fromStored <$> getLocalHead
 
 
 conversationName :: Conversation -> Text
@@ -108,8 +108,8 @@ conversationPeer :: Conversation -> Maybe ComposedIdentity
 conversationPeer (DirectMessageConversation thread) = Just $ msgPeer thread
 conversationPeer (ChatroomConversation _) = Nothing
 
-conversationHistory :: Conversation -> [Message]
-conversationHistory (DirectMessageConversation thread) = map (\msg -> DirectMessageMessage msg False) $ threadToList thread
+conversationHistory :: Conversation -> [ Message ]
+conversationHistory (DirectMessageConversation thread) = map (\msg -> DirectMessageMessage msg False) $ dmThreadToList thread
 conversationHistory (ChatroomConversation rstate) = map (\msg -> ChatroomMessage msg False) $ roomStateMessages rstate
 
 

@@ -6,13 +6,13 @@ module Erebos.DirectMessage (
     defaultDirectMessageAttributes,
 
     DirectMessageThreads,
-    toThreadList,
+    dmThreadList,
 
     DirectMessageThread(..),
-    threadToList,
-    messageThreadView,
+    dmThreadToList,
+    dmThreadView,
 
-    watchReceivedMessages,
+    watchReceivedDirectMessages,
     formatDirectMessage,
 ) where
 
@@ -94,7 +94,7 @@ instance Service DirectMessage where
                        , msReceived = received'
                        , msSeen = []
                        }
-                   let threads = DirectMessageThreads [next] (messageThreadView [next])
+                   let threads = DirectMessageThreads [ next ] (dmThreadView [ next ])
                    shared <- makeSharedStateUpdate st threads (lsShared $ fromStored erb)
                    svcSetLocal =<< wrappedStore st (fromStored erb) { lsShared = [shared] }
 
@@ -125,8 +125,8 @@ data DirectMessageThreads = DirectMessageThreads [Stored MessageState] [DirectMe
 instance Eq DirectMessageThreads where
     DirectMessageThreads mss _ == DirectMessageThreads mss' _ = mss == mss'
 
-toThreadList :: DirectMessageThreads -> [DirectMessageThread]
-toThreadList (DirectMessageThreads _ threads) = threads
+dmThreadList :: DirectMessageThreads -> [ DirectMessageThread ]
+dmThreadList (DirectMessageThreads _ threads) = threads
 
 instance Storable MessageState where
     store' MessageState {..} = storeRec $ do
@@ -148,7 +148,7 @@ instance Storable MessageState where
 
 instance Mergeable DirectMessageThreads where
     type Component DirectMessageThreads = MessageState
-    mergeSorted mss = DirectMessageThreads mss (messageThreadView mss)
+    mergeSorted mss = DirectMessageThreads mss (dmThreadView mss)
     toComponents (DirectMessageThreads mss _) = mss
 
 instance SharedType DirectMessageThreads where
@@ -185,7 +185,7 @@ sendDirectMessage pid text = updateLocalState $ \ls -> do
             , msReceived = []
             , msSeen = []
             }
-        return (DirectMessageThreads [next] (messageThreadView [next]), smsg)
+        return ( DirectMessageThreads [ next ] (dmThreadView [ next ]), smsg )
 
 syncDirectMessageToPeer :: DirectMessageThreads -> ServiceHandler DirectMessage ()
 syncDirectMessageToPeer (DirectMessageThreads mss _) = do
@@ -210,13 +210,13 @@ syncDirectMessageToPeer (DirectMessageThreads mss _) = do
                     , msReceived = []
                     , msSeen = []
                     }
-                return $ DirectMessageThreads [next] (messageThreadView [next])
+                return $ DirectMessageThreads [ next ] (dmThreadView [ next ])
               else do
                 return unchanged
 
 findMissingPeers :: Server -> DirectMessageThreads -> ExceptT ErebosError IO ()
 findMissingPeers server threads = do
-    forM_ (toThreadList threads) $ \thread -> do
+    forM_ (dmThreadList threads) $ \thread -> do
         when (msgHead thread /= msgReceived thread) $ do
             mapM_ (discoverySearch server) $ map (refDigest . storedRef) $ idDataF $ msgPeer thread
 
@@ -229,16 +229,16 @@ data DirectMessageThread = DirectMessageThread
     , msgReceived :: [ Stored DirectMessage ]
     }
 
-threadToList :: DirectMessageThread -> [DirectMessage]
-threadToList thread = helper S.empty $ msgHead thread
+dmThreadToList :: DirectMessageThread -> [ DirectMessage ]
+dmThreadToList thread = helper S.empty $ msgHead thread
     where helper seen msgs
               | msg : msgs' <- filter (`S.notMember` seen) $ reverse $ sortBy (comparing cmpView) msgs =
                   fromStored msg : helper (S.insert msg seen) (msgs' ++ msgPrev (fromStored msg))
               | otherwise = []
           cmpView msg = (zonedTimeToUTC $ msgTime $ fromStored msg, msg)
 
-messageThreadView :: [Stored MessageState] -> [DirectMessageThread]
-messageThreadView = helper []
+dmThreadView :: [ Stored MessageState ] -> [ DirectMessageThread ]
+dmThreadView = helper []
     where helper used ms' = case filterAncestors ms' of
               mss@(sms : rest)
                   | any (sameIdentity $ msPeer $ fromStored sms) used ->
@@ -264,8 +264,8 @@ messageThreadFor peer mss =
          }
 
 
-watchReceivedMessages :: Head LocalState -> (Stored DirectMessage -> IO ()) -> IO WatchedHead
-watchReceivedMessages h f = do
+watchReceivedDirectMessages :: Head LocalState -> (Stored DirectMessage -> IO ()) -> IO WatchedHead
+watchReceivedDirectMessages h f = do
     let self = finalOwner $ localIdentity $ headObject h
     watchHeadWith h (lookupSharedValue . lsShared . headObject) $ \(DirectMessageThreads sms _) -> do
         forM_ (map fromStored sms) $ \ms -> do
