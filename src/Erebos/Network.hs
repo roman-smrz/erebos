@@ -390,7 +390,7 @@ startServer serverOptions serverOrigHead logd' serverServices = do
                                         prefs <- forM objs $ storeObject $ peerInStorage peer
                                         identity <- readMVar serverIdentity_
                                         let svcs = map someServiceID serverServices
-                                        handlePacket identity secure peer chanSvc svcs header prefs
+                                        handlePacket paddr identity secure peer chanSvc svcs header prefs
                                         peerLoop
                                     Nothing -> do
                                         case paddr of
@@ -416,9 +416,9 @@ startServer serverOptions serverOrigHead logd' serverServices = do
         bracket (open addr) close loop
 
     forkServerThread server $ forever $ do
-        ( peer, svc, ref, streams ) <- atomically $ readTQueue chanSvc
+        ( peer, paddr, svc, ref, streams ) <- atomically $ readTQueue chanSvc
         case find ((svc ==) . someServiceID) serverServices of
-            Just service@(SomeService (_ :: Proxy s) attr) -> runPeerServiceOn (Just ( service, attr )) streams peer (serviceHandler $ wrappedLoad @s ref)
+            Just service@(SomeService (_ :: Proxy s) attr) -> runPeerServiceOn (Just ( service, attr )) streams paddr peer (serviceHandler $ wrappedLoad @s ref)
             _ -> atomically $ logd $ "unhandled service '" ++ show (toUUID svc) ++ "'"
 
     return server
@@ -565,10 +565,10 @@ appendDistinct x (y:ys) | x == y    = y : ys
                         | otherwise = y : appendDistinct x ys
 appendDistinct x [] = [x]
 
-handlePacket :: UnifiedIdentity -> Bool
-    -> Peer -> TQueue ( Peer, ServiceID, Ref, [ RawStreamReader ]) -> [ ServiceID ]
+handlePacket :: PeerAddress -> UnifiedIdentity -> Bool
+    -> Peer -> TQueue ( Peer, PeerAddress, ServiceID, Ref, [ RawStreamReader ] ) -> [ ServiceID ]
     -> TransportHeader -> [ PartialRef ] -> IO ()
-handlePacket identity secure peer chanSvc svcs (TransportHeader headers) prefs = atomically $ do
+handlePacket paddr identity secure peer chanSvc svcs (TransportHeader headers) prefs = atomically $ do
     let server = peerServer peer
     ochannel <- getPeerChannel peer
     let sidentity = idData identity
@@ -704,7 +704,7 @@ handlePacket identity secure peer chanSvc svcs (TransportHeader headers) prefs =
                           then do
                             streamReaders <- mapM acceptStream $ lookupNewStreams headers
                             void $ newWaitingRef dgst $ \ref ->
-                               liftIO $ atomically $ writeTQueue chanSvc ( peer, svc, ref, streamReaders )
+                               liftIO $ atomically $ writeTQueue chanSvc ( peer, paddr, svc, ref, streamReaders )
                           else throwError $ "missing service object " ++ show dgst
                     | otherwise -> addHeader $ Rejected dgst
                 | otherwise -> throwError $ "service ref without type"
@@ -829,8 +829,9 @@ handleIdentityUpdate peer ref = liftIO $ atomically $ do
 notifyServicesOfPeer :: Peer -> STM ()
 notifyServicesOfPeer peer@Peer { peerServer_ = Server {..} } = do
     writeTQueue serverIOActions $ do
+        paddr <- getPeerAddress peer
         forM_ serverServices $ \service@(SomeService _ attrs) ->
-            runPeerServiceOn (Just ( service, attrs )) [] peer serviceNewPeer
+            runPeerServiceOn (Just ( service, attrs )) [] paddr peer serviceNewPeer
 
 
 receivedFromCustomAddress :: PeerAddressType addr => Server -> addr -> ByteString -> IO ()
@@ -986,10 +987,12 @@ lookupService proxy (service@(SomeService (_ :: Proxy t) attr) : rest)
 lookupService _ [] = Nothing
 
 runPeerService :: forall s m. (Service s, MonadIO m) => Peer -> ServiceHandler s () -> m ()
-runPeerService = runPeerServiceOn Nothing []
+runPeerService peer handler = do
+    paddr <- getPeerAddress peer
+    runPeerServiceOn Nothing [] paddr peer handler
 
-runPeerServiceOn :: forall s m. (Service s, MonadIO m) => Maybe ( SomeService, ServiceAttributes s ) -> [ RawStreamReader ] -> Peer -> ServiceHandler s () -> m ()
-runPeerServiceOn mbservice newStreams peer handler = liftIO $ do
+runPeerServiceOn :: forall s m. (Service s, MonadIO m) => Maybe ( SomeService, ServiceAttributes s ) -> [ RawStreamReader ] -> PeerAddress -> Peer -> ServiceHandler s () -> m ()
+runPeerServiceOn mbservice newStreams paddr peer handler = liftIO $ do
     let server = peerServer peer
         proxy = Proxy @s
         svc = serviceID proxy
@@ -1011,7 +1014,7 @@ runPeerServiceOn mbservice newStreams peer handler = liftIO $ do
                             let inp = ServiceInput
                                     { svcAttributes = attr
                                     , svcPeer = peer
-                                    , svcPeerAddress = peerAddress peer
+                                    , svcPeerAddress = paddr
                                     , svcPeerIdentity = peerId
                                     , svcServer = server
                                     , svcPrintOp = atomically . logd
@@ -1031,7 +1034,7 @@ runPeerServiceOn mbservice newStreams peer handler = liftIO $ do
                                         putTMVar (peerServiceState peer) $ M.insert svc (SomeServiceState proxy s') svcs
                                         putTMVar (serverServiceStates server) $ M.insert svc (SomeServiceGlobalState proxy gs') global
                 _ -> do
-                    atomically $ logd $ "can't run service handler on peer with incomplete identity " ++ show (peerAddress peer)
+                    atomically $ logd $ "can't run service handler on peer with incomplete identity " ++ show paddr
 
         _ -> atomically $ do
             logd $ "unhandled service '" ++ show (toUUID svc) ++ "'"
