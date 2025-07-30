@@ -40,7 +40,7 @@ import Erebos.Storage.Merge
 
 data DirectMessage = DirectMessage
     { msgFrom :: ComposedIdentity
-    , msgPrev :: [Stored DirectMessage]
+    , msgPrev :: [ Stored DirectMessage ]
     , msgTime :: ZonedTime
     , msgText :: Text
     }
@@ -96,7 +96,7 @@ instance Service DirectMessage where
                        }
                    let threads = DirectMessageThreads [ next ] (dmThreadView [ next ])
                    shared <- makeSharedStateUpdate st threads (lsShared $ fromStored erb)
-                   svcSetLocal =<< wrappedStore st (fromStored erb) { lsShared = [shared] }
+                   svcSetLocal =<< wrappedStore st (fromStored erb) { lsShared = [ shared ] }
 
                when (powner `sameIdentity` msgFrom msg) $ do
                    replyStoredRef smsg
@@ -112,15 +112,15 @@ instance Service DirectMessage where
 
 
 data MessageState = MessageState
-    { msPrev :: [Stored MessageState]
+    { msPrev :: [ Stored MessageState ]
     , msPeer :: ComposedIdentity
-    , msReady :: [Stored DirectMessage]
-    , msSent :: [Stored DirectMessage]
-    , msReceived :: [Stored DirectMessage]
-    , msSeen :: [Stored DirectMessage]
+    , msReady :: [ Stored DirectMessage ]
+    , msSent :: [ Stored DirectMessage ]
+    , msReceived :: [ Stored DirectMessage ]
+    , msSeen :: [ Stored DirectMessage ]
     }
 
-data DirectMessageThreads = DirectMessageThreads [Stored MessageState] [DirectMessageThread]
+data DirectMessageThreads = DirectMessageThreads [ Stored MessageState ] [ DirectMessageThread ]
 
 instance Eq DirectMessageThreads where
     DirectMessageThreads mss _ == DirectMessageThreads mss' _ = mss == mss'
@@ -154,7 +154,7 @@ instance Mergeable DirectMessageThreads where
 instance SharedType DirectMessageThreads where
     sharedTypeID _ = mkSharedTypeID "ee793681-5976-466a-b0f0-4e1907d3fade"
 
-findMsgProperty :: Foldable m => Identity m -> (MessageState -> [a]) -> [Stored MessageState] -> [a]
+findMsgProperty :: Foldable m => Identity m -> (MessageState -> [ a ]) -> [ Stored MessageState ] -> [ a ]
 findMsgProperty pid sel mss = concat $ flip findProperty mss $ \x -> do
     guard $ msPeer x `sameIdentity` pid
     guard $ not $ null $ sel x
@@ -180,7 +180,7 @@ sendDirectMessage pid text = updateLocalState $ \ls -> do
         next <- mstore MessageState
             { msPrev = prev
             , msPeer = powner
-            , msReady = [smsg]
+            , msReady = [ smsg ]
             , msSent = []
             , msReceived = []
             , msSeen = []
@@ -248,7 +248,7 @@ dmThreadView = helper []
                        in messageThreadFor peer mss : helper (peer : used) (msPrev (fromStored sms) ++ rest)
               _ -> []
 
-messageThreadFor :: ComposedIdentity -> [Stored MessageState] -> DirectMessageThread
+messageThreadFor :: ComposedIdentity -> [ Stored MessageState ] -> DirectMessageThread
 messageThreadFor peer mss =
     let ready = findMsgProperty peer msReady mss
         sent = findMsgProperty peer msSent mss
