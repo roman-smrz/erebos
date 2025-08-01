@@ -22,15 +22,16 @@ mergeBy cmp (x : xs) (y : ys) = case cmp x y of
 mergeBy _ xs [] = xs
 mergeBy _ [] ys = ys
 
-mergeUniqBy :: (a -> a -> Ordering) -> [a] -> [a] -> [a]
-mergeUniqBy cmp (x : xs) (y : ys) = case cmp x y of
-                                         LT -> x : mergeBy cmp xs (y : ys)
-                                         EQ -> x : mergeBy cmp xs ys
-                                         GT -> y : mergeBy cmp (x : xs) ys
+mergeUniqBy :: (a -> a -> Ordering) -> [ a ] -> [ a ] -> [ a ]
+mergeUniqBy cmp (x : xs) (y : ys) =
+    case cmp x y of
+        LT -> x : mergeUniqBy cmp xs (y : ys)
+        EQ -> x : mergeUniqBy cmp xs ys
+        GT -> y : mergeUniqBy cmp (x : xs) ys
 mergeUniqBy _ xs [] = xs
 mergeUniqBy _ [] ys = ys
 
-mergeUniq :: Ord a => [a] -> [a] -> [a]
+mergeUniq :: Ord a => [ a ] -> [ a ] -> [ a ]
 mergeUniq = mergeUniqBy compare
 
 diffSorted :: Ord a => [a] -> [a] -> [a]
