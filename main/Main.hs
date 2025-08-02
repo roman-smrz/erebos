@@ -369,16 +369,20 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
 
     _ <- liftIO $ do
         tzone <- getCurrentTimeZone
-        watchReceivedDirectMessages erebosHead $ \smsg -> do
-            let msg = fromStored smsg
-            extPrintLn $ formatDirectMessage tzone msg
-            case optDmBotEcho opts of
-                Nothing -> return ()
-                Just prefix -> do
-                    res <- runExceptT $ flip runReaderT erebosHead $ sendDirectMessage (msgFrom msg) (prefix <> msgText msg)
-                    case res of
-                        Right reply -> extPrintLn $ formatDirectMessage tzone $ fromStored reply
-                        Left err -> extPrintLn $ "Failed to send dm echo: " <> err
+        let self = finalOwner $ headLocalIdentity erebosHead
+        watchDirectMessageThreads erebosHead $ \prev cur -> do
+            forM_ (reverse $ dmThreadToListSince prev cur) $ \msg -> do
+                extPrintLn $ formatDirectMessage tzone msg
+                case optDmBotEcho opts of
+                    Just prefix
+                        | not (msgFrom msg `sameIdentity` self)
+                        -> do
+                            void $ forkIO $ do
+                                res <- runExceptT $ flip runReaderT erebosHead $ sendDirectMessage (msgFrom msg) (prefix <> msgText msg)
+                                case res of
+                                    Right _ -> return ()
+                                    Left err -> extPrintLn $ "Failed to send dm echo: " <> err
+                    _ -> return ()
 
     peers <- liftIO $ newMVar []
     contextOptions <- liftIO $ newMVar []
@@ -682,11 +686,7 @@ cmdSend :: Command
 cmdSend = void $ do
     text <- asks ciLine
     conv <- getSelectedConversation
-    sendMessage conv (T.pack text) >>= \case
-        Just msg -> do
-            tzone <- liftIO $ getCurrentTimeZone
-            cmdPutStrLn $ formatMessage tzone msg
-        Nothing -> return ()
+    void $ sendMessage conv (T.pack text)
 
 cmdDelete :: Command
 cmdDelete = void $ do

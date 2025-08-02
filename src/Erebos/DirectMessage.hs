@@ -9,22 +9,24 @@ module Erebos.DirectMessage (
     dmThreadList,
 
     DirectMessageThread(..),
-    dmThreadToList,
+    dmThreadToList, dmThreadToListSince,
     dmThreadView,
 
-    watchReceivedDirectMessages,
+    watchDirectMessageThreads,
     formatDirectMessage,
 ) where
 
+import Control.Concurrent.MVar
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
 
 import Data.List
 import Data.Ord
-import qualified Data.Set as S
+import Data.Set (Set)
+import Data.Set qualified as S
 import Data.Text (Text)
-import qualified Data.Text as T
+import Data.Text qualified as T
 import Data.Time.Format
 import Data.Time.LocalTime
 
@@ -230,12 +232,18 @@ data DirectMessageThread = DirectMessageThread
     }
 
 dmThreadToList :: DirectMessageThread -> [ DirectMessage ]
-dmThreadToList thread = helper S.empty $ msgHead thread
-    where helper seen msgs
-              | msg : msgs' <- filter (`S.notMember` seen) $ reverse $ sortBy (comparing cmpView) msgs =
-                  fromStored msg : helper (S.insert msg seen) (msgs' ++ msgPrev (fromStored msg))
-              | otherwise = []
-          cmpView msg = (zonedTimeToUTC $ msgTime $ fromStored msg, msg)
+dmThreadToList thread = threadToListHelper S.empty $ msgHead thread
+
+dmThreadToListSince :: DirectMessageThread -> DirectMessageThread -> [ DirectMessage ]
+dmThreadToListSince since thread = threadToListHelper (S.fromAscList $ msgHead since) (msgHead thread)
+
+threadToListHelper :: Set (Stored DirectMessage) -> [ Stored DirectMessage ] -> [ DirectMessage ]
+threadToListHelper seen msgs
+    | msg : msgs' <- filter (`S.notMember` seen) $ reverse $ sortBy (comparing cmpView) msgs =
+        fromStored msg : threadToListHelper (S.insert msg seen) (msgs' ++ msgPrev (fromStored msg))
+    | otherwise = []
+  where
+    cmpView msg = (zonedTimeToUTC $ msgTime $ fromStored msg, msg)
 
 dmThreadView :: [ Stored MessageState ] -> [ DirectMessageThread ]
 dmThreadView = helper []
@@ -264,12 +272,24 @@ messageThreadFor peer mss =
          }
 
 
-watchReceivedDirectMessages :: Head LocalState -> (Stored DirectMessage -> IO ()) -> IO WatchedHead
-watchReceivedDirectMessages h f = do
-    let self = finalOwner $ localIdentity $ headObject h
+watchDirectMessageThreads :: Head LocalState -> (DirectMessageThread -> DirectMessageThread -> IO ()) -> IO WatchedHead
+watchDirectMessageThreads h f = do
+    prevVar <- newMVar Nothing
     watchHeadWith h (lookupSharedValue . lsShared . headObject) $ \(DirectMessageThreads sms _) -> do
-        forM_ (map fromStored sms) $ \ms -> do
-            mapM_ f $ filter (not . sameIdentity self . msgFrom . fromStored) $ msReceived ms
+        modifyMVar_ prevVar $ \case
+            Just prev -> do
+                let addPeer (p : ps) p'
+                        | p `sameIdentity` p' = p : ps
+                        | otherwise = p : addPeer ps p'
+                    addPeer [] p' = [ p' ]
+
+                let peers = foldl' addPeer [] $ map (msPeer . fromStored) $ storedDifference prev sms
+                forM_ peers $ \peer -> do
+                    f (messageThreadFor peer prev) (messageThreadFor peer sms)
+                return (Just sms)
+
+            Nothing -> do
+                return (Just sms)
 
 formatDirectMessage :: TimeZone -> DirectMessage -> String
 formatDirectMessage tzone msg = concat

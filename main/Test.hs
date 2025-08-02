@@ -232,14 +232,16 @@ discoveryAttributes = (defaultServiceAttributes Proxy)
     { discoveryProvideTunnel = \_ _ -> False
     }
 
-dmReceivedWatcher :: Output -> Stored DirectMessage -> IO ()
-dmReceivedWatcher out smsg = do
-    let msg = fromStored smsg
-    outLine out $ unwords
-        [ "dm-received"
-        , "from", maybe "<unnamed>" T.unpack $ idName $ msgFrom msg
-        , "text", T.unpack $ msgText msg
-        ]
+dmThreadWatcher :: ComposedIdentity -> Output -> DirectMessageThread -> DirectMessageThread -> IO ()
+dmThreadWatcher self out prev cur = do
+    forM_ (reverse $ dmThreadToListSince prev cur) $ \msg -> do
+        outLine out $ unwords
+            [ if sameIdentity self (msgFrom msg)
+                 then "dm-sent"
+                 else "dm-received"
+            , "from", maybe "<unnamed>" T.unpack $ idName $ msgFrom msg
+            , "text", T.unpack $ msgText msg
+            ]
 
 
 newtype CommandM a = CommandM (ReaderT TestInput (StateT TestState (ExceptT ErebosError IO)) a)
@@ -456,7 +458,8 @@ cmdHeadUnwatch = do
 
 initTestHead :: Head LocalState -> Command
 initTestHead h = do
-    _ <- liftIO . watchReceivedDirectMessages h . dmReceivedWatcher =<< asks tiOutput
+    let self = finalOwner $ headLocalIdentity h
+    _ <- liftIO . watchDirectMessageThreads h . dmThreadWatcher self =<< asks tiOutput
     modify $ \s -> s { tsHead = Just h }
 
 loadTestHead :: CommandM (Head LocalState)
