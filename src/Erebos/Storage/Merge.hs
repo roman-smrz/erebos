@@ -25,6 +25,8 @@ import Data.ByteString.Char8 qualified as BC
 import Data.HashTable.IO qualified as HT
 import Data.Kind
 import Data.List
+import Data.List.NonEmpty (NonEmpty)
+import Data.List.NonEmpty qualified as NE
 import Data.Maybe
 import Data.Set (Set)
 import Data.Set qualified as S
@@ -100,22 +102,24 @@ storedGeneration x =
 
 -- |Returns list of sets starting with the set of given objects and
 -- intcrementally adding parents.
-generations :: Storable a => [ Stored a ] -> [ Set (Stored a) ]
+generations :: Storable a => [ Stored a ] -> NonEmpty (Set (Stored a))
 generations = generationsBy previous
 
 -- |Returns list of sets starting with the set of given objects and
 -- intcrementally adding parents, with the first parameter being
 -- a function to get all the parents of given object.
-generationsBy :: Ord a => (a -> [ a ]) -> [ a ] -> [ Set a ]
-generationsBy parents = unfoldr gen . ( , S.empty )
-    where gen ( hs, cur ) = case filter (`S.notMember` cur) hs of
-              []    -> Nothing
-              added -> let next = foldr S.insert cur added
-                        in Just ( next, ( parents =<< added, next ) )
+generationsBy :: Ord a => (a -> [ a ]) -> [ a ] -> NonEmpty (Set a)
+generationsBy parents xs = NE.unfoldr gen ( xs, S.fromList xs )
+  where
+    gen ( hs, cur ) = ( cur, ) $
+        case filter (`S.notMember` cur) (parents =<< hs) of
+            []    -> Nothing
+            added -> let next = foldr S.insert cur added
+                      in Just ( added, next )
 
 -- |Returns set containing all given objects and their ancestors
 ancestors :: Storable a => [Stored a] -> Set (Stored a)
-ancestors = last . (S.empty:) . generations
+ancestors = NE.last . generations
 
 precedes :: Storable a => Stored a -> Stored a -> Bool
 precedes x y = not $ x `elem` filterAncestors [x, y]
