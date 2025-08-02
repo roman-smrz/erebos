@@ -28,16 +28,20 @@ test DirectMessage:
 
 	for i in [1..2]:
 		send "dm-send-peer $peer1_2 hello$i" to p1
+		expect /dm-sent from Owner1 text hello$i/ from p1
 		expect /dm-received from Owner1 text hello$i/ from p2
 
 	for i in [1..2]:
 		send "dm-send-peer $peer2_1 hi$i" to p2
+		expect /dm-sent from Owner2 text hi$i/ from p2
 		expect /dm-received from Owner2 text hi$i/ from p1
 
 	for i in [3..4]:
 		send "dm-send-peer $peer1_2 hello$i" to p1
+		expect /dm-sent from Owner1 text hello$i/ from p1
 		expect /dm-received from Owner1 text hello$i/ from p2
 		send "dm-send-peer $peer2_1 hi$i" to p2
+		expect /dm-sent from Owner2 text hi$i/ from p2
 		expect /dm-received from Owner2 text hi$i/ from p1
 
 	# Create contacts
@@ -67,16 +71,20 @@ test DirectMessage:
 
 	for i in [1..2]:
 		send "dm-send-contact $c1_2 hello_c_$i" to p1
+		expect /dm-sent from Owner1 text hello_c_$i/ from p1
 		expect /dm-received from Owner1 text hello_c_$i/ from p2
 
 	for i in [1..2]:
 		send "dm-send-contact $c2_1 hi_c_$i" to p2
+		expect /dm-sent from Owner2 text hi_c_$i/ from p2
 		expect /dm-received from Owner2 text hi_c_$i/ from p1
 
 	for i in [3..4]:
 		send "dm-send-contact $c1_2 hello_c_$i" to p1
+		expect /dm-sent from Owner1 text hello_c_$i/ from p1
 		expect /dm-received from Owner1 text hello_c_$i/ from p2
 		send "dm-send-contact $c2_1 hi_c_$i" to p2
+		expect /dm-sent from Owner2 text hi_c_$i/ from p2
 		expect /dm-received from Owner2 text hi_c_$i/ from p1
 
 	send "dm-list-contact $c1_2" to p1
@@ -135,6 +143,7 @@ test DirectMessage:
 	send "start-server services $services" to p2
 
 	send "dm-send-contact $c1_2 while_offline" to p1
+	expect /dm-sent from Owner1 text while_offline/ from p1
 	send "start-server services $services" to p1
 
 	expect /dm-received from Owner1 text while_offline/ from p2
@@ -148,8 +157,7 @@ test DirectMessage:
 	send "start-server services $services" to p1
 
 	send "dm-send-contact $c1_2 while_peer_offline" to p1
-	# TODO: sync from p1 on peer p2 discovery not ensured without addition wait
-	#wait
+	expect /dm-sent from Owner1 text while_peer_offline/ from p1
 	send "start-server services $services" to p2
 
 	expect /dm-received from Owner1 text while_peer_offline/ from p2
