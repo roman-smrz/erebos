@@ -17,6 +17,8 @@ module Erebos.Storage.Merge (
 
     findProperty,
     findPropertyFirst,
+
+    storedDifference,
 ) where
 
 import Control.Concurrent.MVar
@@ -172,3 +174,18 @@ findPropertyFirst sel = fmap (fromJust . sel . fromStored) . listToMaybe . filte
 findPropHeads :: forall a b. Storable a => (a -> Maybe b) -> Stored a -> [Stored a]
 findPropHeads sel sobj | Just _ <- sel $ fromStored sobj = [sobj]
                        | otherwise = findPropHeads sel =<< previous sobj
+
+
+-- | Compute symmetrict difference between two stored histories. In other
+-- words, return all 'Stored a' objects reachable (via 'previous') from first
+-- given set, but not from the second; and vice versa.
+storedDifference :: Storable a => [ Stored a ] -> [ Stored a ] -> [ Stored a ]
+storedDifference xs' ys' =
+    let xs = filterAncestors xs'
+        ys = filterAncestors ys'
+
+        filteredPrevious blocked zs = filterAncestors (previous zs ++ blocked) `diffSorted` blocked
+        xg = S.toAscList $ NE.last $ generationsBy (filteredPrevious ys) $ filterAncestors (xs ++ ys) `diffSorted` ys
+        yg = S.toAscList $ NE.last $ generationsBy (filteredPrevious xs) $ filterAncestors (ys ++ xs) `diffSorted` xs
+
+     in xg `mergeUniq` yg

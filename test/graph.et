@@ -1,0 +1,111 @@
+module graph
+
+test StoredDifference:
+    spawn as p1
+    with p1:
+        # ref names: r<level>_<num>
+
+        send:
+            "store rec"
+            "num:i 1"
+            ""
+        expect /store-done (blake2#[0-9a-f]*)/ capture r1_1
+
+        send:
+            "store rec"
+            "PREV:r $r1_1"
+            ""
+        expect /store-done (blake2#[0-9a-f]*)/ capture r2_1
+
+        send "stored-difference $r2_1 |"
+        expect /stored-difference-item $r1_1/
+        expect /stored-difference-item $r2_1/
+        local:
+            expect /stored-difference-(.*)/ capture done
+            guard (done == "done")
+
+        send:
+            "store rec"
+            "PREV:r $r2_1"
+            "num:i 1"
+            ""
+        expect /store-done (blake2#[0-9a-f]*)/ capture r3_1
+
+        send "stored-difference $r1_1 | $r3_1"
+        expect /stored-difference-item $r2_1/
+        expect /stored-difference-item $r3_1/
+        local:
+            expect /stored-difference-(.*)/ capture done
+            guard (done == "done")
+
+        send:
+            "store rec"
+            "PREV:r $r2_1"
+            "num:i 2"
+            ""
+        expect /store-done (blake2#[0-9a-f]*)/ capture r3_2
+
+        send:
+            "store rec"
+            "PREV:r $r3_1"
+            "num:i 1"
+            ""
+        expect /store-done (blake2#[0-9a-f]*)/ capture r4_1
+
+        send:
+            "store rec"
+            "PREV:r $r3_2"
+            "num:i 2"
+            ""
+        expect /store-done (blake2#[0-9a-f]*)/ capture r4_2
+
+        send "stored-difference $r4_1 | $r4_2"
+        expect /stored-difference-item $r3_1/
+        expect /stored-difference-item $r3_2/
+        expect /stored-difference-item $r4_1/
+        expect /stored-difference-item $r4_2/
+        local:
+            expect /stored-difference-(.*)/ capture done
+            guard (done == "done")
+
+
+        send:
+            "store rec"
+            "PREV:r $r2_1"
+            "num:i 3"
+            ""
+        expect /store-done (blake2#[0-9a-f]*)/ capture r3_3
+
+        send:
+            "store rec"
+            "PREV:r $r3_2"
+            "PREV:r $r3_3"
+            "num:i 3"
+            ""
+        expect /store-done (blake2#[0-9a-f]*)/ capture r4_3
+
+        send:
+            "store rec"
+            "PREV:r $r3_3"
+            "num:i 4"
+            ""
+        expect /store-done (blake2#[0-9a-f]*)/ capture r4_4
+
+        send "stored-difference $r4_1 $r4_2 | $r4_3 $r4_4"
+        expect /stored-difference-item $r3_1/
+        expect /stored-difference-item $r3_3/
+        expect /stored-difference-item $r4_1/
+        expect /stored-difference-item $r4_2/
+        expect /stored-difference-item $r4_3/
+        expect /stored-difference-item $r4_4/
+        local:
+            expect /stored-difference-(.*)/ capture done
+            guard (done == "done")
+
+        send "stored-difference $r1_1 $r2_1 $r3_2 $r3_3 | $r4_1 $r4_3"
+        expect /stored-difference-item $r3_1/
+        expect /stored-difference-item $r4_1/
+        expect /stored-difference-item $r4_3/
+        local:
+            expect /stored-difference-(.*)/ capture done
+            guard (done == "done")

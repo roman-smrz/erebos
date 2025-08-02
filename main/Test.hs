@@ -271,6 +271,7 @@ commands =
     , ( "stored-roots", cmdStoredRoots )
     , ( "stored-set-add", cmdStoredSetAdd )
     , ( "stored-set-list", cmdStoredSetList )
+    , ( "stored-difference", cmdStoredDifference )
     , ( "head-create", cmdHeadCreate )
     , ( "head-replace", cmdHeadReplace )
     , ( "head-watch", cmdHeadWatch )
@@ -387,6 +388,19 @@ cmdStoredSetList = do
     forM_ items $ \item -> do
         cmdOut $ "stored-set-item" ++ concatMap ((' ':) . show . refDigest . storedRef) item
     cmdOut $ "stored-set-done"
+
+cmdStoredDifference :: Command
+cmdStoredDifference = do
+    st <- asks tiStorage
+    ( trefs1, "|" : trefs2 ) <- span (/= "|") <$> asks tiParams
+
+    let loadObjs = mapM (maybe (fail "invalid ref") (return . wrappedLoad @Object) <=< liftIO . readRef st . encodeUtf8)
+    objs1 <- loadObjs trefs1
+    objs2 <- loadObjs trefs2
+
+    forM_ (storedDifference objs1 objs2) $ \item -> do
+        cmdOut $ "stored-difference-item " ++ (show $ refDigest $ storedRef item)
+    cmdOut $ "stored-difference-done"
 
 cmdHeadCreate :: Command
 cmdHeadCreate = do
