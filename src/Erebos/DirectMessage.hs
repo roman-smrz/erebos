@@ -164,11 +164,11 @@ findMsgProperty pid sel mss = concat $ flip findProperty mss $ \x -> do
 
 
 sendDirectMessage :: (Foldable f, Applicative f, MonadHead LocalState m)
-                  => Identity f -> Text -> m (Stored DirectMessage)
-sendDirectMessage pid text = updateLocalState $ \ls -> do
+                  => Identity f -> Text -> m ()
+sendDirectMessage pid text = updateLocalState_ $ \ls -> do
     let self = localIdentity $ fromStored ls
         powner = finalOwner pid
-    flip updateSharedState ls $ \(DirectMessageThreads prev _) -> do
+    flip updateSharedState_ ls $ \(DirectMessageThreads prev _) -> do
         let ready = findMsgProperty powner msReady prev
             received = findMsgProperty powner msReceived prev
 
@@ -187,7 +187,7 @@ sendDirectMessage pid text = updateLocalState $ \ls -> do
             , msReceived = []
             , msSeen = []
             }
-        return ( DirectMessageThreads [ next ] (dmThreadView [ next ]), smsg )
+        return $ DirectMessageThreads [ next ] (dmThreadView [ next ])
 
 syncDirectMessageToPeer :: DirectMessageThreads -> ServiceHandler DirectMessage ()
 syncDirectMessageToPeer (DirectMessageThreads mss _) = do

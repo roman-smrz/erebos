@@ -686,7 +686,7 @@ cmdSend :: Command
 cmdSend = void $ do
     text <- asks ciLine
     conv <- getSelectedConversation
-    void $ sendMessage conv (T.pack text)
+    sendMessage conv (T.pack text)
 
 cmdDelete :: Command
 cmdDelete = void $ do
