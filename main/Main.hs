@@ -385,13 +385,13 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
                     _ -> return ()
 
     peers <- liftIO $ newMVar []
-    contextOptions <- liftIO $ newMVar []
+    contextOptions <- liftIO $ newMVar ( Nothing, [] )
     chatroomSetVar <- liftIO $ newEmptyMVar
 
     let autoSubscribe = optChatroomAutoSubscribe opts
         chatroomList = fromSetBy (comparing roomStateData) . lookupSharedValue . lsShared . headObject $ erebosHead
     watched <- if isJust autoSubscribe || any roomStateSubscribe chatroomList
-        then fmap Just $ liftIO $ watchChatroomsForCli extPrintLn erebosHead chatroomSetVar contextOptions autoSubscribe
+        then fmap Just $ liftIO $ watchChatroomsForCli tui extPrintLn erebosHead chatroomSetVar contextOptions autoSubscribe
         else return Nothing
 
     server <- liftIO $ do
@@ -419,8 +419,15 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
                         | otherwise = first (ctx:) $ ctxUpdate (n + 1) ctxs
                 (op, updateType) <- modifyMVar peers (return . update)
                 let updateType' = if dropped then "DEL" else updateType
-                idx <- modifyMVar contextOptions (return . ctxUpdate (1 :: Int))
-                when (Just shown /= op) $ extPrintLn $ "[" <> show idx <> "] PEER " <> updateType' <> " " <> shown
+                modifyMVar_ contextOptions $ \case
+                    ( watch, clist )
+                      | watch == Just WatchPeers || not tui
+                      -> do
+                        let ( clist', idx ) = ctxUpdate (1 :: Int) clist
+                        when (Just shown /= op) $ do
+                            extPrintLn $ "[" <> show idx <> "] PEER " <> updateType' <> " " <> shown
+                        return ( Just WatchPeers, clist' )
+                    cur -> return cur
             _ -> return ()
 
     let process :: CommandState -> MaybeT IO CommandState
@@ -439,8 +446,8 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
                 , ciPeers = liftIO $ modifyMVar peers $ \ps -> do
                     ps' <- filterM (fmap not . isPeerDropped . fst) ps
                     return (ps', ps')
-                , ciContextOptions = liftIO $ readMVar contextOptions
-                , ciSetContextOptions = \ctxs -> liftIO $ modifyMVar_ contextOptions $ const $ return ctxs
+                , ciContextOptions = liftIO $ snd <$> readMVar contextOptions
+                , ciSetContextOptions = \watch ctxs -> liftIO $ modifyMVar_ contextOptions $ const $ return ( Just watch, ctxs )
                 , ciContextOptionsVar = contextOptions
                 , ciChatroomSetVar = chatroomSetVar
                 }
@@ -469,9 +476,9 @@ data CommandInput = CommandInput
     , ciPrint :: String -> IO ()
     , ciOptions :: Options
     , ciPeers :: CommandM [(Peer, String)]
-    , ciContextOptions :: CommandM [CommandContext]
-    , ciSetContextOptions :: [CommandContext] -> Command
-    , ciContextOptionsVar :: MVar [ CommandContext ]
+    , ciContextOptions :: CommandM [ CommandContext ]
+    , ciSetContextOptions :: ContextWatchOptions -> [ CommandContext ] -> Command
+    , ciContextOptionsVar :: MVar ( Maybe ContextWatchOptions, [ CommandContext ] )
     , ciChatroomSetVar :: MVar (Set ChatroomState)
     }
 
@@ -482,11 +489,19 @@ data CommandState = CommandState
     , csQuit :: Bool
     }
 
-data CommandContext = NoContext
-                    | SelectedPeer Peer
-                    | SelectedContact Contact
-                    | SelectedChatroom ChatroomState
-                    | SelectedConversation Conversation
+data CommandContext
+    = NoContext
+    | SelectedPeer Peer
+    | SelectedContact Contact
+    | SelectedChatroom ChatroomState
+    | SelectedConversation Conversation
+
+data ContextWatchOptions
+    = WatchPeers
+    | WatchContacts
+    | WatchChatrooms
+    | WatchConversations
+    deriving (Eq)
 
 newtype CommandM a = CommandM (ReaderT CommandInput (StateT CommandState (ExceptT ErebosError IO)) a)
     deriving (Functor, Applicative, Monad, MonadReader CommandInput, MonadState CommandState, MonadError ErebosError)
@@ -546,7 +561,7 @@ getSelectedOrManualContext :: CommandM CommandContext
 getSelectedOrManualContext = do
     asks ciLine >>= \case
         "" -> gets csContext
-        str | all isDigit str -> getContextByIndex (read str)
+        str | all isDigit str -> getContextByIndex id (read str)
         _ -> throwOtherError "invalid index"
 
 commands :: [(String, Command)]
@@ -600,7 +615,7 @@ cmdPeers :: Command
 cmdPeers = do
     peers <- join $ asks ciPeers
     set <- asks ciSetContextOptions
-    set $ map (SelectedPeer . fst) peers
+    set WatchPeers $ map (SelectedPeer . fst) peers
     forM_ (zip [1..] peers) $ \(i :: Int, (_, name)) -> do
         cmdPutStrLn $ "[" ++ show i ++ "] " ++ name
 
@@ -612,11 +627,15 @@ cmdPeerAdd = void $ do
         [hostname] -> return (hostname, show discoveryPort)
         [] -> throwOtherError "missing peer address"
     addr:_ <- liftIO $ getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just hostname) (Just port)
+    contextOptsVar <- asks ciContextOptionsVar
+    liftIO $ modifyMVar_ contextOptsVar $ return . first (const $ Just WatchPeers)
     liftIO $ serverPeer server (addrAddress addr)
 
 cmdPeerAddPublic :: Command
 cmdPeerAddPublic = do
     server <- asks ciServer
+    contextOptsVar <- asks ciContextOptionsVar
+    liftIO $ modifyMVar_ contextOptsVar $ return . first (const $ Just WatchPeers)
     liftIO $ mapM_ (serverPeer server . addrAddress) =<< gather 'a'
   where
     gather c
@@ -663,16 +682,20 @@ cmdMembers = do
     forM_ (chatroomMembers room) $ \x -> do
         cmdPutStrLn $ maybe "<unnamed>" T.unpack $ idName x
 
-getContextByIndex :: Int -> CommandM CommandContext
-getContextByIndex n = do
-    join (asks ciContextOptions) >>= \ctxs -> if
-        | n > 0, (ctx : _) <- drop (n - 1) ctxs -> return ctx
-        | otherwise -> throwOtherError "invalid index"
+getContextByIndex :: (Maybe ContextWatchOptions -> Maybe ContextWatchOptions) -> Int -> CommandM CommandContext
+getContextByIndex f n = do
+    contextOptsVar <- asks ciContextOptionsVar
+    join $ liftIO $ modifyMVar contextOptsVar $ \cur@( watch, ctxs ) -> if
+        | n > 0, (ctx : _) <- drop (n - 1) ctxs
+        -> return ( ( f watch, ctxs ), return ctx )
+
+        | otherwise
+        -> return ( cur, throwOtherError "invalid index" )
 
 cmdSelectContext :: Command
 cmdSelectContext = do
     n <- read <$> asks ciLine
-    ctx <- getContextByIndex n
+    ctx <- getContextByIndex (const Nothing) n
     modify $ \s -> s { csContext = ctx }
     case ctx of
         SelectedChatroom rstate -> do
@@ -733,8 +756,8 @@ cmdAttachAccept = attachAccept =<< getSelectedPeer
 cmdAttachReject :: Command
 cmdAttachReject = attachReject =<< getSelectedPeer
 
-watchChatroomsForCli :: (String -> IO ()) -> Head LocalState -> MVar (Set ChatroomState) -> MVar [ CommandContext ] -> Maybe Int -> IO WatchedHead
-watchChatroomsForCli eprint h chatroomSetVar contextVar autoSubscribe = do
+watchChatroomsForCli :: Bool -> (String -> IO ()) -> Head LocalState -> MVar (Set ChatroomState) -> MVar ( Maybe ContextWatchOptions, [ CommandContext ] ) -> Maybe Int -> IO WatchedHead
+watchChatroomsForCli tui eprint h chatroomSetVar contextOptsVar autoSubscribe = do
     subscribedNumVar <- newEmptyMVar
 
     let ctxUpdate updateType (idx :: Int) rstate = \case
@@ -773,18 +796,29 @@ watchChatroomsForCli eprint h chatroomSetVar contextVar autoSubscribe = do
 
         Just diff -> do
             modifyMVar_ chatroomSetVar $ return . const set
+            modifyMVar_ contextOptsVar $ \case
+                ( watch, clist )
+                  | watch == Just WatchChatrooms || not tui
+                  -> do
+                    let upd c = \case
+                            AddedChatroom rstate -> ctxUpdate "NEW" 1 rstate c
+                            RemovedChatroom rstate -> ctxUpdate "DEL" 1 rstate c
+                            UpdatedChatroom _ rstate
+                                | any ((\rsd -> not (null (rsdRoom rsd))) . fromStored) (roomStateData rstate)
+                                -> do
+                                    ctxUpdate "UPD" 1 rstate c
+                                | otherwise -> return c
+                    ( watch, ) <$> foldM upd clist diff
+                cur -> return cur
+
             forM_ diff $ \case
                 AddedChatroom rstate -> do
-                    modifyMVar_ contextVar $ ctxUpdate "NEW" 1 rstate
                     modifyMVar_ subscribedNumVar $ return . if roomStateSubscribe rstate then (+ 1) else id
 
                 RemovedChatroom rstate -> do
-                    modifyMVar_ contextVar $ ctxUpdate "DEL" 1 rstate
                     modifyMVar_ subscribedNumVar $ return . if roomStateSubscribe rstate then subtract 1 else id
 
                 UpdatedChatroom oldroom rstate -> do
-                    when (any ((\rsd -> not (null (rsdRoom rsd))) . fromStored) (roomStateData rstate)) $ do
-                        modifyMVar_ contextVar $ ctxUpdate "UPD" 1 rstate
                     when (any (not . null . rsdMessages . fromStored) (roomStateData rstate)) $ do
                         tzone <- getCurrentTimeZone
                         forM_ (reverse $ getMessagesSinceState rstate oldroom) $ \msg -> do
@@ -806,9 +840,10 @@ ensureWatchedChatrooms = do
             eprint <- asks ciPrint
             h <- gets csHead
             chatroomSetVar <- asks ciChatroomSetVar
-            contextVar <- asks ciContextOptionsVar
+            contextOptsVar <- asks ciContextOptionsVar
             autoSubscribe <- asks $ optChatroomAutoSubscribe . ciOptions
-            watched <- liftIO $ watchChatroomsForCli eprint h chatroomSetVar contextVar autoSubscribe
+            tui <- asks $ hasTerminalUI . ciTerminal
+            watched <- liftIO $ watchChatroomsForCli tui eprint h chatroomSetVar contextOptsVar autoSubscribe
             modify $ \s -> s { csWatchChatrooms = Just watched }
         Just _ -> return ()
 
@@ -818,7 +853,7 @@ cmdChatrooms = do
     chatroomSetVar <- asks ciChatroomSetVar
     chatroomList <- filter (not . roomStateDeleted) . fromSetBy (comparing roomStateData) <$> liftIO (readMVar chatroomSetVar)
     set <- asks ciSetContextOptions
-    set $ map SelectedChatroom chatroomList
+    set WatchChatrooms $ map SelectedChatroom chatroomList
     forM_ (zip [1..] chatroomList) $ \(i :: Int, rstate) -> do
         cmdPutStrLn $ "[" ++ show i ++ "] " ++ maybe "<unnamed>" T.unpack (roomName =<< roomStateRoom rstate)
 
@@ -832,6 +867,8 @@ cmdChatroomCreatePublic = do
             getInputLine term $ KeepPrompt . maybe T.empty T.pack
 
     ensureWatchedChatrooms
+    contextOptsVar <- asks ciContextOptionsVar
+    liftIO $ modifyMVar_ contextOptsVar $ return . first (const $ Just WatchChatrooms)
     void $ createChatroom
         (if T.null name then Nothing else Just name)
         Nothing
@@ -844,7 +881,7 @@ cmdContacts = do
     let contacts = fromSetBy (comparing contactName) $ lookupSharedValue $ lsShared $ headObject ehead
         verbose = "-v" `elem` args
     set <- asks ciSetContextOptions
-    set $ map SelectedContact contacts
+    set WatchContacts $ map SelectedContact contacts
     forM_ (zip [1..] contacts) $ \(i :: Int, c) -> do
         cmdPutStrLn $ T.unpack $ T.concat
             [ "[", T.pack (show i), "] ", contactName c
@@ -870,7 +907,7 @@ cmdConversations :: Command
 cmdConversations = do
     conversations <- lookupConversations
     set <- asks ciSetContextOptions
-    set $ map SelectedConversation conversations
+    set WatchConversations $ map SelectedConversation conversations
     forM_ (zip [1..] conversations) $ \(i :: Int, conv) -> do
         cmdPutStrLn $ "[" ++ show i ++ "] " ++ T.unpack (conversationName conv)
 
