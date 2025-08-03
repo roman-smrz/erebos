@@ -4,7 +4,8 @@ module Erebos.Storage.Memory (
     derivePartialStorage,
 ) where
 
-import Control.Concurrent.MVar
+import Control.Concurrent
+import Control.Monad
 
 import Data.ByteArray (ScrubbedBytes)
 import Data.ByteString.Lazy qualified as BL
@@ -62,14 +63,19 @@ instance (StorageCompleteness c, Typeable p) => StorageBackend (MemoryStorage p 
 
     backendReplaceHead StorageMemory {..} tid hid expected new = do
         res <- modifyMVar memHeads $ \hs -> do
-            ws <- map wlFun . filter ((==(tid, hid)) . wlHead) . wlList <$> readMVar memWatchers
-            return $ case partition ((==(tid, hid)) . fst) hs of
-                ( [] , _ ) -> ( hs, Left Nothing )
+            case partition ((==(tid, hid)) . fst) hs of
+                ( [] , _ ) -> return ( hs, Left Nothing )
                 (( _, dgst ) : _, hs' )
-                    | dgst == expected -> ((( tid, hid ), new ) : hs', Right ( new, ws ))
-                    | otherwise -> ( hs, Left $ Just dgst )
+                    | dgst == expected -> do
+                        ws <- map wlFun . filter ((==(tid, hid)) . wlHead) . wlList <$> readMVar memWatchers
+                        return ((( tid, hid ), new ) : hs', Right ( new, ws ))
+                    | otherwise -> do
+                        return ( hs, Left $ Just dgst )
         case res of
-            Right ( dgst, ws ) -> mapM_ ($ dgst) ws >> return (Right dgst)
+            Right ( dgst, ws ) -> do
+                void $ forkIO $ do
+                    mapM_ ($ dgst) ws
+                return (Right dgst)
             Left x -> return $ Left x
 
     backendWatchHead StorageMemory {..} tid hid cb = modifyMVar memWatchers $ return . watchListAdd tid hid cb
