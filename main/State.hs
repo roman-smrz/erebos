@@ -10,7 +10,6 @@ import Control.Monad.Except
 import Control.Monad.IO.Class
 
 import Data.Foldable
-import Data.Maybe
 import Data.Proxy
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -35,21 +34,24 @@ loadLocalStateHead term st = loadHeads st >>= \case
         setPrompt term "Device: "
         devName <- getInputLine term $ KeepPrompt . maybe T.empty T.pack
 
-        owner <- if
-            | T.null name -> return Nothing
-            | otherwise -> Just <$> createIdentity st (Just name) Nothing
+        ( owner, shared ) <- if
+            | T.null name -> do
+                return ( Nothing, [] )
+            | otherwise -> do
+                owner <- createIdentity st (Just name) Nothing
+                shared <- wrappedStore st $ SharedState
+                    { ssPrev = []
+                    , ssType = Just $ sharedTypeID @(Maybe ComposedIdentity) Proxy
+                    , ssValue = [ storedRef $ idExtData owner ]
+                    }
+                return ( Just owner, [ shared ] )
 
         identity <- createIdentity st (if T.null devName then Nothing else Just devName) owner
 
-        shared <- wrappedStore st $ SharedState
-            { ssPrev = []
-            , ssType = Just $ sharedTypeID @(Maybe ComposedIdentity) Proxy
-            , ssValue = [ storedRef $ idExtData $ fromMaybe identity owner ]
-            }
         storeHead st $ LocalState
             { lsPrev = Nothing
             , lsIdentity = idExtData identity
-            , lsShared = [ shared ]
+            , lsShared = shared
             , lsOther = []
             }
 
@@ -58,15 +60,18 @@ createLocalStateHead _ [] = fail "createLocalStateHead: empty name list"
 createLocalStateHead st ( ownerName : names ) = liftIO $ do
     owner <- createIdentity st ownerName Nothing
     identity <- foldM createSingleIdentity owner names
-    shared <- wrappedStore st $ SharedState
-        { ssPrev = []
-        , ssType = Just $ sharedTypeID @(Maybe ComposedIdentity) Proxy
-        , ssValue = [ storedRef $ idExtData owner ]
-        }
+    shared <- case names of
+        [] -> return []
+        _ : _ -> do
+            fmap (: []) $ wrappedStore st $ SharedState
+                { ssPrev = []
+                , ssType = Just $ sharedTypeID @(Maybe ComposedIdentity) Proxy
+                , ssValue = [ storedRef $ idExtData owner ]
+                }
     storeHead st $ LocalState
         { lsPrev = Nothing
         , lsIdentity = idExtData identity
-        , lsShared = [ shared ]
+        , lsShared = shared
         , lsOther = []
         }
   where
