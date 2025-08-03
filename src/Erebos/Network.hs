@@ -822,7 +822,8 @@ handleIdentityUpdate peer ref = liftIO $ atomically $ do
         -> do
             writeTVar (peerIdentityVar peer) $ PeerIdentityFull pid'
             writeTChan (serverChanPeer $ peerServer peer) peer
-            when (idData pid /= idData pid') $ notifyServicesOfPeer peer
+            when (pid /= pid') $ do
+                notifyServicesOfPeer peer
 
         | otherwise -> return ()
 
