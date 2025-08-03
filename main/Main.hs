@@ -457,7 +457,6 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
     loop $ Just $ CommandState
         { csHead = erebosHead
         , csContext = NoContext
-        , csIcePeer = Nothing
         , csWatchChatrooms = watched
         , csQuit = False
         }
@@ -479,7 +478,6 @@ data CommandInput = CommandInput
 data CommandState = CommandState
     { csHead :: Head LocalState
     , csContext :: CommandContext
-    , csIcePeer :: Maybe Peer
     , csWatchChatrooms :: Maybe WatchedHead
     , csQuit :: Bool
     }
