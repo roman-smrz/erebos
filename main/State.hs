@@ -1,15 +1,18 @@
 module State (
     loadLocalStateHead,
+    createLocalStateHead,
     updateSharedIdentity,
     interactiveIdentityUpdate,
 ) where
 
+import Control.Monad
 import Control.Monad.Except
 import Control.Monad.IO.Class
 
 import Data.Foldable
 import Data.Maybe
 import Data.Proxy
+import Data.Text (Text)
 import Data.Text qualified as T
 
 import Erebos.Error
@@ -49,6 +52,25 @@ loadLocalStateHead term st = loadHeads st >>= \case
             , lsShared = [ shared ]
             , lsOther = []
             }
+
+createLocalStateHead :: (MonadIO m, MonadFail m) => Storage -> [ Maybe Text ] -> m (Head LocalState)
+createLocalStateHead _ [] = fail "createLocalStateHead: empty name list"
+createLocalStateHead st ( ownerName : names ) = liftIO $ do
+    owner <- createIdentity st ownerName Nothing
+    identity <- foldM createSingleIdentity owner names
+    shared <- wrappedStore st $ SharedState
+        { ssPrev = []
+        , ssType = Just $ sharedTypeID @(Maybe ComposedIdentity) Proxy
+        , ssValue = [ storedRef $ idExtData owner ]
+        }
+    storeHead st $ LocalState
+        { lsPrev = Nothing
+        , lsIdentity = idExtData identity
+        , lsShared = [ shared ]
+        , lsOther = []
+        }
+  where
+    createSingleIdentity owner name = createIdentity st name (Just owner)
 
 
 updateSharedIdentity :: (MonadHead LocalState m, MonadError e m, FromErebosError e) => Terminal -> m ()

@@ -2,7 +2,6 @@
 
 module Main (main) where
 
-import Control.Arrow (first)
 import Control.Concurrent
 import Control.Exception
 import Control.Monad
@@ -14,8 +13,9 @@ import Control.Monad.Writer
 
 import Crypto.Random
 
-import qualified Data.ByteString.Char8 as BC
-import qualified Data.ByteString.Lazy as BL
+import Data.Bifunctor
+import Data.ByteString.Char8 qualified as BC
+import Data.ByteString.Lazy qualified as BL
 import Data.Char
 import Data.List
 import Data.Maybe
@@ -64,6 +64,7 @@ data Options = Options
     { optServer :: ServerOptions
     , optServices :: [ServiceOption]
     , optStorage :: StorageOption
+    , optCreateIdentity :: Maybe ( Maybe Text, [ Maybe Text ] )
     , optChatroomAutoSubscribe :: Maybe Int
     , optDmBotEcho :: Maybe Text
     , optWebSocketServer :: Maybe Int
@@ -87,6 +88,7 @@ defaultOptions = Options
     { optServer = defaultServerOptions
     , optServices = availableServices
     , optStorage = DefaultStorage
+    , optCreateIdentity = Nothing
     , optChatroomAutoSubscribe = Nothing
     , optDmBotEcho = Nothing
     , optWebSocketServer = Nothing
@@ -124,6 +126,20 @@ options =
     , Option [] [ "memory-storage" ]
         (NoArg (\opts -> return opts { optStorage = MemoryStorage }))
         "use memory storage"
+    , Option [] [ "create-identity" ]
+        (OptArg (\value -> \opts -> return opts
+            { optCreateIdentity =
+                let devName = T.pack <$> value
+                 in maybe (Just ( devName, [] )) (Just . first (const devName)) (optCreateIdentity opts)
+            }) "<name>")
+        "create a new (device) identity in a new local state"
+    , Option [] [ "create-owner" ]
+        (OptArg (\value -> \opts -> return opts
+            { optCreateIdentity =
+                let ownerName = T.pack <$> value
+                 in maybe (Just ( Nothing, [ ownerName ] )) (Just . second (ownerName :)) (optCreateIdentity opts)
+            }) "<name>")
+        "create owner for a new device identity"
     , Option [] ["chatroom-auto-subscribe"]
         (ReqArg (\count -> \opts -> return opts { optChatroomAutoSubscribe = Just (read count) }) "<count>")
         "automatically subscribe for up to <count> chatrooms"
@@ -313,7 +329,9 @@ main = do
 
 interactiveLoop :: Storage -> Options -> IO ()
 interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
-    erebosHead <- liftIO $ loadLocalStateHead term st
+    erebosHead <- case optCreateIdentity opts of
+        Nothing -> loadLocalStateHead term st
+        Just ( devName, names ) -> createLocalStateHead st (names ++ [ devName ])
     void $ printLine term $ T.unpack $ displayIdentity $ headLocalIdentity erebosHead
 
     let tui = hasTerminalUI term
