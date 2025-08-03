@@ -17,6 +17,7 @@ module Erebos.Chatroom (
     joinChatroomAs, joinChatroomAsByStateData,
     leaveChatroom, leaveChatroomByStateData,
     getMessagesSinceState,
+    isSameChatroom,
 
     ChatroomSetChange(..),
     watchChatrooms,
@@ -421,6 +422,11 @@ leaveChatroomByStateData lookupData = sendRawChatroomMessageByStateData lookupDa
 
 getMessagesSinceState :: ChatroomState -> ChatroomState -> [ChatMessage]
 getMessagesSinceState cur old = threadToListSince (roomStateMessageData old) (roomStateMessageData cur)
+
+isSameChatroom :: ChatroomState -> ChatroomState -> Bool
+isSameChatroom rstate rstate' =
+    let roots = filterAncestors . concatMap storedRoots . roomStateData
+     in intersectsSorted (roots rstate) (roots rstate')
 
 
 data ChatroomSetChange = AddedChatroom ChatroomState

@@ -11,6 +11,7 @@ module Erebos.Conversation (
     directMessageConversation,
     chatroomConversation,
     chatroomConversationByStateData,
+    isChatroomStateConversation,
     reloadConversation,
     lookupConversations,
 
@@ -36,8 +37,6 @@ import Erebos.DirectMessage
 import Erebos.Identity
 import Erebos.State
 import Erebos.Storable
-import Erebos.Storage.Merge
-import Erebos.Util
 
 
 data Message = DirectMessageMessage DirectMessage Bool
@@ -74,9 +73,7 @@ data Conversation
 isSameConversation :: Conversation -> Conversation -> Bool
 isSameConversation (DirectMessageConversation t) (DirectMessageConversation t')
     = sameIdentity (msgPeer t) (msgPeer t')
-isSameConversation (ChatroomConversation c) (ChatroomConversation c')
-    = let roots = filterAncestors . concatMap storedRoots . roomStateData
-       in intersectsSorted (roots c) (roots c')
+isSameConversation (ChatroomConversation rstate) (ChatroomConversation rstate') = isSameChatroom rstate rstate'
 isSameConversation _ _ = False
 
 directMessageConversation :: MonadHead LocalState m => ComposedIdentity -> m Conversation
@@ -90,6 +87,10 @@ chatroomConversation rstate = chatroomConversationByStateData (head $ roomStateD
 
 chatroomConversationByStateData :: MonadHead LocalState m => Stored ChatroomStateData -> m (Maybe Conversation)
 chatroomConversationByStateData sdata = fmap ChatroomConversation <$> findChatroomByStateData sdata
+
+isChatroomStateConversation :: ChatroomState -> Conversation -> Bool
+isChatroomStateConversation rstate (ChatroomConversation rstate') = isSameChatroom rstate rstate'
+isChatroomStateConversation _ _ = False
 
 reloadConversation :: MonadHead LocalState m => Conversation -> m Conversation
 reloadConversation (DirectMessageConversation thread) = directMessageConversation (msgPeer thread)
