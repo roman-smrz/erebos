@@ -107,7 +107,9 @@ instance Service DirectMessage where
 
            else join $ asks $ dmOwnerMismatch . svcAttributes
 
-    serviceNewPeer = syncDirectMessageToPeer . lookupSharedValue . lsShared . fromStored =<< svcGetLocal
+    serviceNewPeer = do
+        updateDirectMessagePeer . finalOwner =<< asks svcPeerIdentity
+        syncDirectMessageToPeer . lookupSharedValue . lsShared . fromStored =<< svcGetLocal
 
     serviceStorageWatchers _ =
         [ SomeStorageWatcher (lookupSharedValue . lsShared . fromStored) syncDirectMessageToPeer
