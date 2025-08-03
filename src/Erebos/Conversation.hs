@@ -78,6 +78,7 @@ isSameConversation _ _ = False
 
 directMessageConversation :: MonadHead LocalState m => ComposedIdentity -> m Conversation
 directMessageConversation peer = do
+    createOrUpdateDirectMessagePeer peer
     (find (sameIdentity peer . msgPeer) . dmThreadList . lookupSharedValue . lsShared . fromStored <$> getLocalHead) >>= \case
         Just thread -> return $ DirectMessageConversation thread
         Nothing -> return $ DirectMessageConversation $ DirectMessageThread peer [] [] [] []

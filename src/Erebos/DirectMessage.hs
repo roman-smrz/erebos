@@ -1,6 +1,8 @@
 module Erebos.DirectMessage (
     DirectMessage(..),
     sendDirectMessage,
+    updateDirectMessagePeer,
+    createOrUpdateDirectMessagePeer,
 
     DirectMessageAttributes(..),
     defaultDirectMessageAttributes,
@@ -188,6 +190,46 @@ sendDirectMessage pid text = updateLocalState_ $ \ls -> do
             , msSeen = []
             }
         return $ DirectMessageThreads [ next ] (dmThreadView [ next ])
+
+updateDirectMessagePeer
+    :: (Foldable f, Applicative f, MonadHead LocalState m)
+    => Identity f -> m ()
+updateDirectMessagePeer = createOrUpdateDirectMessagePeer' False
+
+createOrUpdateDirectMessagePeer
+    :: (Foldable f, Applicative f, MonadHead LocalState m)
+    => Identity f -> m ()
+createOrUpdateDirectMessagePeer = createOrUpdateDirectMessagePeer' True
+
+createOrUpdateDirectMessagePeer'
+    :: (Foldable f, Applicative f, MonadHead LocalState m)
+    => Bool -> Identity f -> m ()
+createOrUpdateDirectMessagePeer' create pid = do
+    let powner = finalOwner pid
+    updateLocalState_ $ updateSharedState_ $ \old@(DirectMessageThreads prev threads) -> do
+        let updatePeerThread = do
+                next <- mstore MessageState
+                    { msPrev = prev
+                    , msPeer = powner
+                    , msReady = []
+                    , msSent = []
+                    , msReceived = []
+                    , msSeen = []
+                    }
+                return $ DirectMessageThreads [ next ] (dmThreadView [ next ])
+        case find (sameIdentity powner . msgPeer) threads of
+            Nothing
+                | create
+                -> updatePeerThread
+
+            Just thread
+                | oldPeer <- msgPeer thread
+                , newPeer <- updateIdentity (idExtDataF powner) oldPeer
+                , oldPeer /= newPeer
+                -> updatePeerThread
+
+            _ -> return old
+
 
 syncDirectMessageToPeer :: DirectMessageThreads -> ServiceHandler DirectMessage ()
 syncDirectMessageToPeer (DirectMessageThreads mss _) = do
