@@ -31,6 +31,7 @@ instance Service SyncService where
                    else return ls
 
     serviceNewPeer = notifyPeer . lsShared . fromStored =<< svcGetLocal
+    serviceUpdatedPeer = serviceNewPeer
     serviceStorageWatchers _ = (:[]) $ SomeStorageWatcher (lsShared . fromStored) notifyPeer
 
 instance Storable SyncService where

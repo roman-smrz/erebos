@@ -784,7 +784,7 @@ finalizedChannel peer@Peer {..} ch self = do
 
     -- Notify services about new peer
     readTVar peerIdentityVar >>= \case
-        PeerIdentityFull _ -> notifyServicesOfPeer peer
+        PeerIdentityFull _ -> notifyServicesOfPeer True peer
         _ -> return ()
 
 
@@ -810,7 +810,7 @@ handleIdentityAnnounce self peer ref = liftIO $ atomically $ do
         PeerIdentityFull pid
             | idData pid `precedes` wrappedLoad ref
             -> validateAndUpdate (idUpdates pid) $ \_ -> do
-                notifyServicesOfPeer peer
+                notifyServicesOfPeer False peer
 
         _ -> return ()
 
@@ -823,16 +823,17 @@ handleIdentityUpdate peer ref = liftIO $ atomically $ do
             writeTVar (peerIdentityVar peer) $ PeerIdentityFull pid'
             writeTChan (serverChanPeer $ peerServer peer) peer
             when (pid /= pid') $ do
-                notifyServicesOfPeer peer
+                notifyServicesOfPeer False peer
 
         | otherwise -> return ()
 
-notifyServicesOfPeer :: Peer -> STM ()
-notifyServicesOfPeer peer@Peer { peerServer_ = Server {..} } = do
+notifyServicesOfPeer :: Bool -> Peer -> STM ()
+notifyServicesOfPeer new peer@Peer { peerServer_ = Server {..} } = do
     writeTQueue serverIOActions $ do
         paddr <- getPeerAddress peer
         forM_ serverServices $ \service@(SomeService _ attrs) ->
-            runPeerServiceOn (Just ( service, attrs )) [] paddr peer serviceNewPeer
+            runPeerServiceOn (Just ( service, attrs )) [] paddr peer $
+                if new then serviceNewPeer else serviceUpdatedPeer
 
 
 receivedFromCustomAddress :: PeerAddressType addr => Server -> addr -> ByteString -> IO ()

@@ -51,6 +51,9 @@ class (
     serviceNewPeer :: ServiceHandler s ()
     serviceNewPeer = return ()
 
+    serviceUpdatedPeer :: ServiceHandler s ()
+    serviceUpdatedPeer = return ()
+
     type ServiceAttributes s = attr | attr -> s
     type ServiceAttributes s = Proxy s
     defaultServiceAttributes :: proxy s -> ServiceAttributes s
