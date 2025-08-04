@@ -359,31 +359,27 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
                     _ | all isSpace input -> getInputLinesTui eprompt
                     '\\':rest -> (reverse ('\n':rest) ++) <$> getInputLinesTui (Right ">> ")
                     _         -> return input
-                Nothing -> KeepPrompt mzero
+                Nothing
+                    | tui       -> KeepPrompt mzero
+                    | otherwise -> KeepPrompt $ liftIO $ forever $ threadDelay 100000000
 
         getInputCommandTui cstate = do
-            input <- getInputLinesTui cstate
-            let (CommandM cmd, line) = case input of
-                    '/':rest -> let (scmd, args) = dropWhile isSpace <$> span (\c -> isAlphaNum c || c == '-') rest
-                                 in if not (null scmd) && all isDigit scmd
-                                       then (cmdSelectContext, scmd)
-                                       else (fromMaybe (cmdUnknown scmd) $ lookup scmd commands, args)
-                    _        -> (cmdSend, input)
-            return (cmd, line)
+            let parseCommand cmdline =
+                    case dropWhile isSpace <$> span (\c -> isAlphaNum c || c == '-') cmdline of
+                        ( scmd, args )
+                            | not (null scmd) && all isDigit scmd
+                            -> ( cmdSelectContext, scmd )
 
-        getInputLinesPipe = do
-            join $ lift $ getInputLine term $ KeepPrompt . \case
-                Just input -> return input
-                Nothing -> liftIO $ forever $ threadDelay 100000000
+                            | otherwise
+                            -> ( fromMaybe (cmdUnknown scmd) $ lookup scmd commands, args )
 
-        getInputCommandPipe _ = do
-            input <- getInputLinesPipe
-            let (scmd, args) = dropWhile isSpace <$> span (\c -> isAlphaNum c || c == '-') input
-            let (CommandM cmd, line) = (fromMaybe (cmdUnknown scmd) $ lookup scmd commands, args)
-            return (cmd, line)
+            ( CommandM cmd, line ) <- getInputLinesTui cstate >>= return . \case
+                '/' : input     -> parseCommand input
+                input | not tui -> parseCommand input
+                input           -> ( cmdSend, input )
+            return ( cmd, line )
 
-    let getInputCommand = if tui then getInputCommandTui . Left
-                                 else getInputCommandPipe
+    let getInputCommand = getInputCommandTui . Left
 
     contextVar <- liftIO $ newMVar NoContext
 

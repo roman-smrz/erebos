@@ -149,13 +149,14 @@ getInput = do
 
 getInputLine :: Terminal -> (Maybe String -> InputHandling a) -> IO a
 getInputLine term@Terminal {..} handleResult = do
-    withMVar termLock $ \_ -> do
-        prompt <- atomically $ do
-            writeTVar termShowPrompt True
-            readTVar termPrompt
-        putStr $ prompt <> "\ESC[K"
-        drawBottomLines term
-        hFlush stdout
+    when termAnsi $ do
+        withMVar termLock $ \_ -> do
+            prompt <- atomically $ do
+                writeTVar termShowPrompt True
+                readTVar termPrompt
+            putStr $ prompt <> "\ESC[K"
+            drawBottomLines term
+            hFlush stdout
 
     mbLine <- go
     forM_ mbLine $ \line -> do
@@ -169,10 +170,12 @@ getInputLine term@Terminal {..} handleResult = do
 
     case handleResult mbLine of
         KeepPrompt x -> do
-            termPutStr term "\n\ESC[J"
+            when termAnsi $ do
+                termPutStr term "\n\ESC[J"
             return x
         ErasePrompt x -> do
-            termPutStr term "\r\ESC[J"
+            when termAnsi $ do
+                termPutStr term "\r\ESC[J"
             return x
   where
     go = getInput >>= \case
@@ -180,11 +183,12 @@ getInputLine term@Terminal {..} handleResult = do
             atomically $ do
                 ( pre, post ) <- readTVar termInput
                 writeTVar termInput ( "", "" )
-                writeTVar termShowPrompt False
-                writeTVar termBottomLines []
+                when termAnsi $ do
+                    writeTVar termShowPrompt False
+                    writeTVar termBottomLines []
                 return $ Just $ pre ++ post
 
-        InputChar '\t' -> do
+        InputChar '\t' | termAnsi -> do
             options <- withMVar termLock $ const $ do
                 ( pre, post ) <- atomically $ readTVar termInput
                 let updatePrompt pre' = do
@@ -298,7 +302,7 @@ getInputLine term@Terminal {..} handleResult = do
     withInput f = do
         withMVar termLock $ const $ do
             str <- atomically $ f =<< readTVar termInput
-            when (not $ null str) $ do
+            when (termAnsi && not (null str)) $ do
                 putStr str
                 hFlush stdout
         go
@@ -311,6 +315,8 @@ getCurrentPromptLine Terminal {..} = do
     return $ prompt <> pre <> "\ESC[s" <> post <> "\ESC[u"
 
 setPrompt :: Terminal -> String -> IO ()
+setPrompt Terminal { termAnsi = False } _ = do
+    return ()
 setPrompt term@Terminal {..} prompt = do
     withMVar termLock $ \_ -> do
         join $ atomically $ do
@@ -328,17 +334,24 @@ printLine tlTerminal@Terminal {..} str = do
     withMVar termLock $ \_ -> do
         let strLines = lines str
             tlLineCount = length strLines
-        promptLine <- atomically $ do
-            readTVar termShowPrompt >>= \case
-                True -> getCurrentPromptLine tlTerminal
-                False -> return ""
-        putStr $ "\r\ESC[K" <> unlines strLines <> "\ESC[K" <> promptLine
-        drawBottomLines tlTerminal
+        if termAnsi
+          then do
+            promptLine <- atomically $ do
+                readTVar termShowPrompt >>= \case
+                    True -> getCurrentPromptLine tlTerminal
+                    False -> return ""
+            putStr $ "\r\ESC[K" <> unlines strLines <> "\ESC[K" <> promptLine
+            drawBottomLines tlTerminal
+          else do
+            putStr $ unlines strLines
+
         hFlush stdout
         return TerminalLine {..}
 
 
 printBottomLines :: Terminal -> String -> IO ()
+printBottomLines Terminal { termAnsi = False } _ = do
+    return ()
 printBottomLines term@Terminal {..} str = do
     case lines str of
         [] -> clearBottomLines term
@@ -349,6 +362,8 @@ printBottomLines term@Terminal {..} str = do
                 hFlush stdout
 
 clearBottomLines :: Terminal -> IO ()
+clearBottomLines Terminal { termAnsi = False } = do
+    return ()
 clearBottomLines Terminal {..} = do
     withMVar termLock $ \_ -> do
         atomically (readTVar termBottomLines) >>= \case
