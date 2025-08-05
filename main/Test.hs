@@ -483,9 +483,9 @@ cmdCreateIdentity = do
     names <- asks tiParams
 
     h <- do
-        Just identity <- liftIO $ if null names
-            then Just <$> createIdentity st Nothing Nothing
-            else foldrM (\n o -> Just <$> createIdentity st (Just n) o) Nothing names
+        Just identity <- if null names
+            then Just <$> createIdentity Nothing Nothing
+            else foldrM (\n o -> Just <$> createIdentity (Just n) o) Nothing names
 
         shared <- case names of
             _:_:_ -> (: []) <$> makeSharedStateUpdate (Just $ finalOwner identity) []
@@ -986,8 +986,7 @@ cmdChatroomJoin = do
 cmdChatroomJoinAs :: Command
 cmdChatroomJoinAs = do
     [ cid, name ] <- asks tiParams
-    st <- asks tiStorage
-    identity <- liftIO $ createIdentity st (Just name) Nothing
+    identity <- createIdentity (Just name) Nothing
     joinChatroomAsByStateData identity =<< getChatroomStateData cid
     cmdOut $ unwords [ "chatroom-join-as-done", T.unpack cid ]
 

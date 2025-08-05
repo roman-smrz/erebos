@@ -287,7 +287,7 @@ main = do
         ["update-identity"] -> do
             withTerminal noCompletion $ \term -> do
                 either (fail . showErebosError) return <=< runExceptT $ do
-                    runReaderT (updateSharedIdentity term) =<< loadLocalStateHead term st
+                    runReaderT (updateSharedIdentity term) =<< runReaderT (loadLocalStateHead term) st
 
         ("update-identity" : srefs) -> do
             withTerminal noCompletion $ \term -> do
@@ -329,9 +329,10 @@ main = do
 
 interactiveLoop :: Storage -> Options -> IO ()
 interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
-    erebosHead <- case optCreateIdentity opts of
-        Nothing -> loadLocalStateHead term st
-        Just ( devName, names ) -> createLocalStateHead st (names ++ [ devName ])
+    erebosHead <- either (fail . showErebosError) return <=< runExceptT . flip runReaderT st $ do
+        case optCreateIdentity opts of
+            Nothing -> loadLocalStateHead term
+            Just ( devName, names ) -> createLocalStateHead (names ++ [ devName ])
     void $ printLine term $ T.unpack $ displayIdentity $ headLocalIdentity erebosHead
 
     let tui = hasTerminalUI term
@@ -703,8 +704,7 @@ cmdJoin = joinChatroom =<< getSelectedChatroom
 cmdJoinAs :: Command
 cmdJoinAs = do
     name <- asks ciLine
-    st <- getStorage
-    identity <- liftIO $ createIdentity st (Just $ T.pack name) Nothing
+    identity <- createIdentity (Just $ T.pack name) Nothing
     joinChatroomAs identity =<< getSelectedChatroom
 
 cmdLeave :: Command

@@ -214,29 +214,33 @@ isExtension x = case fromSigned x of BaseIdentityData {} -> False
                                      _ -> True
 
 
-createIdentity :: Storage -> Maybe Text -> Maybe UnifiedIdentity -> IO UnifiedIdentity
-createIdentity st name owner = do
-    (secret, public) <- generateKeys st
-    (_secretMsg, publicMsg) <- generateKeys st
+createIdentity
+    :: forall m e. (MonadStorage m, MonadError e m, FromErebosError e, MonadIO m)
+    => Maybe Text -> Maybe UnifiedIdentity -> m UnifiedIdentity
+createIdentity name owner = do
+    st <- getStorage
+    ( secret, public ) <- liftIO $ generateKeys st
+    ( _secretMsg, publicMsg ) <- liftIO $ generateKeys st
 
-    let signOwner :: Signed a -> ReaderT Storage IO (Signed a)
+    let signOwner :: Signed a -> m (Signed a)
         signOwner idd
             | Just o <- owner = do
-                Just ownerSecret <- loadKeyMb (iddKeyIdentity $ fromSigned $ idData o)
+                ownerSecret <- maybe (throwOtherError "failed to load private key") return =<<
+                    loadKeyMb (iddKeyIdentity $ fromSigned $ idData o)
                 signAdd ownerSecret idd
             | otherwise = return idd
 
-    Just identity <- flip runReaderT st $ do
-        baseData <- mstore =<< signOwner =<< sign secret =<<
-            mstore (emptyIdentityData public)
-                { iddOwner = idData <$> owner
-                , iddKeyMessage = Just publicMsg
-                }
-        let extOwner = do
-                odata <- idExtData <$> owner
-                guard $ isExtension odata
-                return odata
+    baseData <- mstore =<< signOwner =<< sign secret =<<
+        mstore (emptyIdentityData public)
+            { iddOwner = idData <$> owner
+            , iddKeyMessage = Just publicMsg
+            }
+    let extOwner = do
+            odata <- idExtData <$> owner
+            guard $ isExtension odata
+            return odata
 
+    maybe (throwOtherError "created invalid identity") return =<< do
         validateExtendedIdentityF . I.Identity <$>
             if isJust name || isJust extOwner
                then mstore =<< signOwner =<< sign secret =<<
@@ -245,7 +249,6 @@ createIdentity st name owner = do
                        , ideOwner = extOwner
                        }
                else return $ baseToExtended baseData
-    return identity
 
 validateIdentity :: Stored (Signed IdentityData) -> Maybe UnifiedIdentity
 validateIdentity = validateIdentityF . I.Identity

@@ -24,30 +24,35 @@ import Erebos.Storage
 import Terminal
 
 
-loadLocalStateHead :: MonadIO m => Terminal -> Storage -> m (Head LocalState)
-loadLocalStateHead term st = loadHeads st >>= \case
-    (h:_) -> return h
-    [] -> liftIO $ do
-        setPrompt term "Name: "
-        name <- getInputLine term $ KeepPrompt . maybe T.empty T.pack
+loadLocalStateHead
+    :: (MonadStorage m, MonadError e m, FromErebosError e, MonadIO m)
+    => Terminal -> m (Head LocalState)
+loadLocalStateHead term = getStorage >>= loadHeads >>= \case
+    (h : _) -> return h
+    [] -> do
+        name <- liftIO $ do
+            setPrompt term "Name: "
+            getInputLine term $ KeepPrompt . maybe T.empty T.pack
 
-        setPrompt term "Device: "
-        devName <- getInputLine term $ KeepPrompt . maybe T.empty T.pack
+        devName <- liftIO $ do
+            setPrompt term "Device: "
+            getInputLine term $ KeepPrompt . maybe T.empty T.pack
 
         ( owner, shared ) <- if
             | T.null name -> do
                 return ( Nothing, [] )
             | otherwise -> do
-                owner <- createIdentity st (Just name) Nothing
-                shared <- wrappedStore st $ SharedState
+                owner <- createIdentity (Just name) Nothing
+                shared <- mstore SharedState
                     { ssPrev = []
                     , ssType = Just $ sharedTypeID @(Maybe ComposedIdentity) Proxy
                     , ssValue = [ storedRef $ idExtData owner ]
                     }
                 return ( Just owner, [ shared ] )
 
-        identity <- createIdentity st (if T.null devName then Nothing else Just devName) owner
+        identity <- createIdentity (if T.null devName then Nothing else Just devName) owner
 
+        st <- getStorage
         storeHead st $ LocalState
             { lsPrev = Nothing
             , lsIdentity = idExtData identity
@@ -55,19 +60,22 @@ loadLocalStateHead term st = loadHeads st >>= \case
             , lsOther = []
             }
 
-createLocalStateHead :: (MonadIO m, MonadFail m) => Storage -> [ Maybe Text ] -> m (Head LocalState)
-createLocalStateHead _ [] = fail "createLocalStateHead: empty name list"
-createLocalStateHead st ( ownerName : names ) = liftIO $ do
-    owner <- createIdentity st ownerName Nothing
+createLocalStateHead
+    :: (MonadStorage m, MonadError e m, FromErebosError e, MonadIO m)
+    => [ Maybe Text ] -> m (Head LocalState)
+createLocalStateHead [] = throwOtherError "createLocalStateHead: empty name list"
+createLocalStateHead ( ownerName : names ) = do
+    owner <- createIdentity ownerName Nothing
     identity <- foldM createSingleIdentity owner names
     shared <- case names of
         [] -> return []
         _ : _ -> do
-            fmap (: []) $ wrappedStore st $ SharedState
+            fmap (: []) $ mstore SharedState
                 { ssPrev = []
                 , ssType = Just $ sharedTypeID @(Maybe ComposedIdentity) Proxy
                 , ssValue = [ storedRef $ idExtData owner ]
                 }
+    st <- getStorage
     storeHead st $ LocalState
         { lsPrev = Nothing
         , lsIdentity = idExtData identity
@@ -75,7 +83,7 @@ createLocalStateHead st ( ownerName : names ) = liftIO $ do
         , lsOther = []
         }
   where
-    createSingleIdentity owner name = createIdentity st name (Just owner)
+    createSingleIdentity owner name = createIdentity name (Just owner)
 
 
 updateSharedIdentity :: (MonadHead LocalState m, MonadError e m, FromErebosError e) => Terminal -> m ()
