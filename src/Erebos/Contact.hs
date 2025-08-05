@@ -83,13 +83,12 @@ contactName c = fromJust $ msum
 
 contactSetName :: MonadHead LocalState m => Contact -> Text -> Set Contact -> m (Set Contact)
 contactSetName contact name set = do
-    st <- getStorage
-    cdata <- wrappedStore st ContactData
+    cdata <- mstore ContactData
         { cdPrev = toComponents contact
         , cdIdentity = []
         , cdName = Just name
         }
-    storeSetAdd st (mergeSorted @Contact [cdata]) set
+    storeSetAdd (mergeSorted @Contact [cdata]) set
 
 
 type ContactService = PairingService ContactAccepted
@@ -166,10 +165,9 @@ contactReject = pairingReject @ContactAccepted Proxy
 
 finalizeContact :: MonadHead LocalState m => UnifiedIdentity -> m ()
 finalizeContact identity = updateLocalState_ $ updateSharedState_ $ \contacts -> do
-    st <- getStorage
-    cdata <- wrappedStore st ContactData
+    cdata <- mstore ContactData
         { cdPrev = []
         , cdIdentity = idExtDataF $ finalOwner identity
         , cdName = Nothing
         }
-    storeSetAdd st (mergeSorted @Contact [cdata]) contacts
+    storeSetAdd (mergeSorted @Contact [cdata]) contacts

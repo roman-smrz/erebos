@@ -378,7 +378,7 @@ cmdStoredSetAdd = do
         [Just iref, Just sref] -> return (wrappedLoad iref, loadSet @[Stored Object] sref)
         [Just iref] -> return (wrappedLoad iref, emptySet)
         _ -> fail "unexpected parameters"
-    set' <- storeSetAdd st [item] set
+    set' <- storeSetAdd [ item ] set
     cmdOut $ "stored-set-add" ++ concatMap ((' ':) . show . refDigest . storedRef) (toComponents set')
 
 cmdStoredSetList :: Command

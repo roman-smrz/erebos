@@ -10,7 +10,6 @@ module Erebos.Set (
 ) where
 
 import Control.Arrow
-import Control.Monad.IO.Class
 
 import Data.Function
 import Data.List
@@ -53,14 +52,14 @@ emptySet = Set []
 loadSet :: Mergeable a => Ref -> Set a
 loadSet = mergeSorted . (:[]) . wrappedLoad
 
-storeSetAdd :: (Mergeable a, MonadIO m) => Storage -> a -> Set a -> m (Set a)
-storeSetAdd st x (Set prev) = Set . (:[]) <$> wrappedStore st SetItem
+storeSetAdd :: (Mergeable a, MonadStorage m) => a -> Set a -> m (Set a)
+storeSetAdd x (Set prev) = Set . (: []) <$> mstore SetItem
     { siPrev = prev
     , siItem = toComponents x
     }
 
-storeSetAddComponent :: (Mergeable a, MonadStorage m, MonadIO m) => Stored (Component a) -> Set a -> m (Set a)
-storeSetAddComponent component (Set prev) = Set . (:[]) <$> mstore SetItem
+storeSetAddComponent :: (Mergeable a, MonadStorage m) => Stored (Component a) -> Set a -> m (Set a)
+storeSetAddComponent component (Set prev) = Set . (: []) <$> mstore SetItem
     { siPrev = prev
     , siItem = [ component ]
     }

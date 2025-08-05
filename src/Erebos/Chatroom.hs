@@ -295,8 +295,7 @@ createChatroom rdName rdDescription = do
         }
 
     updateLocalState $ updateSharedState $ \rooms -> do
-        st <- getStorage
-        (, cstate) <$> storeSetAdd st cstate rooms
+        (, cstate) <$> storeSetAdd cstate rooms
 
 findAndUpdateChatroomState
     :: (MonadStorage m, MonadHead LocalState m)
@@ -310,8 +309,7 @@ findAndUpdateChatroomState f = do
                 upd <- act
                 if roomStateData orig /= roomStateData upd
                   then do
-                    st <- getStorage
-                    roomSet' <- storeSetAdd st upd roomSet
+                    roomSet' <- storeSetAdd upd roomSet
                     return (roomSet', Just upd)
                   else do
                     return (roomSet, Just upd)
