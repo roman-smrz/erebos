@@ -482,13 +482,13 @@ cmdCreateIdentity = do
     st <- asks tiStorage
     names <- asks tiParams
 
-    h <- liftIO $ do
-        Just identity <- if null names
+    h <- do
+        Just identity <- liftIO $ if null names
             then Just <$> createIdentity st Nothing Nothing
             else foldrM (\n o -> Just <$> createIdentity st (Just n) o) Nothing names
 
         shared <- case names of
-            _:_:_ -> (:[]) <$> makeSharedStateUpdate st (Just $ finalOwner identity) []
+            _:_:_ -> (: []) <$> makeSharedStateUpdate (Just $ finalOwner identity) []
             _ -> return []
 
         storeHead st $ LocalState

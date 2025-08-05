@@ -81,7 +81,6 @@ instance Service DirectMessage where
         let msg = fromStored smsg
         powner <- asks $ finalOwner . svcPeerIdentity
         erb <- svcGetLocal
-        st <- getStorage
         let DirectMessageThreads prev _ = lookupSharedValue $ lsShared $ fromStored erb
             sent = findMsgProperty powner msSent prev
             received = findMsgProperty powner msReceived prev
@@ -90,7 +89,7 @@ instance Service DirectMessage where
                filterAncestors sent == filterAncestors (smsg : sent)
            then do
                when (received' /= received) $ do
-                   next <- wrappedStore st $ MessageState
+                   next <- mstore MessageState
                        { msPrev = prev
                        , msPeer = powner
                        , msReady = []
@@ -99,8 +98,8 @@ instance Service DirectMessage where
                        , msSeen = []
                        }
                    let threads = DirectMessageThreads [ next ] (dmThreadView [ next ])
-                   shared <- makeSharedStateUpdate st threads (lsShared $ fromStored erb)
-                   svcSetLocal =<< wrappedStore st (fromStored erb) { lsShared = [ shared ] }
+                   shared <- makeSharedStateUpdate threads (lsShared $ fromStored erb)
+                   svcSetLocal =<< mstore (fromStored erb) { lsShared = [ shared ] }
 
                when (powner `sameIdentity` msgFrom msg) $ do
                    replyStoredRef smsg

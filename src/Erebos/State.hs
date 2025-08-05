@@ -160,12 +160,11 @@ updateSharedState :: forall a b m. (SharedType a, MonadHead LocalState m) => (a 
 updateSharedState f = \ls -> do
     let shared = lsShared $ fromStored ls
         val = lookupSharedValue shared
-    st <- getStorage
     (val', x) <- f val
     (,x) <$> if toComponents val' == toComponents val
                 then return ls
-                else do shared' <- makeSharedStateUpdate st val' shared
-                        wrappedStore st (fromStored ls) { lsShared = [shared'] }
+                else do shared' <- makeSharedStateUpdate val' shared
+                        mstore (fromStored ls) { lsShared = [shared'] }
 
 lookupSharedValue :: forall a. SharedType a => [Stored SharedState] -> a
 lookupSharedValue = mergeSorted . filterAncestors . map wrappedLoad . concatMap (ssValue . fromStored) . filterAncestors . helper
@@ -173,8 +172,8 @@ lookupSharedValue = mergeSorted . filterAncestors . map wrappedLoad . concatMap 
                         | otherwise = helper $ ssPrev (fromStored x) ++ xs
           helper [] = []
 
-makeSharedStateUpdate :: forall a m. MonadIO m => SharedType a => Storage -> a -> [Stored SharedState] -> m (Stored SharedState)
-makeSharedStateUpdate st val prev = liftIO $ wrappedStore st SharedState
+makeSharedStateUpdate :: forall a m. (SharedType a, MonadStorage m) => a -> [ Stored SharedState ] -> m (Stored SharedState)
+makeSharedStateUpdate val prev = mstore SharedState
     { ssPrev = prev
     , ssType = Just $ sharedTypeID @a Proxy
     , ssValue = storedRef <$> toComponents val

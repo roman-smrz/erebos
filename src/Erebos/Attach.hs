@@ -59,7 +59,7 @@ instance PairingResult AttachIdentity where
         liftIO $ mapM_ storeKey $ catMaybes [ keyFromData sec pub | sec <- keys, pub <- pkeys ]
 
         identity' <- mergeIdentity $ updateIdentity [ lsIdentity $ fromStored slocal ] identity
-        shared <- makeSharedStateUpdate st (Just owner) (lsShared $ fromStored slocal)
+        shared <- makeSharedStateUpdate (Just owner) (lsShared $ fromStored slocal)
         mstore (fromStored slocal)
             { lsIdentity = idExtData identity'
             , lsShared = [ shared ]
