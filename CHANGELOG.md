@@ -1,5 +1,33 @@
 # Revision history for erebos
 
+## 0.2.0 -- 2025-08-06
+
+* Weak references in records
+* Use XDG data directory for default storage path
+* Added `/identity` command to show details of current identity
+* Support tunnel for peers in discovery service
+* New CLI prompt implementation providing cleaner interface
+    * Avoids displaying sent messages twice – both in previous prompt and in message history
+    * Print received messages only for selected conversation
+    * Clear tab completion options after use
+
+* API
+    * Split `Erebos.Storage` into multiple modules
+    * Removed deprecated `Message.formatMessage` alias
+    * Renamed `Erebos.Message` module to `Erebos.DirectMessage`
+    * Added `StorageBackend` type class to allow custom storage implementation
+    * `MonadError` constraints use generic error type
+    * Replaced `Erebos.Network.peerAddress` with `getPeerAddress` and added `getPeerAddresses`
+    * Renamed `Erebos.Network.peerIdentity` to `getPeerIdentity`
+    * Renamed some functions in `Erebos.DirectMessage` module to make clear they are related only to direct messages
+    * `Erebos.Storage.Merge.generations`/`generationsBy` return `NonEmpty`
+    * Replaced `watchReceivedDirectMessages` with `watchDirectMessageThreads`
+    * Return type of `sendMessage` and `sendDirectMessage` is now `()`
+    * Some functions use `MonadStorage` instead of explicit `Storage` parameter:
+        * `Erebos.Set.storeSetAdd`
+        * `Erebos.State.makeSharedStateUpdate`
+        * `Erebos.Identity.createIdentity`
+
 ## 0.1.9 -- 2025-07-08
 
 * Option to show details or delete a conversation by giving index parameter without first selecting it
