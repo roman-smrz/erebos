@@ -117,9 +117,9 @@ runTestTool st = do
 getLineMb :: MonadIO m => m (Maybe Text)
 getLineMb = liftIO $ catchIOError (Just <$> T.getLine) (\e -> if isEOFError e then return Nothing else ioError e)
 
-getLines :: MonadIO m => m [Text]
-getLines = getLineMb >>= \case
-    Just line | not (T.null line) -> (line:) <$> getLines
+getLines :: MonadIO m => Text -> m [ Text ]
+getLines eof = getLineMb >>= \case
+    Just line | line /= eof -> (line :) <$> getLines eof
     _ -> return []
 
 getHead :: CommandM (Head LocalState)
@@ -268,7 +268,9 @@ type Command = CommandM ()
 commands :: [ ( Text, Command ) ]
 commands =
     [ ( "store", cmdStore )
+    , ( "store-raw", cmdStoreRaw )
     , ( "load", cmdLoad )
+    , ( "load-type", cmdLoadType )
     , ( "stored-generation", cmdStoredGeneration )
     , ( "stored-roots", cmdStoredRoots )
     , ( "stored-set-add", cmdStoredSetAdd )
@@ -332,7 +334,7 @@ cmdStore = do
     st <- asks tiStorage
     pst <- liftIO $ derivePartialStorage st
     [otype] <- asks tiParams
-    ls <- getLines
+    ls <- getLines T.empty
 
     let cnt = encodeUtf8 $ T.unlines ls
         full = BL.fromChunks
@@ -341,6 +343,18 @@ cmdStore = do
             , BC.pack (show $ B.length cnt)
             , BC.singleton '\n', cnt
             ]
+    liftIO (copyRef st =<< storeRawBytes pst full) >>= \case
+        Right ref -> cmdOut $ "store-done " ++ show (refDigest ref)
+        Left _ -> cmdOut $ "store-failed"
+
+cmdStoreRaw :: Command
+cmdStoreRaw = do
+    st <- asks tiStorage
+    pst <- liftIO $ derivePartialStorage st
+    [ eof ] <- asks tiParams
+    ls <- getLines eof
+
+    let full = BL.fromStrict $ BC.init $ encodeUtf8 $ T.unlines ls
     liftIO (copyRef st =<< storeRawBytes pst full) >>= \case
         Right ref -> cmdOut $ "store-done " ++ show (refDigest ref)
         Left _ -> cmdOut $ "store-failed"
@@ -356,6 +370,19 @@ cmdLoad = do
     forM_ content $ \line -> do
         cmdOut $ "load-line " <> T.unpack (decodeUtf8 $ BL.toStrict line)
     cmdOut "load-done"
+
+cmdLoadType :: Command
+cmdLoadType = do
+    st <- asks tiStorage
+    [ tref ] <- asks tiParams
+    Just ref <- liftIO $ readRef st $ encodeUtf8 tref
+    let obj = load @Object ref
+    let otype = case obj of
+            Blob {} -> "blob"
+            Rec {} -> "rec"
+            ZeroObject {} -> "zero"
+            UnknownObject utype _ -> "unknown " <> decodeUtf8 utype
+    cmdOut $ "load-type " <> T.unpack otype
 
 cmdStoredGeneration :: Command
 cmdStoredGeneration = do
