@@ -1,3 +1,5 @@
+import common
+
 test Storage:
 	spawn as p1
 
@@ -432,8 +434,6 @@ test SharedStateWatcher:
 
 
 test LocalStateKeepUnknown:
-	let refpat = /blake2#[0-9a-f]*/
-
 	spawn as p
 	with p:
 		send "create-identity Device"
@@ -480,8 +480,6 @@ test LocalStateKeepUnknown:
 
 
 test UnknownObjectType:
-	let refpat = /blake2#[0-9a-f]*/
-
 	spawn as p
 	spawn as p2 on p.node
 
@@ -502,8 +500,6 @@ test UnknownObjectType:
 
 
 test UnknownRecordItemType:
-	let refpat = /blake2#[0-9a-f]*/
-
 	spawn as p
 	spawn as p2 on p.node
 
@@ -521,3 +517,62 @@ test UnknownRecordItemType:
 			local:
 				expect /load-(.*)/ capture done
 				guard (done == "done")
+
+
+test ObjectFormat:
+	spawn as p
+	with p:
+		# Empty blob
+		local:
+			send "store-raw EOF"
+			send "blob 0\n"
+			send "EOF"
+			expect /store-done ($refpat)/ capture r
+
+			send "load-type $r"
+			expect /load-type (.*)/ capture type
+			guard (type == "blob")
+
+		# Small blob
+		local:
+			send "store-raw EOF"
+			send "blob 2\nab"
+			send "EOF"
+			expect /store-done ($refpat)/ capture r
+
+			send "load-type $r"
+			expect /load-type (.*)/ capture type
+			guard (type == "blob")
+
+		# Empty record
+		local:
+			send "store-raw EOF"
+			send "rec 0\n"
+			send "EOF"
+			expect /store-done ($refpat)/ capture r
+
+			send "load-type $r"
+			expect /load-type (.*)/ capture type
+			guard (type == "rec")
+
+		# Small record
+		local:
+			send "store-raw EOF"
+			send "rec 8\nnum:n 1\n"
+			send "EOF"
+			expect /store-done ($refpat)/ capture r
+
+			send "load-type $r"
+			expect /load-type (.*)/ capture type
+			guard (type == "rec")
+
+		# Empty unknown
+		local:
+			send "store-raw EOF"
+			send "test-unknown 0\n"
+			send "EOF"
+			expect /store-done ($refpat)/ capture r
+
+			send "load-type $r"
+			expect /load-type (.*)/ capture type
+			guard (type == "unknown test-unknown")
