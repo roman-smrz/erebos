@@ -566,6 +566,28 @@ test ObjectFormat:
 			expect /load-type (.*)/ capture type
 			guard (type == "rec")
 
+		# Record with unknown type
+		local:
+			send "store-raw EOF"
+			send "rec 14\nnum:UNKNOWN 1\n"
+			send "EOF"
+			expect /store-done ($refpat)/ capture r
+
+			send "load-type $r"
+			expect /load-type (.*)/ capture type
+			guard (type == "rec")
+
+		# Invalid records
+		for content in [ "rec 6\nnum 1\n", "rec 6\nnum:n\n" ]:
+			send "store-raw EOF"
+			send "$content"
+			send "EOF"
+			expect /store-done ($refpat)/ capture r
+
+			send "load-type $r"
+			expect /load-type (.*)/ capture type
+			guard (type == "unknown rec")
+
 		# Empty unknown
 		local:
 			send "store-raw EOF"
