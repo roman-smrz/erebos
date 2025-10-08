@@ -236,11 +236,14 @@ unsafeDeserializeObject st bytes =
         (line, rest) | Just (otype, len) <- splitObjPrefix line -> do
             let (content, next) = first BL.toStrict $ BL.splitAt (fromIntegral len) $ BL.drop 1 rest
             guard $ B.length content == len
-            (,next) <$> case otype of
-                 _ | otype == BC.pack "blob" -> return $ Blob content
-                   | otype == BC.pack "rec" -> maybe (throwOtherError $ "malformed record item ")
-                                                   (return . Rec) $ sequence $ map parseRecLine $ mergeCont [] $ BC.lines content
-                   | otherwise -> return $ UnknownObject otype content
+            (, next) <$> if
+                | otype == BC.pack "blob"
+                    -> return $ Blob content
+                | otype == BC.pack "rec"
+                , Just ritems <- sequence $ map parseRecLine $ mergeCont [] $ BC.lines content
+                    -> return $ Rec ritems
+                | otherwise
+                    -> return $ UnknownObject otype content
         _ -> throwOtherError $ "malformed object"
     where splitObjPrefix line = do
               [otype, tlen] <- return $ BLC.words line
