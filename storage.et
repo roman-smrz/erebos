@@ -558,7 +558,18 @@ test ObjectFormat:
 		# Small record
 		local:
 			send "store-raw EOF"
-			send "rec 8\nnum:n 1\n"
+			send "rec 28\nnum:n 1\ntext:t abc\nempty:e \n"
+			send "EOF"
+			expect /store-done ($refpat)/ capture r
+
+			send "load-type $r"
+			expect /load-type (.*)/ capture type
+			guard (type == "rec")
+
+		# Record with multiline items
+		local:
+			send "store-raw EOF"
+			send "rec 34\nfirst:t abc\n\tdef\nsecond:t \tx\n\ty\tz\n"
 			send "EOF"
 			expect /store-done ($refpat)/ capture r
 
@@ -578,7 +589,7 @@ test ObjectFormat:
 			guard (type == "rec")
 
 		# Invalid records
-		for content in [ "rec 6\nnum 1\n", "rec 6\nnum:n\n" ]:
+		for content in [ "rec 6\nnum 1\n", "rec 6\nnum:n\n", "rec 7\nnum:n 1" ]:
 			send "store-raw EOF"
 			send "$content"
 			send "EOF"
