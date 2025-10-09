@@ -240,45 +240,55 @@ unsafeDeserializeObject st bytes =
                 | otype == BC.pack "blob"
                     -> return $ Blob content
                 | otype == BC.pack "rec"
-                , Just ritems <- sequence $ map parseRecLine $ mergeCont [] $ BC.lines content
+                , Just ritems <- parseRecordBody st content
                     -> return $ Rec ritems
                 | otherwise
                     -> return $ UnknownObject otype content
         _ -> throwOtherError $ "malformed object"
-    where splitObjPrefix line = do
-              [otype, tlen] <- return $ BLC.words line
-              (len, rest) <- BLC.readInt tlen
-              guard $ BL.null rest
-              return (BL.toStrict otype, len)
+  where
+    splitObjPrefix line = do
+        [ otype, tlen ] <- return $ BLC.words line
+        ( len, rest ) <- BLC.readInt tlen
+        guard $ BL.null rest
+        return ( BL.toStrict otype, len )
 
-          mergeCont cs (a:b:rest) | Just ('\t', b') <- BC.uncons b = mergeCont (b':BC.pack "\n":cs) (a:rest)
-          mergeCont cs (a:rest) = B.concat (a : reverse cs) : mergeCont [] rest
-          mergeCont _ [] = []
+parseRecordBody :: Storage' c -> ByteString -> Maybe [ ( ByteString, RecItem' c ) ]
+parseRecordBody _ body | B.null body = Just []
+parseRecordBody st body = do
+    colon <- BC.elemIndex ':' body
+    space <- BC.elemIndex ' ' $ B.drop (colon + 1) body
+    let name = B.take colon body
+        itype = B.take space $ B.drop (colon + 1) body
+    ( content, remainingBody ) <- parseTabEscapedLines $ B.drop (space + colon + 2) body
 
-          parseRecLine line = do
-              colon <- BC.elemIndex ':' line
-              space <- BC.elemIndex ' ' line
-              guard $ colon < space
-              let name = B.take colon line
-                  itype = B.take (space-colon-1) $ B.drop (colon+1) line
-                  content = B.drop (space+1) line
+    let val = fromMaybe (RecUnknown itype content) $
+            case BC.unpack itype of
+                "e" -> do guard $ B.null content
+                          return RecEmpty
+                "i" -> do ( num, rest ) <- BC.readInteger content
+                          guard $ B.null rest
+                          return $ RecInt num
+                "n" -> RecNum <$> parseRatio content
+                "t" -> return $ RecText $ decodeUtf8With lenientDecode content
+                "b" -> RecBinary <$> readHex content
+                "d" -> RecDate <$> parseTimeM False defaultTimeLocale "%s %z" (BC.unpack content)
+                "u" -> RecUUID <$> U.fromASCIIBytes content
+                "r" -> RecRef . Ref st <$> readRefDigest content
+                "w" -> RecWeak <$> readRefDigest content
+                _   -> Nothing
+    (( name, val ) :) <$> parseRecordBody st remainingBody
 
-              let val = fromMaybe (RecUnknown itype content) $
-                      case BC.unpack itype of
-                          "e" -> do guard $ B.null content
-                                    return RecEmpty
-                          "i" -> do (num, rest) <- BC.readInteger content
-                                    guard $ B.null rest
-                                    return $ RecInt num
-                          "n" -> RecNum <$> parseRatio content
-                          "t" -> return $ RecText $ decodeUtf8With lenientDecode content
-                          "b" -> RecBinary <$> readHex content
-                          "d" -> RecDate <$> parseTimeM False defaultTimeLocale "%s %z" (BC.unpack content)
-                          "u" -> RecUUID <$> U.fromASCIIBytes content
-                          "r" -> RecRef . Ref st <$> readRefDigest content
-                          "w" -> RecWeak <$> readRefDigest content
-                          _   -> Nothing
-              return (name, val)
+-- Split given ByteString on the first newline not preceded by tab; replace
+-- "\t\n" in the first part with "\n".
+parseTabEscapedLines :: ByteString -> Maybe ( ByteString, ByteString )
+parseTabEscapedLines = parseLines []
+  where
+    parseLines linesReversed cur = do
+        newline <- BC.elemIndex '\n' cur
+        case BC.indexMaybe cur (newline + 1) of
+            Just '\t' -> parseLines (B.take (newline + 1) cur : linesReversed) (B.drop (newline + 2) cur)
+            _         -> Just ( BC.concat $ reverse $ B.take newline cur : linesReversed, B.drop (newline + 1) cur )
+
 
 deserializeObject :: PartialStorage -> BL.ByteString -> Except ErebosError (PartialObject, BL.ByteString)
 deserializeObject = unsafeDeserializeObject
