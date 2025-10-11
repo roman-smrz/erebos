@@ -380,6 +380,7 @@ cmdLoadType = do
     let otype = case obj of
             Blob {} -> "blob"
             Rec {} -> "rec"
+            OnDemand {} -> "ondemand"
             ZeroObject {} -> "zero"
             UnknownObject utype _ -> "unknown " <> decodeUtf8 utype
     cmdOut $ "load-type " <> T.unpack otype

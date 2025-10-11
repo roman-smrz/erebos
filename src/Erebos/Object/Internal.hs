@@ -55,26 +55,27 @@ import Control.Monad.Writer
 import Crypto.Hash
 
 import Data.Bifunctor
+import Data.ByteArray qualified as BA
 import Data.ByteString (ByteString)
-import qualified Data.ByteArray as BA
-import qualified Data.ByteString as B
-import qualified Data.ByteString.Char8 as BC
-import qualified Data.ByteString.Lazy as BL
-import qualified Data.ByteString.Lazy.Char8 as BLC
+import Data.ByteString qualified as B
+import Data.ByteString.Char8 qualified as BC
+import Data.ByteString.Lazy qualified as BL
+import Data.ByteString.Lazy.Char8 qualified as BLC
 import Data.Char
 import Data.Function
 import Data.Maybe
 import Data.Ratio
 import Data.Set (Set)
-import qualified Data.Set as S
+import Data.Set qualified as S
 import Data.Text (Text)
-import qualified Data.Text as T
+import Data.Text qualified as T
 import Data.Text.Encoding
 import Data.Text.Encoding.Error
 import Data.Time.Calendar
 import Data.Time.Clock
 import Data.Time.Format
 import Data.Time.LocalTime
+import Data.Word
 
 import System.IO.Unsafe
 
@@ -129,6 +130,7 @@ copyRecItem' st = \case
 copyObject' :: forall c c'. (StorageCompleteness c, StorageCompleteness c') => Storage' c' -> Object' c -> IO (c (Object' c'))
 copyObject' _ (Blob bs) = return $ return $ Blob bs
 copyObject' st (Rec rs) = fmap Rec . sequence <$> mapM (\( n, item ) -> fmap ( n, ) <$> copyRecItem' st item) rs
+copyObject' _ (OnDemand size dgst) = return $ return $ OnDemand size dgst
 copyObject' _ ZeroObject = return $ return ZeroObject
 copyObject' _ (UnknownObject otype content) = return $ return $ UnknownObject otype content
 
@@ -150,7 +152,8 @@ partialRefFromDigest st dgst = Ref st dgst
 
 data Object' c
     = Blob ByteString
-    | Rec [(ByteString, RecItem' c)]
+    | Rec [ ( ByteString, RecItem' c ) ]
+    | OnDemand Word64 RefDigest
     | ZeroObject
     | UnknownObject ByteString ByteString
     deriving (Show)
@@ -176,8 +179,12 @@ type RecItem = RecItem' Complete
 serializeObject :: Object' c -> BL.ByteString
 serializeObject = \case
     Blob cnt -> BL.fromChunks [BC.pack "blob ", BC.pack (show $ B.length cnt), BC.singleton '\n', cnt]
-    Rec rec -> let cnt = BL.fromChunks $ concatMap (uncurry serializeRecItem) rec
-                in BL.fromChunks [BC.pack "rec ", BC.pack (show $ BL.length cnt), BC.singleton '\n'] `BL.append` cnt
+    Rec rec ->
+        let cnt = BL.fromChunks $ concatMap (uncurry serializeRecItem) rec
+         in BL.fromChunks [ BC.pack "rec ", BC.pack (show $ BL.length cnt), BC.singleton '\n' ] `BL.append` cnt
+    OnDemand size dgst ->
+        let cnt = BC.unlines [ BC.pack (show size), showRefDigest dgst ]
+         in BL.fromChunks [ BC.pack "ondemand ", BC.pack (show $ B.length cnt), BC.singleton '\n', cnt ]
     ZeroObject -> BL.empty
     UnknownObject otype cnt -> BL.fromChunks [ otype, BC.singleton ' ', BC.pack (show $ B.length cnt), BC.singleton '\n', cnt ]
 
@@ -242,6 +249,9 @@ unsafeDeserializeObject st bytes =
                 | otype == BC.pack "rec"
                 , Just ritems <- parseRecordBody st content
                     -> return $ Rec ritems
+                | otype == BC.pack "ondemand"
+                , Just ondemand <- parseOnDemand st content
+                    -> return ondemand
                 | otherwise
                     -> return $ UnknownObject otype content
         _ -> throwOtherError $ "malformed object"
@@ -288,6 +298,16 @@ parseTabEscapedLines = parseLines []
         case BC.indexMaybe cur (newline + 1) of
             Just '\t' -> parseLines (B.take (newline + 1) cur : linesReversed) (B.drop (newline + 2) cur)
             _         -> Just ( BC.concat $ reverse $ B.take newline cur : linesReversed, B.drop (newline + 1) cur )
+
+parseOnDemand :: Storage' c -> ByteString -> Maybe (Object' c)
+parseOnDemand _ body = do
+    newline1 <- BC.elemIndex '\n' body
+    newline2 <- BC.elemIndex '\n' $ B.drop (newline1 + 1) body
+    guard (newline1 + newline2 + 2 == B.length body)
+    ( size, sizeRest ) <- BC.readWord64 (B.take newline1 body)
+    guard (B.null sizeRest)
+    dgst <- readRefDigest $ B.take newline2 $ B.drop (newline1 + 1) body
+    return $ OnDemand size dgst
 
 
 deserializeObject :: PartialStorage -> BL.ByteString -> Except ErebosError (PartialObject, BL.ByteString)
@@ -345,10 +365,12 @@ class Storable a where
 class Storable a => ZeroStorable a where
     fromZero :: Storage -> a
 
-data Store = StoreBlob ByteString
-           | StoreRec (forall c. StorageCompleteness c => Storage' c -> [IO [(ByteString, RecItem' c)]])
-           | StoreZero
-           | StoreUnknown ByteString ByteString
+data Store
+    = StoreBlob ByteString
+    | StoreRec (forall c. StorageCompleteness c => Storage' c -> [IO [(ByteString, RecItem' c)]])
+    | StoreOnDemand Word64 RefDigest
+    | StoreZero
+    | StoreUnknown ByteString ByteString
 
 evalStore :: StorageCompleteness c => Storage' c -> Store -> IO (Ref' c)
 evalStore st = unsafeStoreObject st <=< evalStoreObject st
@@ -356,6 +378,7 @@ evalStore st = unsafeStoreObject st <=< evalStoreObject st
 evalStoreObject :: StorageCompleteness c => Storage' c -> Store -> IO (Object' c)
 evalStoreObject _ (StoreBlob x) = return $ Blob x
 evalStoreObject s (StoreRec f) = Rec . concat <$> sequence (f s)
+evalStoreObject _ (StoreOnDemand size dgst) = return $ OnDemand size dgst
 evalStoreObject _ StoreZero = return ZeroObject
 evalStoreObject _ (StoreUnknown otype content) = return $ UnknownObject otype content
 
@@ -392,6 +415,7 @@ instance Storable Object where
     store' (Rec xs) = StoreRec $ \st -> return $ do
         Rec xs' <- copyObject st (Rec xs)
         return xs'
+    store' (OnDemand size dgst) = StoreOnDemand size dgst
     store' ZeroObject = StoreZero
     store' (UnknownObject otype content) = StoreUnknown otype content
 
