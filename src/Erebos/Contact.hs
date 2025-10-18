@@ -4,6 +4,8 @@ module Erebos.Contact (
     contactCustomName,
     contactName,
 
+    ContactData(..),
+
     contactSetName,
 
     ContactService,

@@ -391,13 +391,13 @@ sameIdentity x y = intersectsSorted (roots x) (roots y)
     roots idt = uniq $ sort $ concatMap storedRoots $ toList $ idDataF idt
 
 
-unfoldOwners :: (Foldable m) => Identity m -> [ComposedIdentity]
+unfoldOwners :: Foldable m => Identity m -> [ComposedIdentity]
 unfoldOwners = unfoldr (fmap (\i -> (i, idOwner i))) . Just . toComposedIdentity
 
-finalOwner :: (Foldable m, Applicative m) => Identity m -> ComposedIdentity
+finalOwner :: Foldable m => Identity m -> ComposedIdentity
 finalOwner = last . unfoldOwners
 
-displayIdentity :: (Foldable m, Applicative m) => Identity m -> Text
+displayIdentity :: Foldable m => Identity m -> Text
 displayIdentity identity = T.concat
     [ T.intercalate (T.pack " / ") $ map (fromMaybe (T.pack "<unnamed>") . idName) owners
     ]

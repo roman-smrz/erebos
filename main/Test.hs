@@ -15,10 +15,12 @@ import Control.Monad.State
 import Crypto.Random
 
 import Data.Bool
+import Data.ByteString (ByteString)
 import Data.ByteString qualified as B
 import Data.ByteString.Char8 qualified as BC
 import Data.ByteString.Lazy qualified as BL
 import Data.ByteString.Lazy.Char8 qualified as BL
+import Data.Char
 import Data.Foldable
 import Data.Ord
 import Data.Text (Text)
@@ -39,6 +41,7 @@ import Erebos.Contact
 import Erebos.DirectMessage
 import Erebos.Discovery
 import Erebos.Identity
+import Erebos.Invite
 import Erebos.Network
 import Erebos.Object
 import Erebos.Pairing
@@ -127,6 +130,26 @@ getHead = do
     h <- maybe (fail "failed to reload head") return =<< maybe (fail "no current head") reloadHead =<< gets tsHead
     modify $ \s -> s { tsHead = Just h }
     return h
+
+showHex :: ByteString -> ByteString
+showHex = B.concat . map showHexByte . B.unpack
+    where showHexChar x | x < 10    = x + o '0'
+                        | otherwise = x + o 'a' - 10
+          showHexByte x = B.pack [ showHexChar (x `div` 16), showHexChar (x `mod` 16) ]
+          o = fromIntegral . ord
+
+readHex :: ByteString -> Maybe ByteString
+readHex = return . B.concat <=< readHex'
+    where readHex' bs | B.null bs = Just []
+          readHex' bs = do (bx, bs') <- B.uncons bs
+                           (by, bs'') <- B.uncons bs'
+                           x <- hexDigit bx
+                           y <- hexDigit by
+                           (B.singleton (x * 16 + y) :) <$> readHex' bs''
+          hexDigit x | x >= o '0' && x <= o '9' = Just $ x - o '0'
+                     | x >= o 'a' && x <= o 'z' = Just $ x - o 'a' + 10
+                     | otherwise                = Nothing
+          o = fromIntegral . ord
 
 
 type Output = MVar ()
@@ -232,6 +255,17 @@ discoveryAttributes = (defaultServiceAttributes Proxy)
     { discoveryProvideTunnel = \_ _ -> False
     }
 
+inviteAttributes :: Output -> InviteServiceAttributes
+inviteAttributes out = (defaultServiceAttributes Proxy)
+    { inviteHookAccepted = \token -> do
+        pid <- asks svcPeerIdentity
+        afterCommit $ outLine out $ "invite-accepted " <> BC.unpack (showHex token) <> " " <> (BC.unpack $ showRef $ storedRef $ idExtData pid)
+    , inviteHookReplyContact = \token _ -> do
+        afterCommit $ outLine out $ "invite-accept-done " <> BC.unpack (showHex token) <> " contact"
+    , inviteHookReplyInvalid = \token -> do
+        afterCommit $ outLine out $ "invite-accept-done " <> BC.unpack (showHex token) <> " invalid"
+    }
+
 dmThreadWatcher :: ComposedIdentity -> Output -> DirectMessageThread -> DirectMessageThread -> IO ()
 dmThreadWatcher self out prev cur = do
     forM_ (reverse $ dmThreadToListSince prev cur) $ \msg -> do
@@ -327,6 +361,8 @@ commands =
     , ( "chatroom-message-send", cmdChatroomMessageSend )
     , ( "discovery-connect", cmdDiscoveryConnect )
     , ( "discovery-tunnel", cmdDiscoveryTunnel )
+    , ( "invite-contact-create", cmdInviteContactCreate )
+    , ( "invite-accept", cmdInviteAccept )
     ]
 
 cmdStore :: Command
@@ -572,6 +608,7 @@ cmdStartServer = do
             { discoveryProvideTunnel = \_ _ -> "tunnel" `elem` params
             }
         ( "dm", _ ) -> return $ someServiceAttr $ directMessageAttributes out
+        ( "invite", _ ) -> return $ someServiceAttr $ inviteAttributes out
         ( "sync", _ ) -> return $ someService @SyncService Proxy
         ( "test", _ ) -> return $ someServiceAttr $ (defaultServiceAttributes Proxy)
             { testMessageReceived = \obj otype len sref -> do
@@ -1043,3 +1080,17 @@ cmdDiscoveryTunnel = do
     via <- getPeer tvia
     Just target <- return $ readRefDigest $ encodeUtf8 ttarget
     liftIO $ discoverySetupTunnel via target
+
+cmdInviteContactCreate :: Command
+cmdInviteContactCreate = do
+    [ name ] <- asks tiParams
+    Just token <- inviteToken <$> createSingleContactInvite name
+    cmdOut $ unwords [ "invite-contact-create-done", BC.unpack (showHex token) ]
+
+cmdInviteAccept :: Command
+cmdInviteAccept = do
+    [ tokenText, idref ] <- asks tiParams
+    Just token <- return $ readHex $ encodeUtf8 tokenText
+    Just from <- return $ readRefDigest $ encodeUtf8 idref
+    Just RunningServer {..} <- gets tsServer
+    acceptInvite rsServer from token

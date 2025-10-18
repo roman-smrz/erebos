@@ -107,6 +107,7 @@ library
         Erebos.Discovery
         Erebos.Error
         Erebos.Identity
+        Erebos.Invite
         Erebos.Network
         Erebos.Object
         Erebos.Pairing

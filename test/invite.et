@@ -1,0 +1,73 @@
+module invite
+
+import common
+
+test InviteContact:
+    let services = "contact,invite"
+
+    spawn as p1
+    spawn as p2
+
+    send "create-identity Device1 Owner1" to p1
+    expect /create-identity-done ref ($refpat)/ from p1 capture p1id
+    send "identity-info $p1id" to p1
+    expect /identity-info ref $p1id base ($refpat) owner ($refpat).*/ from p1 capture p1base, p1owner
+    send "identity-info $p1owner" to p1
+    expect /identity-info ref $p1owner base ($refpat).*/ from p1 capture p1obase
+
+    send "create-identity Device2 Owner2" to p2
+    expect /create-identity-done ref ($refpat)/ from p2 capture p2id
+
+    send "start-server services $services" to p1
+    send "start-server services $services" to p2
+
+    expect from p1:
+        /peer ([0-9]+) addr ${p2.node.ip} 29665/ capture peer1_2
+        /peer $peer1_2 id Device2 Owner2/
+
+    expect from p2:
+        /peer ([0-9]+) addr ${p1.node.ip} 29665/ capture peer2_1
+        /peer $peer2_1 id Device1 Owner1/
+
+    send "invite-contact-create Contact2" to p1
+    expect from p1 /invite-contact-create-done ([^ ]+)/ capture token
+
+    with p2:
+        send "invite-accept 00 $p1obase"
+        expect /invite-accept-done 00 invalid/
+
+        send "contact-list"
+        expect:
+            /contact-list-(.*)/ capture done
+        guard (done == "done")
+
+    with p2:
+        send "invite-accept $token $p1obase"
+        expect /invite-accept-done $token contact/
+
+        send "contact-list"
+        expect:
+            /contact-list-item [a-z0-9#]+ Owner1 Owner1/
+            /contact-list-(.*)/ capture done
+        guard (done == "done")
+
+    with p2:
+        send "invite-accept $token $p1obase"
+        expect /invite-accept-done $token invalid/
+
+        send "contact-list"
+        expect:
+            /contact-list-item [a-z0-9#]+ Owner1 Owner1/
+            /contact-list-(.*)/ capture done
+        guard (done == "done")
+
+    with p1:
+        expect /invite-accepted 00 $p2id/
+        expect /invite-accepted $token $p2id/
+        expect /invite-accepted $token $p2id/
+
+        send "contact-list"
+        expect:
+            /contact-list-item [a-z0-9#]+ Contact2 Owner2/
+            /contact-list-(.*)/ capture done
+        guard (done == "done")
