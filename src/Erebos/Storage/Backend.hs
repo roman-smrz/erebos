@@ -9,12 +9,15 @@ module Erebos.Storage.Backend (
     Complete, Partial,
     Storage, PartialStorage,
     newStorage,
+    refDigestBytes,
 
     WatchID, startWatchID, nextWatchID,
 ) where
 
 import Control.Concurrent.MVar
 
+import Data.ByteArray qualified as BA
+import Data.ByteString (ByteString)
 import Data.HashTable.IO qualified as HT
 
 import Erebos.Object.Internal
@@ -26,3 +29,7 @@ newStorage stBackend = do
     stRefGeneration <- newMVar =<< HT.new
     stRefRoots <- newMVar =<< HT.new
     return Storage {..}
+
+
+refDigestBytes :: RefDigest -> ByteString
+refDigestBytes = BA.convert
