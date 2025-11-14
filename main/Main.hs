@@ -72,9 +72,10 @@ data Options = Options
     , optShowVersion :: Bool
     }
 
-data StorageOption = DefaultStorage
-                   | FilesystemStorage FilePath
-                   | MemoryStorage
+data StorageOption
+    = DefaultStorage
+    | FilesystemStorage FilePath
+    | MemoryStorage
 
 data ServiceOption = ServiceOption
     { soptName :: String
@@ -114,10 +115,10 @@ availableServices =
 
 options :: [ OptDescr (Options -> Writer [ String ] Options) ]
 options =
-    [ Option ['p'] ["port"]
+    [ Option [ 'p' ] [ "port" ]
         (ReqArg (\p -> so $ \opts -> opts { serverPort = read p }) "<port>")
         "local port to bind"
-    , Option ['s'] ["silent"]
+    , Option [ 's' ] [ "silent" ]
         (NoArg (so $ \opts -> opts { serverLocalDiscovery = False }))
         "do not send announce packets for local discovery"
     , Option [] [ "storage" ]
@@ -140,7 +141,7 @@ options =
                  in maybe (Just ( Nothing, [ ownerName ] )) (Just . second (ownerName :)) (optCreateIdentity opts)
             }) "<name>")
         "create owner for a new device identity"
-    , Option [] ["chatroom-auto-subscribe"]
+    , Option [] [ "chatroom-auto-subscribe" ]
         (ReqArg (\count -> \opts -> return opts { optChatroomAutoSubscribe = Just (read count) }) "<count>")
         "automatically subscribe for up to <count> chatrooms"
     , Option [] [ "discovery-stun-port" ]
@@ -160,16 +161,16 @@ options =
             fun <- provideTunnelFun value
             serviceAttr (\attrs -> return attrs { discoveryProvideTunnel = fun }) opts) "<peer-type>")
         "offer to provide tunnel for peers of given <peer-type>, possible values: all, none, websocket"
-    , Option [] ["dm-bot-echo"]
+    , Option [] [ "dm-bot-echo" ]
         (ReqArg (\prefix -> \opts -> return opts { optDmBotEcho = Just (T.pack prefix) }) "<prefix>")
         "automatically reply to direct messages with the same text prefixed with <prefix>"
     , Option [] [ "websocket-server" ]
         (ReqArg (\value -> \opts -> return opts { optWebSocketServer = Just (read value) }) "<port>")
         "start WebSocket server on given port"
-    , Option ['h'] ["help"]
+    , Option [ 'h' ] [ "help" ]
         (NoArg $ \opts -> return opts { optShowHelp = True })
         "show this help and exit"
-    , Option ['V'] ["version"]
+    , Option [ 'V' ] [ "version" ]
         (NoArg $ \opts -> return opts { optShowVersion = True })
         "show version and exit"
     ]
@@ -241,7 +242,7 @@ main = do
         MemoryStorage          -> memoryStorage
 
     case args of
-        ["cat-file", sref] -> do
+        [ "cat-file", sref ] -> do
             readRef st (BC.pack sref) >>= \case
                 Nothing -> error "ref does not exist"
                 Just ref -> BL.putStr $ lazyLoadBytes ref
@@ -272,7 +273,7 @@ main = do
                         Nothing -> putStrLn $ "Identity verification failed"
                     _ -> error $ "unknown object type '" ++ objtype ++ "'"
 
-        ["show-generation", sref] -> readRef st (BC.pack sref) >>= \case
+        [ "show-generation", sref ] -> readRef st (BC.pack sref) >>= \case
             Nothing -> error "ref does not exist"
             Just ref -> print $ storedGeneration (wrappedLoad ref :: Stored Object)
 
@@ -284,7 +285,7 @@ main = do
                     T.putStrLn "no local state head"
                     exitFailure
 
-        ["update-identity"] -> do
+        [ "update-identity" ] -> do
             withTerminal noCompletion $ \term -> do
                 either (fail . showErebosError) return <=< runExceptT $ do
                     runReaderT (updateSharedIdentity term) =<< runReaderT (loadLocalStateHead term) st
@@ -299,7 +300,7 @@ main = do
                                 (either (fail . showErebosError) return <=< runExceptT $ runReaderT (interactiveIdentityUpdate term idt) st)
                         | otherwise -> error "invalid identity"
 
-        ["test"] -> runTestTool st
+        [ "test" ] -> runTestTool st
 
         [] -> do
             let header = "Usage: erebos [OPTION...]"
@@ -601,33 +602,33 @@ getSelectedOrManualContext = do
 
 commands :: [(String, Command)]
 commands =
-    [ ("history", cmdHistory)
-    , ("identity", cmdIdentity)
-    , ("peers", cmdPeers)
-    , ("peer-add", cmdPeerAdd)
-    , ("peer-add-public", cmdPeerAddPublic)
-    , ("peer-drop", cmdPeerDrop)
-    , ("send", cmdSend)
-    , ("delete", cmdDelete)
-    , ("update-identity", cmdUpdateIdentity)
-    , ("attach", cmdAttach)
-    , ("attach-accept", cmdAttachAccept)
-    , ("attach-reject", cmdAttachReject)
-    , ("chatrooms", cmdChatrooms)
-    , ("chatroom-create-public", cmdChatroomCreatePublic)
-    , ("contacts", cmdContacts)
-    , ("contact-add", cmdContactAdd)
-    , ("contact-accept", cmdContactAccept)
-    , ("contact-reject", cmdContactReject)
-    , ("conversations", cmdConversations)
-    , ("details", cmdDetails)
-    , ("discovery", cmdDiscovery)
-    , ("join", cmdJoin)
-    , ("join-as", cmdJoinAs)
-    , ("leave", cmdLeave)
-    , ("members", cmdMembers)
-    , ("select", cmdSelectContext)
-    , ("quit", cmdQuit)
+    [ ( "history", cmdHistory )
+    , ( "identity", cmdIdentity )
+    , ( "peers", cmdPeers )
+    , ( "peer-add", cmdPeerAdd )
+    , ( "peer-add-public", cmdPeerAddPublic )
+    , ( "peer-drop", cmdPeerDrop )
+    , ( "send", cmdSend )
+    , ( "delete", cmdDelete )
+    , ( "update-identity", cmdUpdateIdentity )
+    , ( "attach", cmdAttach )
+    , ( "attach-accept", cmdAttachAccept )
+    , ( "attach-reject", cmdAttachReject )
+    , ( "chatrooms", cmdChatrooms )
+    , ( "chatroom-create-public", cmdChatroomCreatePublic )
+    , ( "contacts", cmdContacts )
+    , ( "contact-add", cmdContactAdd )
+    , ( "contact-accept", cmdContactAccept )
+    , ( "contact-reject", cmdContactReject )
+    , ( "conversations", cmdConversations )
+    , ( "details", cmdDetails )
+    , ( "discovery", cmdDiscovery )
+    , ( "join", cmdJoin )
+    , ( "join-as", cmdJoinAs )
+    , ( "leave", cmdLeave )
+    , ( "members", cmdMembers )
+    , ( "select", cmdSelectContext )
+    , ( "quit", cmdQuit )
     ]
 
 commandCompletion :: CompletionFunc IO
