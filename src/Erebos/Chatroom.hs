@@ -50,6 +50,7 @@ import Data.Set qualified as S
 import Data.Text (Text)
 import Data.Time
 
+import Erebos.Conversation.Class
 import Erebos.Identity
 import Erebos.PubKey
 import Erebos.Service
@@ -59,6 +60,12 @@ import Erebos.Storable
 import Erebos.Storage.Head
 import Erebos.Storage.Merge
 import Erebos.Util
+
+
+instance ConversationType ChatroomState ChatMessage where
+    convMessageFrom = cmsgFrom
+    convMessageTime = cmsgTime
+    convMessageText = cmsgText
 
 
 data ChatroomData = ChatroomData

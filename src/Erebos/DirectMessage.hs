@@ -32,6 +32,7 @@ import Data.Text qualified as T
 import Data.Time.Format
 import Data.Time.LocalTime
 
+import Erebos.Conversation.Class
 import Erebos.Discovery
 import Erebos.Identity
 import Erebos.Network
@@ -41,6 +42,13 @@ import Erebos.State
 import Erebos.Storable
 import Erebos.Storage.Head
 import Erebos.Storage.Merge
+
+
+instance ConversationType DirectMessageThread DirectMessage where
+    convMessageFrom = msgFrom
+    convMessageTime = msgTime
+    convMessageText = Just . msgText
+
 
 data DirectMessage = DirectMessage
     { msgFrom :: ComposedIdentity

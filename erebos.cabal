@@ -125,6 +125,7 @@ library
         Erebos.Sync
 
     other-modules:
+        Erebos.Conversation.Class
         Erebos.Flow
         Erebos.Network.Address
         Erebos.Network.Channel

@@ -33,6 +33,7 @@ import Data.Time.Format
 import Data.Time.LocalTime
 
 import Erebos.Chatroom
+import Erebos.Conversation.Class
 import Erebos.DirectMessage
 import Erebos.Identity
 import Erebos.State
@@ -42,17 +43,18 @@ import Erebos.Storable
 data Message = DirectMessageMessage DirectMessage Bool
              | ChatroomMessage ChatMessage Bool
 
+withMessage :: (forall conv msg. ConversationType conv msg => msg -> a) -> Message -> a
+withMessage f (DirectMessageMessage msg _) = f msg
+withMessage f (ChatroomMessage msg _) = f msg
+
 messageFrom :: Message -> ComposedIdentity
-messageFrom (DirectMessageMessage msg _) = msgFrom msg
-messageFrom (ChatroomMessage msg _) = cmsgFrom msg
+messageFrom = withMessage convMessageFrom
 
 messageTime :: Message -> ZonedTime
-messageTime (DirectMessageMessage msg _) = msgTime msg
-messageTime (ChatroomMessage msg _) = cmsgTime msg
+messageTime = withMessage convMessageTime
 
 messageText :: Message -> Maybe Text
-messageText (DirectMessageMessage msg _) = Just $ msgText msg
-messageText (ChatroomMessage msg _) = cmsgText msg
+messageText = withMessage convMessageText
 
 messageUnread :: Message -> Bool
 messageUnread (DirectMessageMessage _ unread) = unread
