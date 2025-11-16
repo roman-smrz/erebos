@@ -28,21 +28,21 @@ test DirectMessage:
 
 	for i in [1..2]:
 		send "dm-send-peer $peer1_2 hello$i" to p1
-		expect /dm-sent from Owner1 text hello$i/ from p1
-		expect /dm-received from Owner1 text hello$i/ from p2
+		expect /dm-sent from Owner1 new no text hello$i/ from p1
+		expect /dm-received from Owner1 new yes text hello$i/ from p2
 
 	for i in [1..2]:
 		send "dm-send-peer $peer2_1 hi$i" to p2
-		expect /dm-sent from Owner2 text hi$i/ from p2
-		expect /dm-received from Owner2 text hi$i/ from p1
+		expect /dm-sent from Owner2 new no text hi$i/ from p2
+		expect /dm-received from Owner2 new yes text hi$i/ from p1
 
 	for i in [3..4]:
 		send "dm-send-peer $peer1_2 hello$i" to p1
-		expect /dm-sent from Owner1 text hello$i/ from p1
-		expect /dm-received from Owner1 text hello$i/ from p2
+		expect /dm-sent from Owner1 new no text hello$i/ from p1
+		expect /dm-received from Owner1 new yes text hello$i/ from p2
 		send "dm-send-peer $peer2_1 hi$i" to p2
-		expect /dm-sent from Owner2 text hi$i/ from p2
-		expect /dm-received from Owner2 text hi$i/ from p1
+		expect /dm-sent from Owner2 new no text hi$i/ from p2
+		expect /dm-received from Owner2 new yes text hi$i/ from p1
 
 	# Create contacts
 
@@ -71,32 +71,32 @@ test DirectMessage:
 
 	for i in [1..2]:
 		send "dm-send-contact $c1_2 hello_c_$i" to p1
-		expect /dm-sent from Owner1 text hello_c_$i/ from p1
-		expect /dm-received from Owner1 text hello_c_$i/ from p2
+		expect /dm-sent from Owner1 new no text hello_c_$i/ from p1
+		expect /dm-received from Owner1 new yes text hello_c_$i/ from p2
 
 	for i in [1..2]:
 		send "dm-send-contact $c2_1 hi_c_$i" to p2
-		expect /dm-sent from Owner2 text hi_c_$i/ from p2
-		expect /dm-received from Owner2 text hi_c_$i/ from p1
+		expect /dm-sent from Owner2 new no text hi_c_$i/ from p2
+		expect /dm-received from Owner2 new yes text hi_c_$i/ from p1
 
 	for i in [3..4]:
 		send "dm-send-contact $c1_2 hello_c_$i" to p1
-		expect /dm-sent from Owner1 text hello_c_$i/ from p1
-		expect /dm-received from Owner1 text hello_c_$i/ from p2
+		expect /dm-sent from Owner1 new no text hello_c_$i/ from p1
+		expect /dm-received from Owner1 new yes text hello_c_$i/ from p2
 		send "dm-send-contact $c2_1 hi_c_$i" to p2
-		expect /dm-sent from Owner2 text hi_c_$i/ from p2
-		expect /dm-received from Owner2 text hi_c_$i/ from p1
+		expect /dm-sent from Owner2 new no text hi_c_$i/ from p2
+		expect /dm-received from Owner2 new yes text hi_c_$i/ from p1
 
 	send "dm-list-contact $c1_2" to p1
 	send "dm-list-contact $c2_1" to p2
 	for p in [p1, p2]:
 		with p:
 			for i in [1..4]:
-				expect /dm-list-item from Owner1 text hello_c_$i/
-				expect /dm-list-item from Owner2 text hi_c_$i/
+				expect /dm-list-item from Owner1 new [a-z]+ text hello_c_$i/
+				expect /dm-list-item from Owner2 new [a-z]+ text hi_c_$i/
 			for i in [1..4]:
-				expect /dm-list-item from Owner1 text hello$i/
-				expect /dm-list-item from Owner2 text hi$i/
+				expect /dm-list-item from Owner1 new [a-z]+ text hello$i/
+				expect /dm-list-item from Owner2 new [a-z]+ text hi$i/
 			expect /dm-list-(.*)/ capture done
 			guard (done == "done")
 
@@ -124,11 +124,11 @@ test DirectMessage:
 	for p in [p1, p2]:
 		with p:
 			for i in [1..4]:
-				expect /dm-list-item from Owner1 text hello_c_$i/
-				expect /dm-list-item from Owner2 text hi_c_$i/
+				expect /dm-list-item from Owner1 new [a-z]+ text hello_c_$i/
+				expect /dm-list-item from Owner2 new [a-z]+ text hi_c_$i/
 			for i in [1..4]:
-				expect /dm-list-item from Owner1 text hello$i/
-				expect /dm-list-item from Owner2 text hi$i/
+				expect /dm-list-item from Owner1 new [a-z]+ text hello$i/
+				expect /dm-list-item from Owner2 new [a-z]+ text hi$i/
 			expect /dm-list-(.*)/ capture done
 			guard (done == "done")
 
@@ -143,10 +143,10 @@ test DirectMessage:
 	send "start-server services $services" to p2
 
 	send "dm-send-contact $c1_2 while_offline" to p1
-	expect /dm-sent from Owner1 text while_offline/ from p1
+	expect /dm-sent from Owner1 new no text while_offline/ from p1
 	send "start-server services $services" to p1
 
-	expect /dm-received from Owner1 text while_offline/ from p2
+	expect /dm-received from Owner1 new yes text while_offline/ from p2
 
 	for p in [p1, p2]:
 		with p:
@@ -157,10 +157,10 @@ test DirectMessage:
 	send "start-server services $services" to p1
 
 	send "dm-send-contact $c1_2 while_peer_offline" to p1
-	expect /dm-sent from Owner1 text while_peer_offline/ from p1
+	expect /dm-sent from Owner1 new no text while_peer_offline/ from p1
 	send "start-server services $services" to p2
 
-	expect /dm-received from Owner1 text while_peer_offline/ from p2
+	expect /dm-received from Owner1 new yes text while_peer_offline/ from p2
 
 
 test DirectMessageDiscovery:
@@ -221,9 +221,9 @@ test DirectMessageDiscovery:
 	for i in [ 1 .. 3 ]:
 		send "dm-send-peer $i init1" to p1
 	for p in [ p2, p3, p4 ]:
-		expect /dm-received from Owner1 text init1/ from p
+		expect /dm-received from Owner1 new yes text init1/ from p
 		send "dm-send-identity $p1_owner init2" to p
-		expect /dm-received from Owner. text init2/ from p1
+		expect /dm-received from Owner. new yes text init2/ from p1
 
 	# Restart servers to remove peers:
 	for p in [ p1, p2, p3, p4 ]:
@@ -258,16 +258,83 @@ test DirectMessageDiscovery:
 		/peer [0-9]+ addr ${p2.node.ip} 29665/
 		/peer [0-9]+ id Device2 Owner2/
 	send "dm-send-identity $p2_owner hello_to_p2" to p1
-	expect /dm-received from Owner1 text hello_to_p2/ from p2
+	expect /dm-received from Owner1 new yes text hello_to_p2/ from p2
 
 	# Send message, expect automatic discovery
 	send "dm-send-identity $p3_owner hello_to_p3" to p1
-	expect /dm-received from Owner1 text hello_to_p3/ from p3
+	expect /dm-received from Owner1 new yes text hello_to_p3/ from p3
 
 	# Verify the first message
-	expect /dm-received from Owner1 text hello_to_p4/ from p4
+	expect /dm-received from Owner1 new yes text hello_to_p4/ from p4
 
 	for p in [ p1, p2, p3, p4, pd ]:
 		send "stop-server" to p
 	for p in [ p1, p2, p3, p4, pd ]:
 		expect /stop-server-done/ from p
+
+
+test DirectMessageSeen:
+	let services = "dm,attach,sync"
+
+	spawn as p1
+	spawn as p2
+
+	send "create-identity Device1 Owner1" to p1
+	expect /create-identity-done ref ($refpat)/ from p1 capture p1id
+	send "identity-info $p1id" to p1
+	expect /identity-info ref $p1id base ($refpat) owner ($refpat).*/ from p1 capture p1base, p1owner
+
+	send "create-identity Device2 Owner2" to p2
+	expect /create-identity-done ref ($refpat)/ from p2 capture p2id
+	send "identity-info $p2id" to p2
+	expect /identity-info ref $p2id base ($refpat) owner ($refpat).*/ from p2 capture p2base, p2owner
+
+	send "start-server services $services" to p1
+	send "start-server services $services" to p2
+
+	expect from p1:
+		/peer ([0-9]+) addr ${p2.node.ip} 29665/ capture peer1_2
+		/peer $peer1_2 id Device2 Owner2/
+
+	expect from p2:
+		/peer ([0-9]+) addr ${p1.node.ip} 29665/ capture peer2_1
+		/peer $peer2_1 id Device1 Owner1/
+
+	for i in [ 1 .. 2 ]:
+		send "dm-send-peer $peer1_2 msg_a_$i" to p1
+		expect /dm-sent from Owner1 new no text msg_a_$i/ from p1
+		expect /dm-received from Owner1 new yes text msg_a_$i/ from p2
+
+	for i in [ 1 .. 2 ]:
+		send "dm-send-peer $peer2_1 msg_b_$i" to p2
+		expect /dm-sent from Owner2 new no text msg_b_$i/ from p2
+		expect /dm-received from Owner2 new yes text msg_b_$i/ from p1
+
+	send "dm-list-identity $p2owner" to p1
+	send "dm-list-identity $p1owner" to p2
+	for i in [ 1 .. 2 ]:
+		expect /dm-list-item from Owner1 new no text msg_a_$i/ from p1
+		expect /dm-list-item from Owner1 new no text msg_a_$i/ from p2
+	for i in [ 1 .. 2 ]:
+		expect /dm-list-item from Owner2 new yes text msg_b_$i/ from p1
+		expect /dm-list-item from Owner2 new no text msg_b_$i/ from p2
+	for p in [ p1, p2 ]:
+		expect /dm-list-(.*)/ from p capture done
+		guard (done == "done")
+
+	send "dm-mark-seen $p2owner" to p1
+	expect /dm-mark-seen-done $p2owner/ from p1
+	send "dm-mark-seen $p1owner" to p2
+	expect /dm-mark-seen-done $p1owner/ from p2
+
+	send "dm-list-identity $p2owner" to p1
+	send "dm-list-identity $p1owner" to p2
+	for i in [1..2]:
+		expect /dm-list-item from Owner1 new no text msg_a_$i/ from p1
+		expect /dm-list-item from Owner1 new no text msg_a_$i/ from p2
+	for i in [1..2]:
+		expect /dm-list-item from Owner2 new no text msg_b_$i/ from p1
+		expect /dm-list-item from Owner2 new no text msg_b_$i/ from p2
+	for p in [ p1, p2 ]:
+		expect /dm-list-(.*)/ from p capture done
+		guard (done == "done")
