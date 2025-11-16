@@ -268,12 +268,13 @@ inviteAttributes out = (defaultServiceAttributes Proxy)
 
 dmThreadWatcher :: ComposedIdentity -> Output -> DirectMessageThread -> DirectMessageThread -> IO ()
 dmThreadWatcher self out prev cur = do
-    forM_ (reverse $ dmThreadToListSince prev cur) $ \msg -> do
+    forM_ (reverse $ dmThreadToListSinceUnread prev cur) $ \( msg, new ) -> do
         outLine out $ unwords
             [ if sameIdentity self (msgFrom msg)
                  then "dm-sent"
                  else "dm-received"
             , "from", maybe "<unnamed>" T.unpack $ idName $ msgFrom msg
+            , "new", if new then "yes" else "no"
             , "text", T.unpack $ msgText msg
             ]
 
@@ -347,6 +348,8 @@ commands =
     , ( "dm-send-identity", cmdDmSendIdentity )
     , ( "dm-list-peer", cmdDmListPeer )
     , ( "dm-list-contact", cmdDmListContact )
+    , ( "dm-list-identity", cmdDmListIdentity )
+    , ( "dm-mark-seen", cmdDmMarkSeen )
     , ( "chatroom-create", cmdChatroomCreate )
     , ( "chatroom-delete", cmdChatroomDelete )
     , ( "chatroom-list-local", cmdChatroomListLocal )
@@ -934,8 +937,9 @@ dmList peer = do
     threads <- dmThreadList . lookupSharedValue . lsShared . headObject <$> getHead
     case find (sameIdentity peer . msgPeer) threads of
         Just thread -> do
-            forM_ (reverse $ dmThreadToList thread) $ \DirectMessage {..} -> cmdOut $ "dm-list-item"
+            forM_ (reverse $ dmThreadToListUnread thread) $ \( DirectMessage {..}, new ) -> cmdOut $ "dm-list-item"
                 <> " from " <> (maybe "<unnamed>" T.unpack $ idName msgFrom)
+                <> " new " <> (if new then "yes" else "no")
                 <> " text " <> (T.unpack msgText)
         Nothing -> return ()
     cmdOut "dm-list-done"
@@ -951,6 +955,23 @@ cmdDmListContact = do
     [cid] <- asks tiParams
     Just to <- contactIdentity <$> getContact cid
     dmList to
+
+cmdDmListIdentity :: Command
+cmdDmListIdentity = do
+    st <- asks tiStorage
+    [ tid ] <- asks tiParams
+    Just ref <- liftIO $ readRef st $ encodeUtf8 tid
+    Just pid <- return $ validateExtendedIdentity $ wrappedLoad ref
+    dmList pid
+
+cmdDmMarkSeen :: Command
+cmdDmMarkSeen = do
+    st <- asks tiStorage
+    [ tid ] <- asks tiParams
+    Just ref <- liftIO $ readRef st $ encodeUtf8 tid
+    Just pid <- return $ validateExtendedIdentity $ wrappedLoad ref
+    dmMarkAsSeen pid
+    cmdOut $ unwords [ "dm-mark-seen-done", T.unpack tid ]
 
 cmdChatroomCreate :: Command
 cmdChatroomCreate = do

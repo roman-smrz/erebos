@@ -1,6 +1,7 @@
 module Erebos.DirectMessage (
     DirectMessage(..),
     sendDirectMessage,
+    dmMarkAsSeen,
     updateDirectMessagePeer,
     createOrUpdateDirectMessagePeer,
 
@@ -11,7 +12,7 @@ module Erebos.DirectMessage (
     dmThreadList,
 
     DirectMessageThread(..),
-    dmThreadToList, dmThreadToListSince,
+    dmThreadToList, dmThreadToListSince, dmThreadToListUnread, dmThreadToListSinceUnread,
     dmThreadView,
 
     watchDirectMessageThreads,
@@ -202,6 +203,23 @@ sendDirectMessage pid text = updateLocalState_ $ \ls -> do
             }
         return $ DirectMessageThreads [ next ] (dmThreadView [ next ])
 
+dmMarkAsSeen
+    :: (Foldable f, Applicative f, MonadHead LocalState m)
+    => Identity f -> m ()
+dmMarkAsSeen pid = do
+    updateLocalState_ $ updateSharedState_ $ \(DirectMessageThreads prev _) -> do
+        let powner = finalOwner pid
+            received = findMsgProperty powner msReceived prev
+        next <- mstore MessageState
+            { msPrev = prev
+            , msPeer = powner
+            , msReady = []
+            , msSent = []
+            , msReceived = []
+            , msSeen = received
+            }
+        return $ DirectMessageThreads [ next ] (dmThreadView [ next ])
+
 updateDirectMessagePeer
     :: (Foldable f, Applicative f, MonadHead LocalState m)
     => Identity f -> m ()
@@ -285,15 +303,21 @@ data DirectMessageThread = DirectMessageThread
     }
 
 dmThreadToList :: DirectMessageThread -> [ DirectMessage ]
-dmThreadToList thread = threadToListHelper S.empty $ msgHead thread
+dmThreadToList thread = map fst $ threadToListHelper (msgSeen thread) S.empty $ msgHead thread
 
 dmThreadToListSince :: DirectMessageThread -> DirectMessageThread -> [ DirectMessage ]
-dmThreadToListSince since thread = threadToListHelper (S.fromAscList $ msgHead since) (msgHead thread)
+dmThreadToListSince since thread = map fst $ threadToListHelper (msgSeen thread) (S.fromAscList $ msgHead since) (msgHead thread)
 
-threadToListHelper :: Set (Stored DirectMessage) -> [ Stored DirectMessage ] -> [ DirectMessage ]
-threadToListHelper seen msgs
-    | msg : msgs' <- filter (`S.notMember` seen) $ reverse $ sortBy (comparing cmpView) msgs =
-        fromStored msg : threadToListHelper (S.insert msg seen) (msgs' ++ msgPrev (fromStored msg))
+dmThreadToListUnread :: DirectMessageThread -> [ ( DirectMessage, Bool ) ]
+dmThreadToListUnread thread = threadToListHelper (msgSeen thread) S.empty $ msgHead thread
+
+dmThreadToListSinceUnread :: DirectMessageThread -> DirectMessageThread -> [ ( DirectMessage, Bool ) ]
+dmThreadToListSinceUnread since thread = threadToListHelper (msgSeen thread) (S.fromAscList $ msgHead since) (msgHead thread)
+
+threadToListHelper :: [ Stored DirectMessage ] -> Set (Stored DirectMessage) -> [ Stored DirectMessage ] -> [ ( DirectMessage, Bool ) ]
+threadToListHelper seen used msgs
+    | msg : msgs' <- filter (`S.notMember` used) $ reverse $ sortBy (comparing cmpView) msgs =
+        ( fromStored msg, not $ any (msg `precedesOrEquals`) seen ) : threadToListHelper seen (S.insert msg used) (msgs' ++ msgPrev (fromStored msg))
     | otherwise = []
   where
     cmpView msg = (zonedTimeToUTC $ msgTime $ fromStored msg, msg)
