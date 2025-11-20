@@ -40,12 +40,10 @@ import Erebos.State
 import Erebos.Storable
 
 
-data Message = DirectMessageMessage DirectMessage Bool
-             | ChatroomMessage ChatMessage Bool
+data Message = forall conv msg. ConversationType conv msg => Message msg Bool
 
 withMessage :: (forall conv msg. ConversationType conv msg => msg -> a) -> Message -> a
-withMessage f (DirectMessageMessage msg _) = f msg
-withMessage f (ChatroomMessage msg _) = f msg
+withMessage f (Message msg _) = f msg
 
 messageFrom :: Message -> ComposedIdentity
 messageFrom = withMessage convMessageFrom
@@ -57,20 +55,25 @@ messageText :: Message -> Maybe Text
 messageText = withMessage convMessageText
 
 messageUnread :: Message -> Bool
-messageUnread (DirectMessageMessage _ unread) = unread
-messageUnread (ChatroomMessage _ unread) = unread
+messageUnread (Message _ unread) = unread
 
 formatMessage :: TimeZone -> Message -> String
 formatMessage tzone msg = concat
-    [ formatTime defaultTimeLocale "[%H:%M] " $ utcToLocalTime tzone $ zonedTimeToUTC $ messageTime msg
+    [ if messageUnread msg then "\ESC[93m" else ""
+    , formatTime defaultTimeLocale "[%H:%M] " $ utcToLocalTime tzone $ zonedTimeToUTC $ messageTime msg
     , maybe "<unnamed>" T.unpack $ idName $ messageFrom msg
     , maybe "" ((": "<>) . T.unpack) $ messageText msg
+    , if messageUnread msg then "\ESC[0m" else ""
     ]
 
 
 data Conversation
     = DirectMessageConversation DirectMessageThread
     | ChatroomConversation ChatroomState
+
+withConversation :: (forall conv msg. ConversationType conv msg => conv -> a) -> Conversation -> a
+withConversation f (DirectMessageConversation conv) = f conv
+withConversation f (ChatroomConversation conv) = f conv
 
 isSameConversation :: Conversation -> Conversation -> Bool
 isSameConversation (DirectMessageConversation t) (DirectMessageConversation t')
@@ -113,8 +116,7 @@ conversationPeer (DirectMessageConversation thread) = Just $ msgPeer thread
 conversationPeer (ChatroomConversation _) = Nothing
 
 conversationHistory :: Conversation -> [ Message ]
-conversationHistory (DirectMessageConversation thread) = map (\msg -> DirectMessageMessage msg False) $ dmThreadToList thread
-conversationHistory (ChatroomConversation rstate) = map (\msg -> ChatroomMessage msg False) $ roomStateMessages rstate
+conversationHistory = withConversation $ map (uncurry Message) . convMessageListSince Nothing
 
 
 sendMessage :: (MonadHead LocalState m, MonadError e m, FromErebosError e) => Conversation -> Text -> m ()

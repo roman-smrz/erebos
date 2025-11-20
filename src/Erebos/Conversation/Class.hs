@@ -13,3 +13,4 @@ class (Typeable conv, Typeable msg) => ConversationType conv msg | conv -> msg, 
     convMessageFrom :: msg -> ComposedIdentity
     convMessageTime :: msg -> ZonedTime
     convMessageText :: msg -> Maybe Text
+    convMessageListSince :: Maybe conv -> conv -> [ ( msg, Bool ) ]

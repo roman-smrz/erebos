@@ -50,6 +50,9 @@ instance ConversationType DirectMessageThread DirectMessage where
     convMessageTime = msgTime
     convMessageText = Just . msgText
 
+    convMessageListSince mbSince thread =
+        threadToListHelper (msgSeen thread) (maybe S.empty (S.fromAscList . msgHead) mbSince) (msgHead thread)
+
 
 data DirectMessage = DirectMessage
     { msgFrom :: ComposedIdentity
