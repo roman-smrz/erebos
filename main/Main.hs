@@ -737,6 +737,10 @@ cmdSelectContext = do
             when (not (roomStateSubscribe rstate)) $ do
                 chatroomSetSubscribe (head $ roomStateData rstate) True
         _ -> return ()
+    handleError (\_ -> return ()) $ do
+        conv <- getConversationFromContext ctx
+        tzone <- liftIO $ getCurrentTimeZone
+        mapM_ (cmdPutStrLn . formatMessage tzone) $ takeWhile messageUnread $ conversationHistory conv
 
 cmdSend :: Command
 cmdSend = void $ do
