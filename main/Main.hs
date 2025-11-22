@@ -621,6 +621,7 @@ commands =
     , ( "contact-accept", cmdContactAccept )
     , ( "contact-reject", cmdContactReject )
     , ( "conversations", cmdConversations )
+    , ( "new", cmdNew )
     , ( "details", cmdDetails )
     , ( "discovery", cmdDiscovery )
     , ( "join", cmdJoin )
@@ -958,6 +959,22 @@ cmdConversations = do
     set WatchConversations $ map SelectedConversation conversations
     forM_ (zip [1..] conversations) $ \(i :: Int, conv) -> do
         cmdPutStrLn $ "[" ++ show i ++ "] " ++ T.unpack (conversationName conv)
+
+cmdNew :: Command
+cmdNew = do
+    conversations <- mapMaybe checkNew <$> lookupConversations
+    set <- asks ciSetContextOptions
+    set WatchConversations $ map (SelectedConversation . fst) conversations
+    tzone <- liftIO $ getCurrentTimeZone
+    forM_ (zip [1..] conversations) $ \(i :: Int, ( conv, msg )) -> do
+        cmdPutStrLn $ "[" ++ show i ++ "] " ++ T.unpack (conversationName conv) ++ " " ++ formatMessage tzone msg
+  where
+    checkNew conv
+        | (msg : _) <- conversationHistory conv
+        , messageUnread msg
+        = Just ( conv, msg )
+    checkNew _ = Nothing
+
 
 cmdDetails :: Command
 cmdDetails = do

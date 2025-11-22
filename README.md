@@ -95,6 +95,9 @@ Test chatroom [19:03] Some Name: Hi
 `/conversations`  
 : List started conversations with contacts or other peers.
 
+`/new`
+: List conversations with new (unread) messages.
+
 `/<number>`  
 : Select conversation, contact or peer `<number>` based on the last
   `/conversations`, `/contacts` or `/peers` output list.
