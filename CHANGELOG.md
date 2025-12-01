@@ -11,7 +11,7 @@
     * Print received messages only for selected conversation
     * Clear tab completion options after use
 
-* API
+* Library API
     * Split `Erebos.Storage` into multiple modules
     * Removed deprecated `Message.formatMessage` alias
     * Renamed `Erebos.Message` module to `Erebos.DirectMessage`
