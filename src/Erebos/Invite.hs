@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Erebos.Invite (
     Invite(..),
     InviteData(..),
@@ -23,6 +25,7 @@ import Data.ByteString.Char8 qualified as BC
 import Data.Foldable
 import Data.Ord
 import Data.Text (Text)
+import Data.Text qualified as T
 import Data.Text.Encoding
 
 import Erebos.Contact
@@ -140,9 +143,19 @@ data InviteServiceAttributes = InviteServiceAttributes
 
 defaultInviteServiceAttributes :: InviteServiceAttributes
 defaultInviteServiceAttributes = InviteServiceAttributes
-    { inviteHookAccepted = \_ -> return ()
-    , inviteHookReplyContact = \_ _ -> return ()
-    , inviteHookReplyInvalid = \_ -> return ()
+    { inviteHookAccepted = \token -> do
+        pid <- asks $ svcPeerIdentity
+        svcPrint $ T.unpack $ "Invite accepted by " <> displayIdentity pid
+            <> " (token: " <> textInviteToken token <> ")"
+    , inviteHookReplyContact = \token mbName -> do
+        pid <- asks $ svcPeerIdentity
+        svcPrint $ T.unpack $ "Invite confirmed by " <> displayIdentity pid
+            <> (maybe "" (" with name " <>) mbName)
+            <> " (token: " <> textInviteToken token <> ")"
+    , inviteHookReplyInvalid = \token -> do
+        pid <- asks $ svcPeerIdentity
+        svcPrint $ T.unpack $ "Invite rejected as invalid by " <> displayIdentity pid
+            <> " (token: " <> textInviteToken token <> ")"
     }
 
 instance Storable InviteService where
@@ -207,7 +220,6 @@ instance Service InviteService where
         InvalidInvite token -> do
             asks (inviteHookReplyInvalid . svcAttributes) >>= ($ token)
             svcModify $ filter (/= token)
-            svcPrint $ "Invite " <> BC.unpack (showHex token) <> " rejected as invalid"
 
         ContactInvite token mbName -> do
             asks (inviteHookReplyContact . svcAttributes) >>= ($ mbName) . ($ token)

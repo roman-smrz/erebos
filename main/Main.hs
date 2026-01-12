@@ -37,12 +37,13 @@ import System.Exit
 import System.IO
 
 import Erebos.Attach
-import Erebos.Contact
 import Erebos.Chatroom
+import Erebos.Contact
 import Erebos.Conversation
 import Erebos.DirectMessage
 import Erebos.Discovery
 import Erebos.Identity
+import Erebos.Invite
 import Erebos.Network
 import Erebos.Object
 import Erebos.PubKey
@@ -111,6 +112,8 @@ availableServices =
         True "direct messages"
     , ServiceOption "discovery" (someService @DiscoveryService Proxy)
         True "peer discovery"
+    , ServiceOption "invite" (someService @InviteService Proxy)
+        True "invites handling"
     ]
 
 options :: [ OptDescr (Options -> Writer [ String ] Options) ]
