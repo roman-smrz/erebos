@@ -1,6 +1,7 @@
 module Erebos.Invite (
     Invite(..),
     InviteData(..),
+    InviteToken, showInviteToken, textInviteToken, parseInviteToken,
     InviteService,
     InviteServiceAttributes(..),
 
@@ -16,11 +17,13 @@ import Control.Monad.Reader
 
 import Crypto.Random
 
+import Data.ByteArray (ByteArray, ByteArrayAccess)
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as BC
 import Data.Foldable
 import Data.Ord
 import Data.Text (Text)
+import Data.Text.Encoding
 
 import Erebos.Contact
 import Erebos.Identity
@@ -37,14 +40,14 @@ import Erebos.Util
 
 data Invite = Invite
     { inviteData :: [ Stored InviteData ]
-    , inviteToken :: Maybe ByteString
+    , inviteToken :: Maybe InviteToken
     , inviteAccepted :: [ Stored (Signed ExtendedIdentityData) ]
     , inviteContact :: Maybe Text
     }
 
 data InviteData = InviteData
     { invdPrev :: [ Stored InviteData ]
-    , invdToken :: Maybe ByteString
+    , invdToken :: Maybe InviteToken
     , invdAccepted :: Maybe (Stored (Signed ExtendedIdentityData))
     , invdContact :: Maybe Text
     }
@@ -61,6 +64,19 @@ instance Storable InviteData where
         <*> loadMbBinary "token"
         <*> loadMbRef "accepted"
         <*> loadMbText "contact"
+
+
+newtype InviteToken = InviteToken ByteString
+    deriving (Eq, Ord, Semigroup, Monoid, ByteArray, ByteArrayAccess)
+
+showInviteToken :: InviteToken -> String
+showInviteToken (InviteToken token) = BC.unpack (showHex token)
+
+textInviteToken :: InviteToken -> Text
+textInviteToken (InviteToken token) = decodeUtf8 (showHex token)
+
+parseInviteToken :: Text -> Maybe InviteToken
+parseInviteToken text = InviteToken <$> (readHex $ encodeUtf8 text)
 
 
 instance Mergeable Invite where
@@ -95,7 +111,7 @@ createSingleContactInvite name = do
 identityOwnerDigests :: Foldable f => Identity f -> [ RefDigest ]
 identityOwnerDigests pid = map (refDigest . storedRef) $ concatMap toList $ toList $ generations $ idExtDataF $ finalOwner pid
 
-acceptInvite :: (MonadIO m, MonadError e m, FromErebosError e) => Server -> RefDigest -> ByteString -> m ()
+acceptInvite :: (MonadIO m, MonadError e m, FromErebosError e) => Server -> RefDigest -> InviteToken -> m ()
 acceptInvite server from token = do
     let matchPeer peer = do
             getPeerIdentity peer >>= \case
@@ -111,15 +127,15 @@ acceptInvite server from token = do
 
 
 data InviteService
-    = AcceptInvite ByteString
-    | InvalidInvite ByteString
-    | ContactInvite ByteString (Maybe Text)
+    = AcceptInvite InviteToken
+    | InvalidInvite InviteToken
+    | ContactInvite InviteToken (Maybe Text)
     | UnknownInvitePacket
 
 data InviteServiceAttributes = InviteServiceAttributes
-    { inviteHookAccepted :: ByteString -> ServiceHandler InviteService ()
-    , inviteHookReplyContact :: ByteString -> Maybe Text -> ServiceHandler InviteService ()
-    , inviteHookReplyInvalid :: ByteString -> ServiceHandler InviteService ()
+    { inviteHookAccepted :: InviteToken -> ServiceHandler InviteService ()
+    , inviteHookReplyContact :: InviteToken -> Maybe Text -> ServiceHandler InviteService ()
+    , inviteHookReplyInvalid :: InviteToken -> ServiceHandler InviteService ()
     }
 
 defaultInviteServiceAttributes :: InviteServiceAttributes
@@ -151,7 +167,7 @@ instance Storable InviteService where
 instance Service InviteService where
     serviceID _ = mkServiceID "70bff715-6856-43a0-8c58-007a06a26eb1"
 
-    type ServiceState InviteService = [ ByteString ] -- accepted invites, waiting for reply
+    type ServiceState InviteService = [ InviteToken ] -- accepted invites, waiting for reply
     emptyServiceState _ = []
 
     type ServiceAttributes InviteService = InviteServiceAttributes

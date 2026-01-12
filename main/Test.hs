@@ -15,12 +15,10 @@ import Control.Monad.State
 import Crypto.Random
 
 import Data.Bool
-import Data.ByteString (ByteString)
 import Data.ByteString qualified as B
 import Data.ByteString.Char8 qualified as BC
 import Data.ByteString.Lazy qualified as BL
 import Data.ByteString.Lazy.Char8 qualified as BL
-import Data.Char
 import Data.Foldable
 import Data.Ord
 import Data.Text (Text)
@@ -131,26 +129,6 @@ getHead = do
     modify $ \s -> s { tsHead = Just h }
     return h
 
-showHex :: ByteString -> ByteString
-showHex = B.concat . map showHexByte . B.unpack
-    where showHexChar x | x < 10    = x + o '0'
-                        | otherwise = x + o 'a' - 10
-          showHexByte x = B.pack [ showHexChar (x `div` 16), showHexChar (x `mod` 16) ]
-          o = fromIntegral . ord
-
-readHex :: ByteString -> Maybe ByteString
-readHex = return . B.concat <=< readHex'
-    where readHex' bs | B.null bs = Just []
-          readHex' bs = do (bx, bs') <- B.uncons bs
-                           (by, bs'') <- B.uncons bs'
-                           x <- hexDigit bx
-                           y <- hexDigit by
-                           (B.singleton (x * 16 + y) :) <$> readHex' bs''
-          hexDigit x | x >= o '0' && x <= o '9' = Just $ x - o '0'
-                     | x >= o 'a' && x <= o 'z' = Just $ x - o 'a' + 10
-                     | otherwise                = Nothing
-          o = fromIntegral . ord
-
 
 type Output = MVar ()
 
@@ -259,11 +237,11 @@ inviteAttributes :: Output -> InviteServiceAttributes
 inviteAttributes out = (defaultServiceAttributes Proxy)
     { inviteHookAccepted = \token -> do
         pid <- asks svcPeerIdentity
-        afterCommit $ outLine out $ "invite-accepted " <> BC.unpack (showHex token) <> " " <> (BC.unpack $ showRef $ storedRef $ idExtData pid)
+        afterCommit $ outLine out $ "invite-accepted " <> showInviteToken token <> " " <> (BC.unpack $ showRef $ storedRef $ idExtData pid)
     , inviteHookReplyContact = \token _ -> do
-        afterCommit $ outLine out $ "invite-accept-done " <> BC.unpack (showHex token) <> " contact"
+        afterCommit $ outLine out $ "invite-accept-done " <> showInviteToken token <> " contact"
     , inviteHookReplyInvalid = \token -> do
-        afterCommit $ outLine out $ "invite-accept-done " <> BC.unpack (showHex token) <> " invalid"
+        afterCommit $ outLine out $ "invite-accept-done " <> showInviteToken token <> " invalid"
     }
 
 dmThreadWatcher :: ComposedIdentity -> Output -> DirectMessageThread -> DirectMessageThread -> IO ()
@@ -1106,12 +1084,12 @@ cmdInviteContactCreate :: Command
 cmdInviteContactCreate = do
     [ name ] <- asks tiParams
     Just token <- inviteToken <$> createSingleContactInvite name
-    cmdOut $ unwords [ "invite-contact-create-done", BC.unpack (showHex token) ]
+    cmdOut $ unwords [ "invite-contact-create-done", showInviteToken token ]
 
 cmdInviteAccept :: Command
 cmdInviteAccept = do
     [ tokenText, idref ] <- asks tiParams
-    Just token <- return $ readHex $ encodeUtf8 tokenText
+    Just token <- return $ parseInviteToken tokenText
     Just from <- return $ readRefDigest $ encodeUtf8 idref
     Just RunningServer {..} <- gets tsServer
     acceptInvite rsServer from token
