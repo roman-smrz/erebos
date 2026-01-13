@@ -188,13 +188,13 @@ instance Service InviteService where
 
     serviceHandler = fromStored >>> \case
         AcceptInvite token -> do
-            asks (inviteHookAccepted . svcAttributes) >>= ($ token)
             invites <- fromSetBy (comparing inviteToken) . lookupSharedValue . lsShared . fromStored <$> getLocalHead
             case find ((Just token ==) . inviteToken) invites of
                 Just invite
                     | Just name <- inviteContact invite
                     , [] <- inviteAccepted invite
                     -> do
+                        asks (inviteHookAccepted . svcAttributes) >>= ($ token)
                         identity <- asks svcPeerIdentity
                         cdata <- mstore ContactData
                             { cdPrev = []

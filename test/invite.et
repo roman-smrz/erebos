@@ -62,8 +62,6 @@ test InviteContact:
         guard (done == "done")
 
     with p1:
-        expect /invite-accepted 00 $p2id/
-        expect /invite-accepted $token $p2id/
         expect /invite-accepted $token $p2id/
 
         send "contact-list"
