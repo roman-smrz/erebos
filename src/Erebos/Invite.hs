@@ -136,17 +136,17 @@ data InviteService
     | UnknownInvitePacket
 
 data InviteServiceAttributes = InviteServiceAttributes
-    { inviteHookAccepted :: InviteToken -> ServiceHandler InviteService ()
+    { inviteHookAccepted :: Invite -> ServiceHandler InviteService ()
     , inviteHookReplyContact :: InviteToken -> Maybe Text -> ServiceHandler InviteService ()
     , inviteHookReplyInvalid :: InviteToken -> ServiceHandler InviteService ()
     }
 
 defaultInviteServiceAttributes :: InviteServiceAttributes
 defaultInviteServiceAttributes = InviteServiceAttributes
-    { inviteHookAccepted = \token -> do
+    { inviteHookAccepted = \Invite {..} -> do
         pid <- asks $ svcPeerIdentity
-        svcPrint $ T.unpack $ "Invite accepted by " <> displayIdentity pid
-            <> " (token: " <> textInviteToken token <> ")"
+        svcPrint $ T.unpack $ "Invite" <> maybe "" ((" for “" <>) . (<> "”")) inviteContact <> " accepted by " <> displayIdentity pid
+            <> " (token: " <> maybe "??" textInviteToken inviteToken <> ")"
     , inviteHookReplyContact = \token mbName -> do
         pid <- asks $ svcPeerIdentity
         svcPrint $ T.unpack $ "Invite confirmed by " <> displayIdentity pid
@@ -194,7 +194,7 @@ instance Service InviteService where
                     | Just name <- inviteContact invite
                     , [] <- inviteAccepted invite
                     -> do
-                        asks (inviteHookAccepted . svcAttributes) >>= ($ token)
+                        asks (inviteHookAccepted . svcAttributes) >>= ($ invite)
                         identity <- asks svcPeerIdentity
                         cdata <- mstore ContactData
                             { cdPrev = []

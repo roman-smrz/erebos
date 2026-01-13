@@ -235,9 +235,9 @@ discoveryAttributes = (defaultServiceAttributes Proxy)
 
 inviteAttributes :: Output -> InviteServiceAttributes
 inviteAttributes out = (defaultServiceAttributes Proxy)
-    { inviteHookAccepted = \token -> do
+    { inviteHookAccepted = \Invite {..} -> do
         pid <- asks svcPeerIdentity
-        afterCommit $ outLine out $ "invite-accepted " <> showInviteToken token <> " " <> (BC.unpack $ showRef $ storedRef $ idExtData pid)
+        afterCommit $ outLine out $ "invite-accepted " <> maybe "<missing-token>" showInviteToken inviteToken <> " " <> (BC.unpack $ showRef $ storedRef $ idExtData pid)
     , inviteHookReplyContact = \token _ -> do
         afterCommit $ outLine out $ "invite-accept-done " <> showInviteToken token <> " contact"
     , inviteHookReplyInvalid = \token -> do
