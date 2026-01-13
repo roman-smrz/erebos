@@ -150,7 +150,7 @@ are signed, so message author can not be forged.
   history, but the chatroom will no longer be listed as available and no futher
   updates for this chatroom will be collected or shared with other peers.
 
-### Add contacts
+### Contact list
 
 To ensure the identity of the contact and prevent man-in-the-middle attack,
 generated verification code needs to be confirmed on both devices to add
@@ -174,6 +174,17 @@ new contact, list peers using `/peers` command and select one with `/<number>`.
 
 `/contact-reject`  
 : Reject contact request or verification code of selected peer.
+
+`/invite-contact <name>`
+: Create an invite in the form of URL, which can be sent via means outside of
+  the erebos protocol. The recipient can accept it using the `invite-accept`
+  command. After accepting, contact entry is created with the given `<name>`.
+  The created invite can be used only once.
+
+`/invite-accept <URL>`
+: Accept received URL-formatted invite. The erebos tool will try to find and
+  connect to a device belonging to the issuing identity to confirm the invite.
+  If successful, corresponding contact entry will be created.
 
 ### Attach other devices
 

@@ -623,6 +623,8 @@ commands =
     , ( "contact-add", cmdContactAdd )
     , ( "contact-accept", cmdContactAccept )
     , ( "contact-reject", cmdContactReject )
+    , ( "invite-contact", cmdInviteContact )
+    , ( "invite-accept", cmdInviteAccept )
     , ( "conversations", cmdConversations )
     , ( "new", cmdNew )
     , ( "details", cmdDetails )
@@ -954,6 +956,45 @@ cmdContactAccept = contactAccept =<< getSelectedPeer
 
 cmdContactReject :: Command
 cmdContactReject = contactReject =<< getSelectedPeer
+
+cmdInviteContact :: Command
+cmdInviteContact = do
+    term <- asks ciTerminal
+    name <- asks ciLine >>= \case
+        line | not (null line) -> return $ T.pack line
+        _ -> liftIO $ do
+            setPrompt term "Name: "
+            getInputLine term $ KeepPrompt . maybe T.empty T.pack
+    (lookupSharedValue . lsShared . fromStored <$> getLocalHead) >>= \case
+        Just (self :: ComposedIdentity) -> do
+            invite <- createSingleContactInvite name
+            dgst : _ <- return $ refDigest . storedRef <$> idDataF self
+            cmdPutStrLn $ "https://app.erebosprotocol.net/#inv" <> (maybe "" (("=" <>) . showInviteToken) (inviteToken invite)) <> "&from=blake2%23" <> drop 7 (show dgst)
+        Nothing -> do
+            throwOtherError "no shared identity"
+
+cmdInviteAccept :: Command
+cmdInviteAccept = do
+    term <- asks ciTerminal
+    url <- asks ciLine >>= \case
+        line | not (null line) -> return $ T.pack line
+        _ -> liftIO $ do
+            setPrompt term "URL: "
+            getInputLine term $ KeepPrompt . maybe T.empty T.pack
+    case T.breakOn "://" url of
+        ( proto, url' )
+            | proto `elem` [ "http", "https" ]
+            , ( _, url'' ) <- T.breakOn "#" url'
+            , Just ( '#', params ) <- T.uncons url''
+            , [ pfrom, pinv ] <- sort $ T.splitOn "&" params
+            , ( nfrom, tfrom ) <- T.splitAt 14 pfrom, nfrom == "from=blake2%23"
+            , ( ninv, tinv ) <- T.splitAt 4 pinv, ninv == "inv="
+            , Just from <- readRefDigest $ T.encodeUtf8 $ "blake2#" <> tfrom
+            , Just token <- parseInviteToken tinv
+            -> do
+                server <- asks ciServer
+                acceptInvite server from token
+        _ -> throwOtherError "invalit invite URL"
 
 cmdConversations :: Command
 cmdConversations = do
