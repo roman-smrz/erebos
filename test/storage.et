@@ -1,3 +1,5 @@
+module storage
+
 import common
 
 test Storage:
