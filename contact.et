@@ -1,3 +1,5 @@
+module contact
+
 test Contact:
 	let services = "attach,contact,sync"
 	

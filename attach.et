@@ -1,4 +1,6 @@
-test:
+module attach
+
+test Attach:
 	let services = "attach,sync"
 
 	spawn as p1

@@ -1,3 +1,5 @@
+module chatroom
+
 def refpat = /blake2#[0-9a-f]+/
 
 test ChatroomSetup:

@@ -1,3 +1,5 @@
+module network
+
 test Discovery:
 	spawn as p1
 	spawn as p2
