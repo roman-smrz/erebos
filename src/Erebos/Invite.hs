@@ -3,6 +3,8 @@
 module Erebos.Invite (
     Invite(..),
     InviteData(..),
+    AcceptedInvite(..),
+    AcceptedInviteData(..),
     InviteToken, showInviteToken, textInviteToken, parseInviteToken,
     InviteService,
     InviteServiceAttributes(..),
@@ -23,6 +25,7 @@ import Data.ByteArray (ByteArray, ByteArrayAccess)
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as BC
 import Data.Foldable
+import Data.Maybe
 import Data.Ord
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -98,6 +101,54 @@ instance SharedType (Set Invite) where
     sharedTypeID _ = mkSharedTypeID "78da787a-9380-432e-a51d-532a30d27b3d"
 
 
+data AcceptedInvite = AcceptedInvite
+    { acceptedInviteData :: [ Stored AcceptedInviteData ]
+    , acceptedInviteToken :: Maybe InviteToken
+    , acceptedInviteFrom :: Maybe RefDigest
+    , acceptedInviteConfirmed :: Bool
+    , acceptedInviteRejected :: Bool
+    }
+
+data AcceptedInviteData = AcceptedInviteData
+    { aidPrev :: [ Stored AcceptedInviteData ]
+    , aidToken :: Maybe InviteToken
+    , aidFrom :: Maybe RefDigest
+    , aidConfirmed :: Bool
+    , aidRejected :: Bool
+    }
+
+instance Storable AcceptedInviteData where
+    store' AcceptedInviteData {..} = storeRec $ do
+        mapM_ (storeRef "PREV") aidPrev
+        mapM_ (storeBinary "token") aidToken
+        mapM_ (storeRawWeak "from") aidFrom
+        when aidConfirmed $ storeEmpty "confirmed"
+        when aidRejected $ storeEmpty "rejected"
+
+    load' = loadRec $ do
+        aidPrev <- loadRefs "PREV"
+        aidToken <- loadMbBinary "token"
+        aidFrom <- loadMbRawWeak "from"
+        aidConfirmed <- isJust <$> loadMbEmpty "confirmed"
+        aidRejected <- isJust <$> loadMbEmpty "rejected"
+        return AcceptedInviteData {..}
+
+instance Mergeable AcceptedInvite where
+    type Component AcceptedInvite = AcceptedInviteData
+
+    mergeSorted aidata = AcceptedInvite
+        { acceptedInviteData = aidata
+        , acceptedInviteToken = findPropertyFirst aidToken aidata
+        , acceptedInviteFrom = findPropertyFirst aidFrom aidata
+        , acceptedInviteConfirmed = not $ null $ findProperty (\aid -> if aidConfirmed aid then Just () else Nothing) aidata
+        , acceptedInviteRejected = not $ null $ findProperty (\aid -> if aidRejected aid then Just () else Nothing) aidata
+        }
+    toComponents = acceptedInviteData
+
+instance SharedType (Set AcceptedInvite) where
+    sharedTypeID _ = mkSharedTypeID "b1ebf228-4892-476b-ba04-0c26320139b1"
+
+
 createSingleContactInvite :: MonadHead LocalState m => Text -> m Invite
 createSingleContactInvite name = do
     token <- liftIO $ getRandomBytes 32
@@ -111,22 +162,23 @@ createSingleContactInvite name = do
         storeSetAdd invite invites
     return invite
 
-identityOwnerDigests :: Foldable f => Identity f -> [ RefDigest ]
-identityOwnerDigests pid = map (refDigest . storedRef) $ concatMap toList $ toList $ generations $ idExtDataF $ finalOwner pid
-
-acceptInvite :: (MonadIO m, MonadError e m, FromErebosError e) => Server -> RefDigest -> InviteToken -> m ()
-acceptInvite server from token = do
-    let matchPeer peer = do
-            getPeerIdentity peer >>= \case
-                PeerIdentityFull pid -> do
-                    return $ from `elem` identityOwnerDigests pid
-                _ -> return False
-    liftIO (findPeer server matchPeer) >>= \case
-        Just peer -> runPeerService @InviteService peer $ do
-            svcModify (token :)
-            replyPacket $ AcceptInvite token
-        Nothing -> do
-            throwOtherError "peer not found"
+-- | Accept an invite received outside of the Erebos protocol. The acceptance
+-- is recorded in the shared state and will be confirmed with the issuer when a
+-- connection with their device is established.
+acceptInvite
+    :: MonadHead LocalState m
+    => RefDigest -- ^ Reference to the identity that issued the invite
+    -> InviteToken -- ^ Invite token
+    -> m ()
+acceptInvite from token = do
+    accepted <- mergeSorted @AcceptedInvite . (: []) <$> mstore AcceptedInviteData
+        { aidPrev = []
+        , aidToken = Just token
+        , aidFrom = Just from
+        , aidConfirmed = False
+        , aidRejected = False
+        }
+    updateLocalState_ $ updateSharedState_ $ storeSetAdd accepted
 
 
 data InviteService
@@ -239,3 +291,47 @@ instance Service InviteService where
 
         UnknownInvitePacket -> do
             svcPrint $ "Received unknown invite packet"
+
+    serviceNewPeer = do
+        invites <- fromSetBy (comparing acceptedInviteToken) . lookupSharedValue . lsShared . fromStored <$> getLocalHead
+        peerDigests <- asks $ identityOwnerDigests . svcPeerIdentity
+        forM_ invites $ \case
+            AcceptedInvite
+                { acceptedInviteToken = Just token
+                , acceptedInviteFrom = Just from
+                , acceptedInviteConfirmed = False
+                , acceptedInviteRejected = False
+                } | from `elem` peerDigests -> do
+                    svcModify (token :)
+                    replyPacket $ AcceptInvite token
+            _ -> return ()
+
+    serviceStorageWatchers _ = (:[]) $
+        GlobalStorageWatcher (lookupSharedValue . lsShared . fromStored) sendAcceptedInvites
+
+
+sendAcceptedInvites :: Server -> Set AcceptedInvite -> ExceptT ErebosError IO ()
+sendAcceptedInvites server aiset = do
+    forM_ (fromSetBy (comparing acceptedInviteToken) aiset) $ \case
+        AcceptedInvite
+            { acceptedInviteToken = Just token
+            , acceptedInviteFrom = Just from
+            , acceptedInviteConfirmed = False
+            , acceptedInviteRejected = False
+            } -> do
+                let matchPeer peer = do
+                        getPeerIdentity peer >>= \case
+                            PeerIdentityFull pid -> do
+                                return $ from `elem` identityOwnerDigests pid
+                            _ -> return False
+
+                liftIO (findPeer server matchPeer) >>= \case
+                    Just peer -> runPeerService @InviteService peer $ do
+                        svcModify (token :)
+                        replyPacket $ AcceptInvite token
+                    Nothing -> do
+                        return ()
+        _ -> return ()
+
+identityOwnerDigests :: Foldable f => Identity f -> [ RefDigest ]
+identityOwnerDigests pid = map (refDigest . storedRef) $ concatMap toList $ toList $ generations $ idExtDataF $ finalOwner pid

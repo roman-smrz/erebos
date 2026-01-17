@@ -239,9 +239,9 @@ inviteAttributes out = (defaultServiceAttributes Proxy)
         pid <- asks svcPeerIdentity
         afterCommit $ outLine out $ "invite-accepted " <> maybe "<missing-token>" showInviteToken inviteToken <> " " <> (BC.unpack $ showRef $ storedRef $ idExtData pid)
     , inviteHookReplyContact = \token _ -> do
-        afterCommit $ outLine out $ "invite-accept-done " <> showInviteToken token <> " contact"
+        afterCommit $ outLine out $ "invite-reply " <> showInviteToken token <> " contact"
     , inviteHookReplyInvalid = \token -> do
-        afterCommit $ outLine out $ "invite-accept-done " <> showInviteToken token <> " invalid"
+        afterCommit $ outLine out $ "invite-reply " <> showInviteToken token <> " invalid"
     }
 
 dmThreadWatcher :: ComposedIdentity -> Output -> DirectMessageThread -> DirectMessageThread -> IO ()
@@ -1091,5 +1091,5 @@ cmdInviteAccept = do
     [ tokenText, idref ] <- asks tiParams
     Just token <- return $ parseInviteToken tokenText
     Just from <- return $ readRefDigest $ encodeUtf8 idref
-    Just RunningServer {..} <- gets tsServer
-    acceptInvite rsServer from token
+    acceptInvite from token
+    cmdOut $ unwords [ "invite-accept-done", showInviteToken token ]

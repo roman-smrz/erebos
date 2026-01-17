@@ -992,8 +992,7 @@ cmdInviteAccept = do
             , Just from <- readRefDigest $ T.encodeUtf8 $ "blake2#" <> tfrom
             , Just token <- parseInviteToken tinv
             -> do
-                server <- asks ciServer
-                acceptInvite server from token
+                acceptInvite from token
         _ -> throwOtherError "invalit invite URL"
 
 cmdConversations :: Command
