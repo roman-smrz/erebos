@@ -130,3 +130,65 @@ test InviteContactDelayed:
             /contact-list-item [a-z0-9#]+ Contact2 .*/
             /contact-list-(.*)/ capture done
         guard (done == "done")
+
+
+test InviteContactDiscovery:
+    let services = "contact,invite,discovery"
+
+    subnet sd
+    subnet s1
+    subnet s2
+
+    spawn as pd on sd
+    spawn as p1 on s1
+    spawn as p2 on s2
+
+    send "create-identity Discovery" to pd
+    expect /create-identity-done ref $refpat.*/ from pd
+
+    send "create-identity Device1 Owner1" to p1
+    expect /create-identity-done ref ($refpat)/ from p1 capture p1id
+    send "identity-info $p1id" to p1
+    expect /identity-info ref $p1id base ($refpat) owner ($refpat).*/ from p1 capture p1base, p1owner
+    send "identity-info $p1owner" to p1
+    expect /identity-info ref $p1owner base ($refpat).*/ from p1 capture p1obase
+
+    send "create-identity Device2 Owner2" to p2
+    expect /create-identity-done ref ($refpat)/ from p2 capture p2id
+
+    send "start-server services discovery" to pd
+    send "start-server services $services" to p1
+    send "start-server services $services" to p2
+
+    for p in [ p1, p2 ]:
+        with p:
+            send "peer-add ${pd.node.ip}"
+            expect:
+                /peer 1 addr ${pd.node.ip} 29665/
+                /peer 1 id Discovery/
+        expect from pd:
+                /peer [12] addr ${p.node.ip} 29665/
+                /peer [12] id .*/
+
+    send "invite-contact-create Contact2" to p1
+    expect from p1 /invite-contact-create-done ([^ ]+)/ capture token
+
+    with p2:
+        send "invite-accept $token $p1obase"
+        expect /invite-accept-done $token/
+        expect /invite-reply $token contact/
+
+        send "contact-list"
+        expect:
+            /contact-list-item [a-z0-9#]+ .*/
+            /contact-list-(.*)/ capture done
+        guard (done == "done")
+
+    with p1:
+        expect /invite-accepted $token $refpat/
+
+        send "contact-list"
+        expect:
+            /contact-list-item [a-z0-9#]+ Contact2 .*/
+            /contact-list-(.*)/ capture done
+        guard (done == "done")

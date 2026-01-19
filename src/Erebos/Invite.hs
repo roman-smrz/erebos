@@ -32,6 +32,7 @@ import Data.Text qualified as T
 import Data.Text.Encoding
 
 import Erebos.Contact
+import Erebos.Discovery
 import Erebos.Identity
 import Erebos.Network
 import Erebos.Object
@@ -330,7 +331,7 @@ sendAcceptedInvites server aiset = do
                         svcModify (token :)
                         replyPacket $ AcceptInvite token
                     Nothing -> do
-                        return ()
+                        discoverySearch server from
         _ -> return ()
 
 identityOwnerDigests :: Foldable f => Identity f -> [ RefDigest ]
