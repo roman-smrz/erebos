@@ -141,9 +141,11 @@ instance Mergeable AcceptedInvite where
         { acceptedInviteData = aidata
         , acceptedInviteToken = findPropertyFirst aidToken aidata
         , acceptedInviteFrom = findPropertyFirst aidFrom aidata
-        , acceptedInviteConfirmed = not $ null $ findProperty (\aid -> if aidConfirmed aid then Just () else Nothing) aidata
-        , acceptedInviteRejected = not $ null $ findProperty (\aid -> if aidRejected aid then Just () else Nothing) aidata
+        , acceptedInviteConfirmed = fromMaybe False $ findPropertyFirst (\aid -> if isStatusChanged aid then Just (aidConfirmed aid) else Nothing) aidata
+        , acceptedInviteRejected = fromMaybe False $ findPropertyFirst (\aid -> if isStatusChanged aid then Just (aidRejected aid) else Nothing) aidata
         }
+      where
+        isStatusChanged AcceptedInviteData {..} = aidConfirmed || aidRejected || isJust aidToken
     toComponents = acceptedInviteData
 
 instance SharedType (Set AcceptedInvite) where
@@ -172,8 +174,11 @@ acceptInvite
     -> InviteToken -- ^ Invite token
     -> m ()
 acceptInvite from token = do
+    prev <- find ((Just token ==) . acceptedInviteToken)
+        . fromSetBy (comparing acceptedInviteToken) . lookupSharedValue . lsShared . fromStored
+        <$> getLocalHead
     accepted <- mergeSorted @AcceptedInvite . (: []) <$> mstore AcceptedInviteData
-        { aidPrev = []
+        { aidPrev = maybe [] acceptedInviteData prev
         , aidToken = Just token
         , aidFrom = Just from
         , aidConfirmed = False
@@ -274,12 +279,39 @@ instance Service InviteService where
             asks (inviteHookReplyInvalid . svcAttributes) >>= ($ token)
             svcModify $ filter (/= token)
 
+            accepted <- fromSetBy (comparing acceptedInviteToken) . lookupSharedValue . lsShared . fromStored <$> getLocalHead
+            case find ((Just token ==) . acceptedInviteToken) accepted of
+                Just invite -> do
+                    aidata <- mstore AcceptedInviteData
+                        { aidPrev = acceptedInviteData invite
+                        , aidToken = Nothing
+                        , aidFrom = Nothing
+                        , aidConfirmed = False
+                        , aidRejected = True
+                        }
+                    updateLocalState_ $ updateSharedState_ $ storeSetAdd (mergeSorted @AcceptedInvite [ aidata ])
+                Nothing -> return ()
+
         ContactInvite token mbName -> do
             asks (inviteHookReplyContact . svcAttributes) >>= ($ mbName) . ($ token)
             waitingTokens <- svcGet
             if token `elem` waitingTokens
               then do
                 svcSet $ filter (/= token) waitingTokens
+
+                accepted <- fromSetBy (comparing acceptedInviteToken) . lookupSharedValue . lsShared . fromStored <$> getLocalHead
+                case find ((Just token ==) . acceptedInviteToken) accepted of
+                    Just invite -> do
+                        aidata <- mstore AcceptedInviteData
+                            { aidPrev = acceptedInviteData invite
+                            , aidToken = Nothing
+                            , aidFrom = Nothing
+                            , aidConfirmed = True
+                            , aidRejected = False
+                            }
+                        updateLocalState_ $ updateSharedState_ $ storeSetAdd (mergeSorted @AcceptedInvite [ aidata ])
+                    Nothing -> return ()
+
                 identity <- asks svcPeerIdentity
                 cdata <- mstore ContactData
                     { cdPrev = []
