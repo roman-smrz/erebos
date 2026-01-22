@@ -5,6 +5,7 @@ module Erebos.Invite (
     InviteData(..),
     AcceptedInvite(..),
     AcceptedInviteData(..),
+    AcceptedInviteStatus(..),
     InviteToken, showInviteToken, textInviteToken, parseInviteToken,
     InviteService,
     InviteServiceAttributes(..),
@@ -106,8 +107,7 @@ data AcceptedInvite = AcceptedInvite
     { acceptedInviteData :: [ Stored AcceptedInviteData ]
     , acceptedInviteToken :: Maybe InviteToken
     , acceptedInviteFrom :: Maybe RefDigest
-    , acceptedInviteConfirmed :: Bool
-    , acceptedInviteRejected :: Bool
+    , acceptedInviteStatus :: AcceptedInviteStatus
     }
 
 data AcceptedInviteData = AcceptedInviteData
@@ -117,6 +117,11 @@ data AcceptedInviteData = AcceptedInviteData
     , aidConfirmed :: Bool
     , aidRejected :: Bool
     }
+
+data AcceptedInviteStatus
+    = AcceptedInvitePending
+    | AcceptedInviteRejected
+    | AcceptedInviteConfirmed
 
 instance Storable AcceptedInviteData where
     store' AcceptedInviteData {..} = storeRec $ do
@@ -141,11 +146,13 @@ instance Mergeable AcceptedInvite where
         { acceptedInviteData = aidata
         , acceptedInviteToken = findPropertyFirst aidToken aidata
         , acceptedInviteFrom = findPropertyFirst aidFrom aidata
-        , acceptedInviteConfirmed = fromMaybe False $ findPropertyFirst (\aid -> if isStatusChanged aid then Just (aidConfirmed aid) else Nothing) aidata
-        , acceptedInviteRejected = fromMaybe False $ findPropertyFirst (\aid -> if isStatusChanged aid then Just (aidRejected aid) else Nothing) aidata
+        , acceptedInviteStatus = fromMaybe AcceptedInvitePending $ flip findPropertyFirst aidata $ \case
+            AcceptedInviteData {..}
+                | aidConfirmed -> Just AcceptedInviteConfirmed
+                | aidRejected -> Just AcceptedInviteRejected
+                | isJust aidToken -> Just AcceptedInvitePending
+                | otherwise -> Nothing
         }
-      where
-        isStatusChanged AcceptedInviteData {..} = aidConfirmed || aidRejected || isJust aidToken
     toComponents = acceptedInviteData
 
 instance SharedType (Set AcceptedInvite) where
@@ -332,8 +339,7 @@ instance Service InviteService where
             AcceptedInvite
                 { acceptedInviteToken = Just token
                 , acceptedInviteFrom = Just from
-                , acceptedInviteConfirmed = False
-                , acceptedInviteRejected = False
+                , acceptedInviteStatus = AcceptedInvitePending
                 } | from `elem` peerDigests -> do
                     svcModify (token :)
                     replyPacket $ AcceptInvite token
@@ -349,8 +355,7 @@ sendAcceptedInvites server aiset = do
         AcceptedInvite
             { acceptedInviteToken = Just token
             , acceptedInviteFrom = Just from
-            , acceptedInviteConfirmed = False
-            , acceptedInviteRejected = False
+            , acceptedInviteStatus = AcceptedInvitePending
             } -> do
                 let matchPeer peer = do
                         getPeerIdentity peer >>= \case
