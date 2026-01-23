@@ -566,20 +566,29 @@ getIceConfig = do
 #endif
 
 
-discoverySearch :: (MonadIO m, MonadError e m, FromErebosError e) => Server -> RefDigest -> m ()
+-- | Start search for an identity identified by given ref using the discovery
+-- service.
+discoverySearch
+    :: forall m e. (MonadIO m, MonadError e m, FromErebosError e)
+    => Server -- ^ `Server' object to run the discovery
+    -> RefDigest -- ^ Reference identifying the intended peer
+    -> m ()
 discoverySearch server dgst = do
-    peers <- liftIO $ getCurrentPeerList server
-    match <- forM peers $ \peer -> do
-        getPeerIdentity peer >>= \case
-            PeerIdentityFull pid -> do
-                return $ dgst `elem` identityDigests pid
-            _ -> return False
-    when (not $ or match) $ do
-        modifyServiceGlobalState server (Proxy @DiscoveryService) $ \s -> (, ()) s
-            { dgsSearchingFor = S.insert dgst $ dgsSearchingFor s
-            }
-        forM_ peers $ \peer -> do
-            sendToPeer peer $ DiscoverySearch $ Right dgst
+    flip catchError (\e -> case toErebosError e of
+            Just (UnhandledService svc) | svc == serviceID (Proxy @DiscoveryService) -> return ()
+            _ -> throwError e) $ do
+        peers <- liftIO $ getCurrentPeerList server
+        match <- forM peers $ \peer -> do
+            getPeerIdentity peer >>= \case
+                PeerIdentityFull pid -> do
+                    return $ dgst `elem` identityDigests pid
+                _ -> return False
+        when (not $ or match) $ do
+            modifyServiceGlobalState server (Proxy @DiscoveryService) $ \s -> (, ()) s
+                { dgsSearchingFor = S.insert dgst $ dgsSearchingFor s
+                }
+            forM_ peers $ \peer -> do
+                sendToPeer peer $ DiscoverySearch $ Right dgst
 
 
 data TunnelAddress = TunnelAddress

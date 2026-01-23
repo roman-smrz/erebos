@@ -111,7 +111,10 @@ data TransportHeaderItem
     deriving (Eq, Show)
 
 newtype ServiceID = ServiceID UUID
-    deriving (Eq, Ord, Show, StorableUUID)
+    deriving (Eq, Ord, StorableUUID)
+
+instance Show ServiceID where
+    show = show . toUUID
 
 newtype Cookie = Cookie ByteString
     deriving (Eq, Show)

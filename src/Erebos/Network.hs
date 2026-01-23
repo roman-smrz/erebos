@@ -1060,7 +1060,7 @@ modifyServiceGlobalState server proxy f = do
                 putTMVar (serverServiceStates server) global'
                 return res
         Nothing -> do
-            throwOtherError $ "unhandled service '" ++ show (toUUID svc) ++ "'"
+            throwErebosError $ UnhandledService svc
 
 
 foreign import ccall unsafe "Network/ifaddrs.h erebos_join_multicast" cJoinMulticast :: CInt -> Ptr CSize -> IO (Ptr Word32)
