@@ -295,19 +295,19 @@ parseTabEscapedLines = parseLines []
   where
     parseLines linesReversed cur = do
         newline <- BC.elemIndex '\n' cur
-        case BC.indexMaybe cur (newline + 1) of
-            Just '\t' -> parseLines (B.take (newline + 1) cur : linesReversed) (B.drop (newline + 2) cur)
-            _         -> Just ( BC.concat $ reverse $ B.take newline cur : linesReversed, B.drop (newline + 1) cur )
+        case ( BC.length cur > newline + 1, BC.index cur (newline + 1) ) of
+            ( True, '\t' ) -> parseLines (B.take (newline + 1) cur : linesReversed) (B.drop (newline + 2) cur)
+            _              -> Just ( BC.concat $ reverse $ B.take newline cur : linesReversed, B.drop (newline + 1) cur )
 
 parseOnDemand :: Storage' c -> ByteString -> Maybe (Object' c)
 parseOnDemand _ body = do
     newline1 <- BC.elemIndex '\n' body
     newline2 <- BC.elemIndex '\n' $ B.drop (newline1 + 1) body
     guard (newline1 + newline2 + 2 == B.length body)
-    ( size, sizeRest ) <- BC.readWord64 (B.take newline1 body)
+    ( size, sizeRest ) <- BC.readInt (B.take newline1 body)
     guard (B.null sizeRest)
     dgst <- readRefDigest $ B.take newline2 $ B.drop (newline1 + 1) body
-    return $ OnDemand size dgst
+    return $ OnDemand (fromIntegral size) dgst
 
 
 deserializeObject :: PartialStorage -> BL.ByteString -> Except ErebosError (PartialObject, BL.ByteString)
