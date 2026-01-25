@@ -110,6 +110,7 @@ library
         Erebos.Invite
         Erebos.Network
         Erebos.Object
+        Erebos.Object.Deferred
         Erebos.Pairing
         Erebos.PubKey
         Erebos.Service

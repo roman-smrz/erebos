@@ -26,6 +26,7 @@ module Erebos.Network (
     sendToPeerWith,
     runPeerService,
     modifyServiceGlobalState,
+    requestDataFromPeer, DataRequestResult(..),
 
     discoveryPort,
 ) where
@@ -1061,6 +1062,19 @@ modifyServiceGlobalState server proxy f = do
                 return res
         Nothing -> do
             throwErebosError $ UnhandledService svc
+
+
+data DataRequestResult
+    = DataRequestFulfilled Ref
+    | DataRequestRejected
+    | DataRequestInvalid
+
+requestDataFromPeer :: MonadIO m => Peer -> RefDigest -> (DataRequestResult -> ExceptT ErebosError IO ()) -> m ()
+requestDataFromPeer peer@Peer {..} dgst callback = do
+    liftIO $ atomically $ do
+        wref <- WaitingRef peerStorage_ (partialRefFromDigest peerInStorage dgst) (callback . DataRequestFulfilled) <$> newTVar (Left [])
+        putTMVar peerWaitingRefs . (wref :) =<< takeTMVar peerWaitingRefs
+        writeTQueue (serverDataResponse peerServer_) ( peer, Nothing )
 
 
 foreign import ccall unsafe "Network/ifaddrs.h erebos_join_multicast" cJoinMulticast :: CInt -> Ptr CSize -> IO (Ptr Word32)

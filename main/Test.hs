@@ -42,6 +42,7 @@ import Erebos.Identity
 import Erebos.Invite
 import Erebos.Network
 import Erebos.Object
+import Erebos.Object.Deferred
 import Erebos.Pairing
 import Erebos.PubKey
 import Erebos.Service
@@ -70,6 +71,7 @@ data RunningServer = RunningServer
     { rsServer :: Server
     , rsPeers :: MVar ( Int, [ TestPeer ] )
     , rsPeerThread :: ThreadId
+    , rsDeferredObjects :: MVar [ Deferred Object ]
     }
 
 data TestPeer = TestPeer
@@ -284,6 +286,7 @@ commands =
     , ( "store-raw", cmdStoreRaw )
     , ( "load", cmdLoad )
     , ( "load-type", cmdLoadType )
+    , ( "load-deferred", cmdLoadDeferred )
     , ( "stored-generation", cmdStoredGeneration )
     , ( "stored-roots", cmdStoredRoots )
     , ( "stored-set-add", cmdStoredSetAdd )
@@ -392,15 +395,36 @@ cmdLoadType :: Command
 cmdLoadType = do
     st <- asks tiStorage
     [ tref ] <- asks tiParams
-    Just ref <- liftIO $ readRef st $ encodeUtf8 tref
-    let obj = load @Object ref
-    let otype = case obj of
-            Blob {} -> "blob"
-            Rec {} -> "rec"
-            OnDemand {} -> "ondemand"
-            ZeroObject {} -> "zero"
-            UnknownObject utype _ -> "unknown " <> decodeUtf8 utype
-    cmdOut $ "load-type " <> T.unpack otype
+    liftIO (readRef st $ encodeUtf8 tref) >>= \case
+        Just ref -> do
+            let obj = load @Object ref
+            let otype = case obj of
+                    Blob {} -> "blob"
+                    Rec {} -> "rec"
+                    OnDemand {} -> "ondemand"
+                    ZeroObject {} -> "zero"
+                    UnknownObject utype _ -> "unknown " <> decodeUtf8 utype
+            cmdOut $ "load-type " <> T.unpack otype
+        Nothing -> do
+            cmdOut $ "load-type-failed"
+
+cmdLoadDeferred :: Command
+cmdLoadDeferred = do
+    st <- asks tiStorage
+    [ tidx ] <- asks tiParams
+    Just RunningServer {..} <- gets tsServer
+    deferred <- (!! read (T.unpack tidx)) <$> liftIO (readMVar rsDeferredObjects)
+    mvar <- deferredLoad deferred
+    out <- asks tiOutput
+    liftIO $ void $ forkIO $ readMVar mvar >>= \case
+        DeferredLoaded sobj -> do
+            void $ copyRef st $ storedRef sobj
+            header : _ <- return $ BL.lines $ serializeObject $ fromStored sobj
+            outLine out $ T.unpack $ T.unwords [ "load-deferred-done", tidx, decodeUtf8 $ BL.toStrict header ]
+        DeferredInvalid -> do
+            outLine out $ T.unpack $ T.unwords [ "load-deferred-invalid", tidx ]
+        DeferredFailed -> do
+            outLine out $ T.unpack $ T.unwords [ "load-deferred-failed", tidx ]
 
 cmdStoredGeneration :: Command
 cmdStoredGeneration = do
@@ -581,6 +605,7 @@ cmdStartServer = do
 
     h <- getOrLoadHead
     rsPeers <- liftIO $ newMVar (1, [])
+    rsDeferredObjects <- liftIO $ newMVar []
     services <- forM serviceNames $ \case
         ( "attach", _ ) -> return $ someServiceAttr $ pairingAttributes (Proxy @AttachService) out rsPeers "attach"
         ( "chatroom", _ ) -> return $ someService @ChatroomService Proxy
@@ -609,6 +634,10 @@ cmdStartServer = do
                                 StreamClosed seqNum -> do
                                     outLine out $ unwords [ "test-stream-closed-from", show pidx, show num, show seqNum ]
                         go
+            , testOnDemandReceived = \size deferred -> do
+                liftIO $ do
+                    idx <- modifyMVar rsDeferredObjects (\ds -> return ( ds ++ [ deferred ], length ds ))
+                    outLine out $ unwords [ "test-ondemand-received", show idx, show size, show $ deferredRef deferred ]
             }
         ( sname, _ ) -> throwOtherError $ "unknown service `" <> T.unpack sname <> "'"
 
