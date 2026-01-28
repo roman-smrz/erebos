@@ -7,6 +7,7 @@ module Erebos.Network.Protocol (
     SecurityRequirement(..),
 
     WaitingRef(..),
+    DataRequestResult(..),
     WaitingRefCallback,
     wrDigest,
 
@@ -464,9 +465,15 @@ writeByteStringToStream stream = go 0
 data WaitingRef = WaitingRef
     { wrefStorage :: Storage
     , wrefPartial :: PartialRef
-    , wrefAction :: Ref -> WaitingRefCallback
-    , wrefStatus :: TVar (Either [RefDigest] Ref)
+    , wrefBound :: Word64
+    , wrefAction :: DataRequestResult -> WaitingRefCallback
+    , wrefStatus :: TVar (Either [ RefDigest ] DataRequestResult)
     }
+
+data DataRequestResult
+    = DataRequestFulfilled Ref
+    | DataRequestRejected
+    | DataRequestBrokenBound
 
 type WaitingRefCallback = ExceptT ErebosError IO ()
 

@@ -60,7 +60,7 @@ instance Service TestMessage where
                 cb <- asks $ testOnDemandReceived . svcAttributes
                 server <- asks svcServer
                 pid <- asks svcPeerIdentity
-                cb size =<< liftIO (deferLoadWithServer dgst server [ refDigest $ storedRef $ idData pid ])
+                cb size =<< liftIO (deferLoadWithServer dgst (DeferredExactSize size) server [ refDigest $ storedRef $ idData pid ])
             _ -> return ()
 
 

@@ -1,5 +1,6 @@
 module Erebos.Object.Deferred (
     Deferred,
+    DeferredSize(..),
     DeferredResult(..),
 
     deferredRef,
@@ -11,6 +12,8 @@ module Erebos.Object.Deferred (
 import Control.Concurrent.MVar
 import Control.Monad.IO.Class
 
+import Data.Word
+
 import Erebos.Identity
 import Erebos.Network
 import Erebos.Object
@@ -19,9 +22,14 @@ import Erebos.Storable
 
 data Deferred a = Deferred
     { deferredRef_ :: RefDigest
+    , deferredSize :: DeferredSize
     , deferredServer :: Server
     , deferredPeers :: [ RefDigest ]
     }
+
+data DeferredSize
+    = DeferredExactSize Word64
+    | DeferredMaximumSize Word64
 
 data DeferredResult a
     = DeferredLoaded (Stored a)
@@ -42,15 +50,26 @@ deferredLoad Deferred {..} = liftIO $ do
 
     liftIO (findPeer deferredServer matchPeer) >>= \case
         Just peer -> do
-            requestDataFromPeer peer deferredRef_ $ liftIO . \case
-                DataRequestFulfilled ref -> putMVar mvar $ DeferredLoaded $ wrappedLoad ref
+            let bound = case deferredSize of
+                    DeferredExactSize s -> s
+                    DeferredMaximumSize s -> s
+
+                checkSize ref = case deferredSize of
+                    DeferredExactSize s -> componentSize ref == s
+                    DeferredMaximumSize s -> componentSize ref <= s
+
+            requestDataFromPeer peer deferredRef_ bound $ liftIO . \case
+                DataRequestFulfilled ref
+                    | checkSize ref -> putMVar mvar $ DeferredLoaded $ wrappedLoad ref
+                    | otherwise -> putMVar mvar DeferredInvalid
                 DataRequestRejected -> putMVar mvar DeferredFailed
-                DataRequestInvalid -> putMVar mvar DeferredInvalid
+                DataRequestBrokenBound -> putMVar mvar DeferredInvalid
+
         Nothing -> putMVar mvar DeferredFailed
     return mvar
 
-deferLoadWithServer :: Storable a => RefDigest -> Server -> [ RefDigest ] -> IO (Deferred a)
-deferLoadWithServer deferredRef_ deferredServer deferredPeers = return Deferred {..}
+deferLoadWithServer :: Storable a => RefDigest -> DeferredSize -> Server -> [ RefDigest ] -> IO (Deferred a)
+deferLoadWithServer deferredRef_ deferredSize deferredServer deferredPeers = return Deferred {..}
 
 
 identityDigests :: Foldable f => Identity f -> [ RefDigest ]

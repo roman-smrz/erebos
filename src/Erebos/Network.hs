@@ -233,7 +233,9 @@ lookupNewStreams [] = []
 newWaitingRef :: RefDigest -> (Ref -> WaitingRefCallback) -> PacketHandler WaitingRef
 newWaitingRef dgst act = do
     peer@Peer {..} <- gets phPeer
-    wref <- WaitingRef peerStorage_ (partialRefFromDigest peerInStorage dgst) act <$> liftSTM (newTVar (Left []))
+    let cb (DataRequestFulfilled ref) = act ref
+        cb _                          = return ()
+    wref <- WaitingRef peerStorage_ (partialRefFromDigest peerInStorage dgst) maxBound cb <$> liftSTM (newTVar (Left []))
     modifyTMVarP peerWaitingRefs (wref:)
     liftSTM $ writeTQueue (serverDataResponse $ peerServer peer) (peer, Nothing)
     return wref
@@ -451,8 +453,8 @@ dataResponseWorker server = forever $ do
             Left ds -> case maybe id (filter . (/=) . refDigest) npref $ ds of
                 [] -> copyRef (wrefStorage wr) (wrefPartial wr) >>= \case
                           Right ref -> do
-                              atomically (writeTVar tvar $ Right ref)
-                              forkServerThread server $ runExceptT (wrefAction wr ref) >>= \case
+                              atomically (writeTVar tvar $ Right $ DataRequestFulfilled ref)
+                              forkServerThread server $ runExceptT (wrefAction wr $ DataRequestFulfilled ref) >>= \case
                                   Left err -> atomically $ writeTQueue (serverErrorLog server) (showErebosError err)
                                   Right () -> return ()
 
@@ -1064,15 +1066,10 @@ modifyServiceGlobalState server proxy f = do
             throwErebosError $ UnhandledService svc
 
 
-data DataRequestResult
-    = DataRequestFulfilled Ref
-    | DataRequestRejected
-    | DataRequestInvalid
-
-requestDataFromPeer :: MonadIO m => Peer -> RefDigest -> (DataRequestResult -> ExceptT ErebosError IO ()) -> m ()
-requestDataFromPeer peer@Peer {..} dgst callback = do
+requestDataFromPeer :: MonadIO m => Peer -> RefDigest -> Word64 -> (DataRequestResult -> ExceptT ErebosError IO ()) -> m ()
+requestDataFromPeer peer@Peer {..} dgst bound callback = do
     liftIO $ atomically $ do
-        wref <- WaitingRef peerStorage_ (partialRefFromDigest peerInStorage dgst) (callback . DataRequestFulfilled) <$> newTVar (Left [])
+        wref <- WaitingRef peerStorage_ (partialRefFromDigest peerInStorage dgst) bound callback <$> newTVar (Left [])
         putTMVar peerWaitingRefs . (wref :) =<< takeTMVar peerWaitingRefs
         writeTQueue (serverDataResponse peerServer_) ( peer, Nothing )
 
