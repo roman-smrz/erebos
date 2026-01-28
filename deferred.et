@@ -48,3 +48,151 @@ test OnDemandLoad:
 
             send "load-type $blob_ref"
             expect /load-type blob/
+
+test OnDemandValidity:
+    let services = "test"
+
+    spawn as p1
+    spawn as p2
+
+    send "create-identity Device1" to p1
+    send "create-identity Device2" to p2
+    send "start-server services $services" to p1
+    send "start-server services $services" to p2
+    expect from p1:
+        /peer 1 addr ${p2.node.ip} 29665/
+        /peer 1 id Device2/
+    expect from p2:
+        /peer 1 addr ${p1.node.ip} 29665/
+        /peer 1 id Device1/
+
+    with p1:
+        send "store blob"
+        send "test"
+        send ""
+        expect /store-done ($refpat)/ capture ref
+
+        let size = 12
+
+        send "store ondemand"
+        send "${size - 1}"
+        send "$ref"
+        send ""
+        expect /store-done ($refpat)/ capture ondemand_ref_small
+
+        send "store ondemand"
+        send "$size"
+        send "$ref"
+        send ""
+        expect /store-done ($refpat)/ capture ondemand_ref_correct
+
+        send "store ondemand"
+        send "${size + 1}"
+        send "$ref"
+        send ""
+        expect /store-done ($refpat)/ capture ondemand_ref_big
+
+        send "test-message-send 1 $ondemand_ref_small"
+        expect /test-message-send done/
+        with p2:
+            expect /test-message-received ondemand [0-9]+ $ondemand_ref_small/
+            expect /test-ondemand-received ([0-9]+) [0-9]+ $ref/ capture idx
+            send "load-deferred $idx"
+            expect /load-deferred-invalid $idx/
+
+        send "test-message-send 1 $ondemand_ref_correct"
+        expect /test-message-send done/
+        with p2:
+            expect /test-message-received ondemand [0-9]+ $ondemand_ref_correct/
+            expect /test-ondemand-received ([0-9]+) [0-9]+ $ref/ capture idx
+            send "load-deferred $idx"
+            expect /load-deferred-done $idx blob [0-9]+/
+
+        send "test-message-send 1 $ondemand_ref_big"
+        expect /test-message-send done/
+        with p2:
+            expect /test-message-received ondemand [0-9]+ $ondemand_ref_big/
+            expect /test-ondemand-received ([0-9]+) [0-9]+ $ref/ capture idx
+            send "load-deferred $idx"
+            expect /load-deferred-invalid $idx/
+
+    with p1:
+        send "store rec"
+        send "r:t root1"
+        send ""
+        expect /store-done ($refpat)/ capture rec_root_1
+
+        send "store rec"
+        send "r:t root2"
+        send ""
+        expect /store-done ($refpat)/ capture rec_root_2
+
+        send "store rec"
+        send "r:r $rec_root_1"
+        send ""
+        expect /store-done ($refpat)/ capture rec_merge_1
+
+        send "store rec"
+        send "r:r $rec_root_1"
+        send "r:r $rec_root_2"
+        send "r:t merge2"
+        send ""
+        expect /store-done ($refpat)/ capture rec_merge_2
+
+        send "store rec"
+        send "r:r $rec_root_1"
+        send "r:r $rec_root_2"
+        send "r:t merge3"
+        send ""
+        expect /store-done ($refpat)/ capture rec_merge_3
+
+        send "store rec"
+        send "r:r $rec_merge_1"
+        send "r:r $rec_merge_2"
+        send "r:r $rec_merge_3"
+        send ""
+        expect /store-done ($refpat)/ capture ref
+
+        let size = 695
+
+        send "store ondemand"
+        send "${size - 1}"
+        send "$ref"
+        send ""
+        expect /store-done ($refpat)/ capture ondemand_ref_small
+
+        send "store ondemand"
+        send "$size"
+        send "$ref"
+        send ""
+        expect /store-done ($refpat)/ capture ondemand_ref_correct
+
+        send "store ondemand"
+        send "${size + 1}"
+        send "$ref"
+        send ""
+        expect /store-done ($refpat)/ capture ondemand_ref_big
+
+        send "test-message-send 1 $ondemand_ref_small"
+        expect /test-message-send done/
+        with p2:
+            expect /test-message-received ondemand [0-9]+ $ondemand_ref_small/
+            expect /test-ondemand-received ([0-9]+) [0-9]+ $ref/ capture idx
+            send "load-deferred $idx"
+            expect /load-deferred-invalid $idx/
+
+        send "test-message-send 1 $ondemand_ref_correct"
+        expect /test-message-send done/
+        with p2:
+            expect /test-message-received ondemand [0-9]+ $ondemand_ref_correct/
+            expect /test-ondemand-received ([0-9]+) [0-9]+ $ref/ capture idx
+            send "load-deferred $idx"
+            expect /load-deferred-done $idx [a-z]+ [0-9]+/
+
+        send "test-message-send 1 $ondemand_ref_big"
+        expect /test-message-send done/
+        with p2:
+            expect /test-message-received ondemand [0-9]+ $ondemand_ref_big/
+            expect /test-ondemand-received ([0-9]+) [0-9]+ $ref/ capture idx
+            send "load-deferred $idx"
+            expect /load-deferred-invalid $idx/
