@@ -414,9 +414,8 @@ cmdLoadDeferred = do
     [ tidx ] <- asks tiParams
     Just RunningServer {..} <- gets tsServer
     deferred <- (!! read (T.unpack tidx)) <$> liftIO (readMVar rsDeferredObjects)
-    mvar <- deferredLoad deferred
     out <- asks tiOutput
-    liftIO $ void $ forkIO $ readMVar mvar >>= \case
+    liftIO $ void $ forkIO $ deferredWait deferred >>= \case
         DeferredLoaded sobj -> do
             void $ copyRef st $ storedRef sobj
             header : _ <- return $ BL.lines $ serializeObject $ fromStored sobj
