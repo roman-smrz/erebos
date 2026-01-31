@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Erebos.Conversation (
     Message,
     messageFrom,
@@ -5,6 +7,7 @@ module Erebos.Conversation (
     messageText,
     messageUnread,
     formatMessage,
+    formatMessageFT,
 
     Conversation,
     isSameConversation,
@@ -38,6 +41,8 @@ import Erebos.DirectMessage
 import Erebos.Identity
 import Erebos.State
 import Erebos.Storable
+import Erebos.TextFormat
+import Erebos.TextFormat.Types
 
 
 data Message = forall conv msg. ConversationType conv msg => Message msg Bool
@@ -58,13 +63,15 @@ messageUnread :: Message -> Bool
 messageUnread (Message _ unread) = unread
 
 formatMessage :: TimeZone -> Message -> String
-formatMessage tzone msg = concat
-    [ if messageUnread msg then "\ESC[93m" else ""
-    , formatTime defaultTimeLocale "[%H:%M] " $ utcToLocalTime tzone $ zonedTimeToUTC $ messageTime msg
-    , maybe "<unnamed>" T.unpack $ idName $ messageFrom msg
-    , maybe "" ((": "<>) . T.unpack) $ messageText msg
-    , if messageUnread msg then "\ESC[0m" else ""
-    ]
+formatMessage tzone = T.unpack . renderPlainText . formatMessageFT tzone
+
+formatMessageFT :: TimeZone -> Message -> FormattedText
+formatMessageFT tzone msg =
+    (if messageUnread msg then FormattedText (CustomTextColor (Just BrightYellow) Nothing) else id) $ mconcat
+        [ PlainText $ T.pack $ formatTime defaultTimeLocale "[%H:%M] " $ utcToLocalTime tzone $ zonedTimeToUTC $ messageTime msg
+        , maybe "<unnamed>" PlainText $ idName $ messageFrom msg
+        , maybe "" ((": " <>) . PlainText) $ messageText msg
+        ]
 
 
 data Conversation

@@ -124,6 +124,8 @@ library
         Erebos.Storage.Key
         Erebos.Storage.Merge
         Erebos.Sync
+        Erebos.TextFormat
+        Erebos.TextFormat.Ansi
 
     other-modules:
         Erebos.Conversation.Class
@@ -136,6 +138,7 @@ library
         Erebos.Storage.Internal
         Erebos.Storage.Memory
         Erebos.Storage.Platform
+        Erebos.TextFormat.Types
         Erebos.UUID
         Erebos.Util
 

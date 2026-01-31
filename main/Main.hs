@@ -54,6 +54,7 @@ import Erebos.Storable
 import Erebos.Storage
 import Erebos.Storage.Merge
 import Erebos.Sync
+import Erebos.TextFormat.Ansi
 
 import State
 import Terminal
@@ -746,7 +747,7 @@ cmdSelectContext = do
     flip catchError (\_ -> return ()) $ do
         conv <- getConversationFromContext ctx
         tzone <- liftIO $ getCurrentTimeZone
-        mapM_ (cmdPutStrLn . formatMessage tzone) $ takeWhile messageUnread $ conversationHistory conv
+        mapM_ (cmdPutStrLn . T.unpack . fromAnsiText . renderAnsiText . formatMessageFT tzone) $ takeWhile messageUnread $ conversationHistory conv
 
 cmdSend :: Command
 cmdSend = void $ do
@@ -765,7 +766,7 @@ cmdHistory = void $ do
     case conversationHistory conv of
         thread@(_:_) -> do
             tzone <- liftIO $ getCurrentTimeZone
-            mapM_ (cmdPutStrLn . formatMessage tzone) $ reverse $ take 50 thread
+            mapM_ (cmdPutStrLn . T.unpack . fromAnsiText . renderAnsiText . formatMessageFT tzone) $ reverse $ take 50 thread
         [] -> do
             cmdPutStrLn $ "<empty history>"
 
@@ -1010,7 +1011,7 @@ cmdNew = do
     set WatchConversations $ map (SelectedConversation . fst) conversations
     tzone <- liftIO $ getCurrentTimeZone
     forM_ (zip [1..] conversations) $ \(i :: Int, ( conv, msg )) -> do
-        cmdPutStrLn $ "[" ++ show i ++ "] " ++ T.unpack (conversationName conv) ++ " " ++ formatMessage tzone msg
+        cmdPutStrLn $ "[" ++ show i ++ "] " ++ T.unpack (conversationName conv) ++ " " ++ T.unpack (fromAnsiText $ renderAnsiText $ formatMessageFT tzone msg)
   where
     checkNew conv
         | (msg : _) <- conversationHistory conv
