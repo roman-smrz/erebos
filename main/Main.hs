@@ -54,6 +54,7 @@ import Erebos.Storable
 import Erebos.Storage
 import Erebos.Storage.Merge
 import Erebos.Sync
+import Erebos.TextFormat
 import Erebos.TextFormat.Ansi
 
 import State
@@ -358,7 +359,7 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
                         SelectedConversation conv -> return $ T.unpack $ conversationName conv
                     return $ pname ++ "> "
                 Right prompt -> return prompt
-            lift $ setPrompt term prompt
+            lift $ setPrompt term $ plainText $ T.pack prompt
             join $ lift $ getInputLine term $ \case
                 Just input@('/' : _) -> KeepPrompt $ return input
                 Just input -> ErasePrompt $ case reverse input of

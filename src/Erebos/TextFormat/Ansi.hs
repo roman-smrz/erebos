@@ -9,6 +9,7 @@ module Erebos.TextFormat.Ansi (
 
 import Control.Applicative
 
+import Data.String
 import Data.Text (Text)
 import Data.Text qualified as T
 
@@ -16,6 +17,8 @@ import Erebos.TextFormat.Types
 
 
 newtype AnsiText = AnsiText { fromAnsiText :: Text }
+    deriving (Eq, Ord, Semigroup, Monoid, IsString)
+
 
 renderAnsiText :: FormattedText -> AnsiText
 renderAnsiText = AnsiText . go ( Nothing, Nothing )

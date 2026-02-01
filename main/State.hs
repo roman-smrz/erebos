@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module State (
     loadLocalStateHead,
     createLocalStateHead,
@@ -20,6 +22,7 @@ import Erebos.PubKey
 import Erebos.State
 import Erebos.Storable
 import Erebos.Storage
+import Erebos.TextFormat
 
 import Terminal
 
@@ -96,12 +99,12 @@ interactiveIdentityUpdate :: (Foldable f, MonadStorage m, MonadIO m, MonadError 
 interactiveIdentityUpdate term fidentity = do
     identity <- mergeIdentity fidentity
     name <- liftIO $ do
-        setPrompt term $ T.unpack $ T.concat $ concat
-            [ [ T.pack "Name" ]
+        setPrompt term $ mconcat $ concat
+            [ [ "Name" ]
             , case idName identity of
-                   Just name -> [T.pack " [", name, T.pack "]"]
-                   Nothing -> []
-            , [ T.pack ": " ]
+                  Just name -> [ " [", plainText name, "]" ]
+                  Nothing -> []
+            , [ ": " ]
             ]
         getInputLine term $ KeepPrompt . maybe T.empty T.pack
 

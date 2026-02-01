@@ -1,4 +1,5 @@
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Terminal (
     Terminal,
@@ -28,19 +29,24 @@ import Control.Monad
 
 import Data.Char
 import Data.List
+import Data.String
 import Data.Text (Text)
 import Data.Text qualified as T
+import Data.Text.IO qualified as T
 
 import System.Console.ANSI
 import System.IO
 import System.IO.Error
+
+import Erebos.TextFormat
+import Erebos.TextFormat.Ansi
 
 
 data Terminal = Terminal
     { termLock :: MVar ()
     , termAnsi :: Bool
     , termCompletionFunc :: CompletionFunc IO
-    , termPrompt :: TVar String
+    , termPrompt :: TVar FormattedText
     , termShowPrompt :: TVar Bool
     , termInput :: TVar ( String, String )
     , termBottomLines :: TVar [ String ]
@@ -114,6 +120,9 @@ termPutStr Terminal {..} str = do
         putStr str
         hFlush stdout
 
+putAnsi :: AnsiText -> IO ()
+putAnsi = T.putStr . fromAnsiText
+
 
 getInput :: IO Input
 getInput = do
@@ -154,7 +163,7 @@ getInputLine term@Terminal {..} handleResult = do
             prompt <- atomically $ do
                 writeTVar termShowPrompt True
                 readTVar termPrompt
-            putStr $ prompt <> "\ESC[K"
+            putAnsi $ renderAnsiText prompt <> "\ESC[K"
             drawBottomLines term
             hFlush stdout
 
@@ -195,7 +204,7 @@ getInputLine term@Terminal {..} handleResult = do
                         prompt <- atomically $ do
                             writeTVar termInput ( pre', post )
                             getCurrentPromptLine term
-                        putStr $ "\r" <> prompt
+                        putAnsi $ "\r" <> prompt
                         hFlush stdout
 
                 termCompletionFunc ( T.pack pre, T.pack post ) >>= \case
@@ -222,7 +231,7 @@ getInputLine term@Terminal {..} handleResult = do
         InputChar c | isPrint c -> withInput $ \case
             ( _, post ) -> do
                 writeTVar termInput . first (++ [ c ]) =<< readTVar termInput
-                return $ c : (if null post then "" else "\ESC[s" <> post <> "\ESC[u")
+                return $ AnsiText $ T.pack $ c : (if null post then "" else "\ESC[s" <> post <> "\ESC[u")
 
         InputChar _ -> go
 
@@ -272,7 +281,7 @@ getInputLine term@Terminal {..} handleResult = do
         InputBackspace -> withInput $ \case
             ( pre@(_ : _), post ) -> do
                 writeTVar termInput ( init pre, post )
-                return $ "\b\ESC[K" <> (if null post then "" else "\ESC[s" <> post <> "\ESC[u")
+                return $ AnsiText $ "\b\ESC[K" <> (if null post then "" else "\ESC[s" <> T.pack post <> "\ESC[u")
             _ -> return ""
 
         InputClear -> withInput $ \_ -> do
@@ -286,11 +295,11 @@ getInputLine term@Terminal {..} handleResult = do
 
         InputMoveStart -> withInput $ \( pre, post ) -> do
             writeTVar termInput ( "", pre <> post )
-            return $ "\ESC[" <> show (length pre) <> "D"
+            return $ AnsiText $ T.pack $ "\ESC[" <> show (length pre) <> "D"
 
         InputMoveEnd -> withInput $ \( pre, post ) -> do
             writeTVar termInput ( pre <> post, "" )
-            return $ "\ESC[" <> show (length post) <> "C"
+            return $ AnsiText $ T.pack $ "\ESC[" <> show (length post) <> "C"
 
         InputEnd -> do
             atomically (readTVar termInput) >>= \case
@@ -299,22 +308,23 @@ getInputLine term@Terminal {..} handleResult = do
 
         InputEscape _ -> go
 
+    withInput :: (( String, String ) -> STM AnsiText) -> IO (Maybe String)
     withInput f = do
         withMVar termLock $ const $ do
             str <- atomically $ f =<< readTVar termInput
-            when (termAnsi && not (null str)) $ do
-                putStr str
+            when (termAnsi && not (T.null $ fromAnsiText str)) $ do
+                putAnsi str
                 hFlush stdout
         go
 
 
-getCurrentPromptLine :: Terminal -> STM String
+getCurrentPromptLine :: Terminal -> STM AnsiText
 getCurrentPromptLine Terminal {..} = do
     prompt <- readTVar termPrompt
     ( pre, post ) <- readTVar termInput
-    return $ prompt <> pre <> "\ESC[s" <> post <> "\ESC[u"
+    return $ mconcat [ renderAnsiText prompt, AnsiText (T.pack pre), "\ESC[s", AnsiText (T.pack post), "\ESC[u" ]
 
-setPrompt :: Terminal -> String -> IO ()
+setPrompt :: Terminal -> FormattedText -> IO ()
 setPrompt Terminal { termAnsi = False } _ = do
     return ()
 setPrompt term@Terminal {..} prompt = do
@@ -325,7 +335,7 @@ setPrompt term@Terminal {..} prompt = do
                 True -> do
                     promptLine <- getCurrentPromptLine term
                     return $ do
-                        putStr $ "\r\ESC[K" <> promptLine
+                        putAnsi $ "\r\ESC[K" <> promptLine
                         hFlush stdout
                 False -> return $ return ()
 
@@ -340,7 +350,7 @@ printLine tlTerminal@Terminal {..} str = do
                 readTVar termShowPrompt >>= \case
                     True -> getCurrentPromptLine tlTerminal
                     False -> return ""
-            putStr $ "\r\ESC[K" <> unlines strLines <> "\ESC[K" <> promptLine
+            putAnsi $ "\r\ESC[K" <> fromString (unlines strLines) <> "\ESC[K" <> promptLine
             drawBottomLines tlTerminal
           else do
             putStr $ unlines strLines
@@ -382,7 +392,7 @@ drawBottomLines Terminal {..} = do
                     True -> do
                         prompt <- readTVar termPrompt
                         ( pre, _ ) <- readTVar termInput
-                        return (displayWidth (prompt <> pre) + 1)
+                        return (formattedTextLength prompt + length pre + 1)
                     False -> do
                         return 0
             putStr $ concat
@@ -391,14 +401,6 @@ drawBottomLines Terminal {..} = do
                 , "\ESC[", show shift, "G"
                 ]
         [] -> return ()
-
-
-displayWidth :: String -> Int
-displayWidth = \case
-    ('\ESC' : '[' : rest) -> displayWidth $ drop 1 $ dropWhile (not . isAlpha) rest
-    ('\ESC' : _ : rest) -> displayWidth rest
-    (_ : rest) -> 1 + displayWidth rest
-    [] -> 0
 
 
 type CompletionFunc m = ( Text, Text ) -> m ( Text, [ Completion ] )
