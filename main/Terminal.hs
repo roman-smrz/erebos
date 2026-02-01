@@ -6,6 +6,7 @@ module Terminal (
     hasTerminalUI,
     withTerminal,
     setPrompt,
+    setPromptStatus,
     getInputLine,
     InputHandling(..),
 
@@ -47,6 +48,7 @@ data Terminal = Terminal
     , termAnsi :: Bool
     , termCompletionFunc :: CompletionFunc IO
     , termPrompt :: TVar FormattedText
+    , termPromptStatus :: TVar FormattedText
     , termShowPrompt :: TVar Bool
     , termInput :: TVar ( String, String )
     , termBottomLines :: TVar [ String ]
@@ -93,6 +95,7 @@ initTerminal termCompletionFunc = do
     termAnsi <- hSupportsANSI stdout
 #endif
     termPrompt <- newTVarIO ""
+    termPromptStatus <- newTVarIO ""
     termShowPrompt <- newTVarIO False
     termInput <- newTVarIO ( "", "" )
     termBottomLines <- newTVarIO []
@@ -162,7 +165,9 @@ getInputLine term@Terminal {..} handleResult = do
         withMVar termLock $ \_ -> do
             prompt <- atomically $ do
                 writeTVar termShowPrompt True
-                readTVar termPrompt
+                mappend
+                    <$> readTVar termPromptStatus
+                    <*> readTVar termPrompt
             putAnsi $ renderAnsiText prompt <> "\ESC[K"
             drawBottomLines term
             hFlush stdout
@@ -321,8 +326,14 @@ getInputLine term@Terminal {..} handleResult = do
 getCurrentPromptLine :: Terminal -> STM AnsiText
 getCurrentPromptLine Terminal {..} = do
     prompt <- readTVar termPrompt
+    status <- readTVar termPromptStatus
     ( pre, post ) <- readTVar termInput
-    return $ mconcat [ renderAnsiText prompt, AnsiText (T.pack pre), "\ESC[s", AnsiText (T.pack post), "\ESC[u" ]
+    return $ mconcat
+        [ renderAnsiText status
+        , renderAnsiText prompt
+        , AnsiText (T.pack pre), "\ESC[s"
+        , AnsiText (T.pack post), "\ESC[u"
+        ]
 
 setPrompt :: Terminal -> FormattedText -> IO ()
 setPrompt Terminal { termAnsi = False } _ = do
@@ -331,6 +342,21 @@ setPrompt term@Terminal {..} prompt = do
     withMVar termLock $ \_ -> do
         join $ atomically $ do
             writeTVar termPrompt prompt
+            readTVar termShowPrompt >>= \case
+                True -> do
+                    promptLine <- getCurrentPromptLine term
+                    return $ do
+                        putAnsi $ "\r\ESC[K" <> promptLine
+                        hFlush stdout
+                False -> return $ return ()
+
+setPromptStatus :: Terminal -> FormattedText -> IO ()
+setPromptStatus Terminal { termAnsi = False } _ = do
+    return ()
+setPromptStatus term@Terminal {..} prompt = do
+    withMVar termLock $ \_ -> do
+        join $ atomically $ do
+            writeTVar termPromptStatus prompt
             readTVar termShowPrompt >>= \case
                 True -> do
                     promptLine <- getCurrentPromptLine term
@@ -391,8 +417,9 @@ drawBottomLines Terminal {..} = do
                 readTVar termShowPrompt >>= \case
                     True -> do
                         prompt <- readTVar termPrompt
+                        status <- readTVar termPromptStatus
                         ( pre, _ ) <- readTVar termInput
-                        return (formattedTextLength prompt + length pre + 1)
+                        return (formattedTextLength status + formattedTextLength prompt + length pre + 1)
                     False -> do
                         return 0
             putStr $ concat
