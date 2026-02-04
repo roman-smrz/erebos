@@ -418,6 +418,9 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
                                     Left err -> extPrintLn $ "Failed to send dm echo: " <> err
                     _ -> return ()
 
+            updatePromptStatus term erebosHead
+    updatePromptStatus term erebosHead
+
     peers <- liftIO $ newMVar []
     contextOptions <- liftIO $ newMVar ( Nothing, [] )
     chatroomSetVar <- liftIO $ newEmptyMVar
@@ -604,6 +607,24 @@ getSelectedOrManualContext = do
         "" -> gets csContext
         str | all isDigit str -> getContextByIndex id (read str)
         _ -> throwOtherError "invalid index"
+
+updatePromptStatus :: Terminal -> Head LocalState -> IO ()
+updatePromptStatus term h = do
+    conversations <- mapMaybe checkNew <$> flip runReaderT h lookupConversations
+    setPromptStatus term $ withStyle (setForegroundColor BrightYellow noStyle) $ formatStatus (length conversations) <> " "
+  where
+    checkNew conv
+        | (msg : _) <- conversationHistory conv
+        , messageUnread msg
+        = Just ( conv, msg )
+    checkNew _ = Nothing
+
+    formatStatus 0 = withStyle (setForegroundColor BrightBlack noStyle) "--"
+    formatStatus 1 = withStyle (setForegroundColor BrightYellow noStyle) " *"
+    formatStatus n
+        | n < 10 = withStyle (setForegroundColor BrightYellow noStyle) $ plainText $ T.pack (show n) <> "*"
+        | otherwise = withStyle (setForegroundColor BrightYellow noStyle) $ plainText $ "X*"
+
 
 commands :: [(String, Command)]
 commands =
