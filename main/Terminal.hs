@@ -7,6 +7,7 @@ module Terminal (
     withTerminal,
     setPrompt,
     setPromptStatus,
+    showPrompt, hidePrompt,
     getInputLine,
     InputHandling(..),
 
@@ -117,12 +118,6 @@ withTerminal compl act = do
             act term
 
 
-termPutStr :: Terminal -> String -> IO ()
-termPutStr Terminal {..} str = do
-    withMVar termLock $ \_ -> do
-        putStr str
-        hFlush stdout
-
 putAnsi :: AnsiText -> IO ()
 putAnsi = T.putStr . fromAnsiText
 
@@ -161,17 +156,6 @@ getInput = do
 
 getInputLine :: Terminal -> (Maybe String -> InputHandling a) -> IO a
 getInputLine term@Terminal {..} handleResult = do
-    when termAnsi $ do
-        withMVar termLock $ \_ -> do
-            prompt <- atomically $ do
-                writeTVar termShowPrompt True
-                mappend
-                    <$> readTVar termPromptStatus
-                    <*> readTVar termPrompt
-            putAnsi $ renderAnsiText prompt <> "\ESC[K"
-            drawBottomLines term
-            hFlush stdout
-
     mbLine <- go
     forM_ mbLine $ \line -> do
         let addLine xs
@@ -182,15 +166,15 @@ getInputLine term@Terminal {..} handleResult = do
             writeTVar termHistory . addLine =<< readTVar termHistory
             writeTVar termHistoryPos 0
 
-    case handleResult mbLine of
-        KeepPrompt x -> do
-            when termAnsi $ do
-                termPutStr term "\n\ESC[J"
-            return x
-        ErasePrompt x -> do
-            when termAnsi $ do
-                termPutStr term "\r\ESC[J"
-            return x
+    ( x, c ) <- case handleResult mbLine of
+        KeepPrompt x -> return ( x, AnsiText "\n" )
+        ErasePrompt x -> return ( x, AnsiText "\r" )
+    when termAnsi $ do
+        withMVar termLock $ \_ -> do
+            prompt <- atomically $ getCurrentPromptLine term
+            putAnsi $ c <> AnsiText "\ESC[J" <> prompt
+    return x
+
   where
     go = getInput >>= \case
         InputChar '\n' -> do
@@ -198,7 +182,6 @@ getInputLine term@Terminal {..} handleResult = do
                 ( pre, post ) <- readTVar termInput
                 writeTVar termInput ( "", "" )
                 when termAnsi $ do
-                    writeTVar termShowPrompt False
                     writeTVar termBottomLines []
                 return $ Just $ pre ++ post
 
@@ -325,8 +308,9 @@ getInputLine term@Terminal {..} handleResult = do
 
 getCurrentPromptLine :: Terminal -> STM AnsiText
 getCurrentPromptLine Terminal {..} = do
-    prompt <- readTVar termPrompt
-    status <- readTVar termPromptStatus
+    sp <- readTVar termShowPrompt
+    prompt <- if sp then readTVar termPrompt else return ""
+    status <- if sp then readTVar termPromptStatus else return ""
     ( pre, post ) <- readTVar termInput
     return $ mconcat
         [ renderAnsiText status
@@ -334,6 +318,13 @@ getCurrentPromptLine Terminal {..} = do
         , AnsiText (T.pack pre), "\ESC[s"
         , AnsiText (T.pack post), "\ESC[u"
         ]
+
+redrawPrompt :: Terminal -> STM (IO ())
+redrawPrompt term = do
+    promptLine <- getCurrentPromptLine term
+    return $ do
+        putAnsi $ "\r\ESC[K" <> promptLine
+        hFlush stdout
 
 setPrompt :: Terminal -> FormattedText -> IO ()
 setPrompt Terminal { termAnsi = False } _ = do
@@ -343,11 +334,7 @@ setPrompt term@Terminal {..} prompt = do
         join $ atomically $ do
             writeTVar termPrompt prompt
             readTVar termShowPrompt >>= \case
-                True -> do
-                    promptLine <- getCurrentPromptLine term
-                    return $ do
-                        putAnsi $ "\r\ESC[K" <> promptLine
-                        hFlush stdout
+                True -> redrawPrompt term
                 False -> return $ return ()
 
 setPromptStatus :: Terminal -> FormattedText -> IO ()
@@ -358,11 +345,31 @@ setPromptStatus term@Terminal {..} prompt = do
         join $ atomically $ do
             writeTVar termPromptStatus prompt
             readTVar termShowPrompt >>= \case
+                True -> redrawPrompt term
+                False -> return $ return ()
+
+showPrompt :: Terminal -> IO ()
+showPrompt Terminal { termAnsi = False } = do
+    return ()
+showPrompt term@Terminal {..} = do
+    withMVar termLock $ \_ -> do
+        join $ atomically $ do
+            readTVar termShowPrompt >>= \case
+                False -> do
+                    writeTVar termShowPrompt True
+                    redrawPrompt term
+                True -> return $ return ()
+
+hidePrompt :: Terminal -> IO ()
+hidePrompt Terminal { termAnsi = False } = do
+    return ()
+hidePrompt term@Terminal {..} = do
+    withMVar termLock $ \_ -> do
+        join $ atomically $ do
+            readTVar termShowPrompt >>= \case
                 True -> do
-                    promptLine <- getCurrentPromptLine term
-                    return $ do
-                        putAnsi $ "\r\ESC[K" <> promptLine
-                        hFlush stdout
+                    writeTVar termShowPrompt False
+                    redrawPrompt term
                 False -> return $ return ()
 
 printLine :: Terminal -> String -> IO TerminalLine

@@ -335,6 +335,7 @@ main = do
 
 interactiveLoop :: Storage -> Options -> IO ()
 interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
+    showPrompt term
     erebosHead <- either (fail . showErebosError) return <=< runExceptT . flip runReaderT st $ do
         case optCreateIdentity opts of
             Nothing -> loadLocalStateHead term
@@ -510,6 +511,7 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
         , csWatchChatrooms = watched
         , csQuit = False
         }
+    hidePrompt term
 
 
 data CommandInput = CommandInput
