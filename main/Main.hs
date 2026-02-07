@@ -418,8 +418,10 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
                                     Left err -> extPrintLn $ "Failed to send dm echo: " <> err
                     _ -> return ()
 
-            updatePromptStatus term erebosHead
-    updatePromptStatus term erebosHead
+            withMVar contextVar $ \ctx -> do
+                updatePromptStatus term erebosHead . either (const Nothing) Just =<<
+                    (runExceptT $ flip runReaderT erebosHead $ getConversationFromContext ctx)
+    updatePromptStatus term erebosHead Nothing
 
     peers <- liftIO $ newMVar []
     contextOptions <- liftIO $ newMVar ( Nothing, [] )
@@ -587,7 +589,9 @@ getSelectedChatroom = gets csContext >>= \case
 getSelectedConversation :: CommandM Conversation
 getSelectedConversation = gets csContext >>= getConversationFromContext
 
-getConversationFromContext :: CommandContext -> CommandM Conversation
+getConversationFromContext
+    :: (MonadIO m, MonadError ErebosError m, MonadHead LocalState m)
+    => CommandContext -> m Conversation
 getConversationFromContext = \case
     SelectedPeer peer -> getPeerIdentity peer >>= \case
         PeerIdentityFull pid -> directMessageConversation $ finalOwner pid
@@ -609,14 +613,15 @@ getSelectedOrManualContext = do
         str | all isDigit str -> getContextByIndex id (read str)
         _ -> throwOtherError "invalid index"
 
-updatePromptStatus :: Terminal -> Head LocalState -> IO ()
-updatePromptStatus term h = do
+updatePromptStatus :: Terminal -> Head LocalState -> Maybe Conversation -> IO ()
+updatePromptStatus term h current = do
     conversations <- mapMaybe checkNew <$> flip runReaderT h lookupConversations
     setPromptStatus term $ withStyle (setForegroundColor BrightYellow noStyle) $ formatStatus (length conversations) <> " "
   where
     checkNew conv
         | (msg : _) <- conversationHistory conv
         , messageUnread msg
+        , maybe True (not . isSameConversation conv) current
         = Just ( conv, msg )
     checkNew _ = Nothing
 
@@ -767,10 +772,16 @@ cmdSelectContext = do
             when (not (roomStateSubscribe rstate)) $ do
                 chatroomSetSubscribe (head $ roomStateData rstate) True
         _ -> return ()
-    flip catchError (\_ -> return ()) $ do
-        conv <- getConversationFromContext ctx
-        tzone <- liftIO $ getCurrentTimeZone
-        mapM_ (cmdPutStrLn . formatMessageFT tzone) $ takeWhile messageUnread $ conversationHistory conv
+
+    term <- asks ciTerminal
+    h <- gets csHead
+    (runExceptT $ flip runReaderT h $ getConversationFromContext ctx) >>= \case
+        Right conv -> do
+            liftIO $ updatePromptStatus term h (Just conv)
+            tzone <- liftIO $ getCurrentTimeZone
+            mapM_ (cmdPutStrLn . formatMessageFT tzone) $ takeWhile messageUnread $ conversationHistory conv
+        Left _ -> do
+            liftIO $ updatePromptStatus term h Nothing
 
 cmdSend :: Command
 cmdSend = void $ do
