@@ -12,6 +12,7 @@ data FormattedText
     = PlainText Text
     | ConcatenatedText [ FormattedText ]
     | FormattedText TextStyle FormattedText
+    | EndWithNewline FormattedText
 
 instance IsString FormattedText where
     fromString = PlainText . fromString

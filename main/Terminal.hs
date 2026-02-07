@@ -31,7 +31,6 @@ import Control.Monad
 
 import Data.Char
 import Data.List
-import Data.String
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as T
@@ -372,21 +371,23 @@ hidePrompt term@Terminal {..} = do
                     redrawPrompt term
                 False -> return $ return ()
 
-printLine :: Terminal -> String -> IO TerminalLine
+printLine :: Terminal -> FormattedText -> IO TerminalLine
 printLine tlTerminal@Terminal {..} str = do
     withMVar termLock $ \_ -> do
-        let strLines = lines str
-            tlLineCount = length strLines
+        let tlLineCount = formattedTextHeight str
         if termAnsi
           then do
             promptLine <- atomically $ do
                 readTVar termShowPrompt >>= \case
                     True -> getCurrentPromptLine tlTerminal
                     False -> return ""
-            putAnsi $ "\r\ESC[K" <> fromString (unlines strLines) <> "\ESC[K" <> promptLine
+            putAnsi $ mconcat
+                [ AnsiText "\r\ESC[K", renderAnsiText $ endWithNewline str
+                , AnsiText "\ESC[K", promptLine
+                ]
             drawBottomLines tlTerminal
           else do
-            putStr $ unlines strLines
+            T.putStr $ renderPlainText $ endWithNewline str
 
         hFlush stdout
         return TerminalLine {..}

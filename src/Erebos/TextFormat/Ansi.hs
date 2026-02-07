@@ -8,6 +8,8 @@ module Erebos.TextFormat.Ansi (
 ) where
 
 import Control.Applicative
+import Control.Monad.State
+import Control.Monad.Writer
 
 import Data.String
 import Data.Text (Text)
@@ -20,19 +22,38 @@ newtype AnsiText = AnsiText { fromAnsiText :: Text }
     deriving (Eq, Ord, Semigroup, Monoid, IsString)
 
 
+data RenderState = RenderState
+    { rsEndedWithNewline :: Bool
+    }
+
+initialRenderState :: RenderState
+initialRenderState = RenderState
+    { rsEndedWithNewline = True
+    }
+
 renderAnsiText :: FormattedText -> AnsiText
-renderAnsiText = AnsiText . go ( Nothing, Nothing )
+renderAnsiText ft = AnsiText $ T.concat $ execWriter $ flip evalStateT initialRenderState $ go ( Nothing, Nothing ) ft
   where
+    go :: ( Maybe Color, Maybe Color ) -> FormattedText -> StateT RenderState (Writer [ Text ]) ()
     go cur@( cfg, cbg ) = \case
-        PlainText text -> text
-        ConcatenatedText ftexts -> mconcat $ map (go cur) ftexts
-        FormattedText (CustomTextColor fg bg) ftext -> mconcat
-            [ ansiColor fg bg
-            , go ( fg <|> cfg, bg <|> cbg ) ftext
-            , ansiColor
+        PlainText text -> do
+            tell [ text ]
+            case T.unsnoc text of
+                Just ( _, c ) -> modify (\s -> s { rsEndedWithNewline = c == '\n' })
+                Nothing -> return ()
+        ConcatenatedText ftexts -> mconcat <$> mapM (go cur) ftexts
+        FormattedText (CustomTextColor fg bg) ftext -> do
+            tell [ ansiColor fg bg ]
+            go ( fg <|> cfg, bg <|> cbg ) ftext
+            tell [ ansiColor
                 (if fg /= cfg then cfg <|> Just DefaultColor else Nothing)
                 (if bg /= cbg then cbg <|> Just DefaultColor else Nothing)
-            ]
+                ]
+        EndWithNewline ftext -> do
+            go cur ftext
+            gets rsEndedWithNewline >>= \case
+                True -> return ()
+                False -> tell [ "\n" ] >> modify (\s -> s { rsEndedWithNewline = True })
 
 
 ansiColor :: Maybe Color -> Maybe Color -> Text

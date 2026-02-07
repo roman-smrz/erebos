@@ -55,7 +55,6 @@ import Erebos.Storage
 import Erebos.Storage.Merge
 import Erebos.Sync
 import Erebos.TextFormat
-import Erebos.TextFormat.Ansi
 
 import State
 import Terminal
@@ -329,7 +328,7 @@ main = do
                | otherwise -> interactiveLoop st opts
 
         (cmdname : _) -> do
-            hPutStrLn stderr $ "Unknown command `" <> cmdname <> "'"
+            hPutStrLn stderr $ "Unknown command ‘" <> cmdname <> "’"
             exitFailure
 
 
@@ -340,7 +339,7 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
         case optCreateIdentity opts of
             Nothing -> loadLocalStateHead term
             Just ( devName, names ) -> createLocalStateHead (names ++ [ devName ])
-    void $ printLine term $ T.unpack $ displayIdentity $ headLocalIdentity erebosHead
+    void $ printLine term $ plainText $ displayIdentity $ headLocalIdentity erebosHead
 
     let tui = hasTerminalUI term
     let extPrintLn = void . printLine term
@@ -406,7 +405,7 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
                         SelectedConversation conv -> return $ conversationPeer conv
                         _ -> return Nothing
                     when (not tui || maybe False (msgPeer cur `sameIdentity`) mbpid) $ do
-                        extPrintLn $ formatDirectMessage tzone msg
+                        extPrintLn $ plainText $ T.pack $ formatDirectMessage tzone msg
 
                 case optDmBotEcho opts of
                     Just prefix
@@ -436,11 +435,11 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
         return Nothing
 
     server <- liftIO $ do
-        startServer (optServer opts) erebosHead extPrintLn $
+        startServer (optServer opts) erebosHead (extPrintLn . plainText . T.pack) $
             map soptService $ filter soptEnabled $ optServices opts
 
     case optWebSocketServer opts of
-        Just port -> startWebsocketServer server "::" port extPrintLn
+        Just port -> startWebsocketServer server "::" port (extPrintLn . plainText . T.pack)
         Nothing -> return ()
 
     void $ liftIO $ forkIO $ void $ forever $ do
@@ -466,7 +465,7 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
                       -> do
                         let ( clist', idx ) = ctxUpdate (1 :: Int) clist
                         when (Just shown /= op) $ do
-                            extPrintLn $ "[" <> show idx <> "] PEER " <> updateType' <> " " <> shown
+                            extPrintLn $ plainText $ T.pack $ "[" <> show idx <> "] PEER " <> updateType' <> " " <> shown
                         return ( Just WatchPeers, clist' )
                     cur -> return cur
             _ -> return ()
@@ -500,7 +499,7 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
                     | csQuit cstate' -> mzero
                     | otherwise      -> return cstate'
                 Left err -> do
-                    lift $ extPrintLn $ "Error: " ++ showErebosError err
+                    lift $ extPrintLn $ withStyle (setForegroundColor BrightRed noStyle) $ plainText $ T.pack $ "Error: " ++ showErebosError err
                     return cstate
 
     let loop (Just cstate) = runMaybeT (process cstate) >>= loop
@@ -518,7 +517,7 @@ data CommandInput = CommandInput
     { ciServer :: Server
     , ciTerminal :: Terminal
     , ciLine :: String
-    , ciPrint :: String -> IO ()
+    , ciPrint :: FormattedText -> IO ()
     , ciOptions :: Options
     , ciPeers :: CommandM [(Peer, String)]
     , ciContextOptions :: CommandM [ CommandContext ]
@@ -670,13 +669,13 @@ commandCompletion = completeWordWithPrev Nothing [ ' ', '\t', '\n', '\r' ] $ cur
     sortedCommandNames = sort $ map fst commands
 
 
-cmdPutStrLn :: String -> Command
+cmdPutStrLn :: FormattedText -> Command
 cmdPutStrLn str = do
     term <- asks ciTerminal
     void $ liftIO $ printLine term str
 
 cmdUnknown :: String -> Command
-cmdUnknown cmd = cmdPutStrLn $ "Unknown command: " ++ cmd
+cmdUnknown cmd = cmdPutStrLn $ withStyle (setForegroundColor BrightRed noStyle) $ plainText $ "Unknown command: ‘" <> T.pack cmd <> "’"
 
 cmdPeers :: Command
 cmdPeers = do
@@ -684,7 +683,7 @@ cmdPeers = do
     set <- asks ciSetContextOptions
     set WatchPeers $ map (SelectedPeer . fst) peers
     forM_ (zip [1..] peers) $ \(i :: Int, (_, name)) -> do
-        cmdPutStrLn $ "[" ++ show i ++ "] " ++ name
+        cmdPutStrLn $ plainText $ T.pack $ "[" ++ show i ++ "] " ++ name
 
 cmdPeerAdd :: Command
 cmdPeerAdd = void $ do
@@ -746,7 +745,7 @@ cmdMembers :: Command
 cmdMembers = do
     Just room <- findChatroomByStateData . head . roomStateData =<< getSelectedChatroom
     forM_ (chatroomMembers room) $ \x -> do
-        cmdPutStrLn $ maybe "<unnamed>" T.unpack $ idName x
+        cmdPutStrLn $ plainText $ fromMaybe "<unnamed>" $ idName x
 
 getContextByIndex :: (Maybe ContextWatchOptions -> Maybe ContextWatchOptions) -> Int -> CommandM CommandContext
 getContextByIndex f n = do
@@ -771,7 +770,7 @@ cmdSelectContext = do
     flip catchError (\_ -> return ()) $ do
         conv <- getConversationFromContext ctx
         tzone <- liftIO $ getCurrentTimeZone
-        mapM_ (cmdPutStrLn . T.unpack . fromAnsiText . renderAnsiText . formatMessageFT tzone) $ takeWhile messageUnread $ conversationHistory conv
+        mapM_ (cmdPutStrLn . formatMessageFT tzone) $ takeWhile messageUnread $ conversationHistory conv
 
 cmdSend :: Command
 cmdSend = void $ do
@@ -790,9 +789,9 @@ cmdHistory = void $ do
     case conversationHistory conv of
         thread@(_:_) -> do
             tzone <- liftIO $ getCurrentTimeZone
-            mapM_ (cmdPutStrLn . T.unpack . fromAnsiText . renderAnsiText . formatMessageFT tzone) $ reverse $ take 50 thread
+            mapM_ (cmdPutStrLn . formatMessageFT tzone) $ reverse $ take 50 thread
         [] -> do
-            cmdPutStrLn $ "<empty history>"
+            cmdPutStrLn $ withStyle (setForegroundColor BrightBlack noStyle) $ plainText "(empty history)"
 
 showIdentityDetails :: Foldable f => Identity f -> Text
 showIdentityDetails identity = T.unlines $ go $ reverse $ unfoldOwners identity
@@ -810,7 +809,7 @@ showIdentityDetails identity = T.unlines $ go $ reverse $ unfoldOwners identity
 
 cmdIdentity :: Command
 cmdIdentity = do
-    cmdPutStrLn . T.unpack . showIdentityDetails . localIdentity . fromStored =<< getLocalHead
+    cmdPutStrLn . plainText . showIdentityDetails . localIdentity . fromStored =<< getLocalHead
 
 cmdUpdateIdentity :: Command
 cmdUpdateIdentity = void $ do
@@ -827,7 +826,7 @@ cmdAttachReject :: Command
 cmdAttachReject = attachReject =<< getSelectedPeer
 
 watchChatroomsForCli
-    :: Bool -> (String -> IO ()) -> Head LocalState -> MVar (Set ChatroomState)
+    :: Bool -> (FormattedText -> IO ()) -> Head LocalState -> MVar (Set ChatroomState)
     -> MVar CommandContext -> MVar ( Maybe ContextWatchOptions, [ CommandContext ] )
     -> Maybe Int -> IO WatchedHead
 watchChatroomsForCli tui eprint h chatroomSetVar contextVar contextOptsVar autoSubscribe = do
@@ -838,14 +837,14 @@ watchChatroomsForCli tui eprint h chatroomSetVar contextVar contextOptsVar autoS
                 | currentRoots <- filterAncestors (concatMap storedRoots $ roomStateData rstate)
                 , any ((`intersectsSorted` currentRoots) . storedRoots) $ roomStateData rstate'
                 -> do
-                    eprint $ "[" <> show idx <> "] CHATROOM " <> updateType <> " " <> name
+                    eprint $ plainText $ T.pack $ "[" <> show idx <> "] CHATROOM " <> updateType <> " " <> name
                     return (SelectedChatroom rstate : rest)
             selected : rest
                 -> do
                     (selected : ) <$> ctxUpdate updateType (idx + 1) rstate rest
             []
                 -> do
-                    eprint $ "[" <> show idx <> "] CHATROOM " <> updateType <> " " <> name
+                    eprint $ plainText $ T.pack $ "[" <> show idx <> "] CHATROOM " <> updateType <> " " <> name
                     return [ SelectedChatroom rstate ]
           where
             name = maybe "<unnamed>" T.unpack $ roomName =<< roomStateRoom rstate
@@ -865,7 +864,7 @@ watchChatroomsForCli tui eprint h chatroomSetVar contextVar contextOptsVar autoS
                     forM_ (take (num - subscribedNum) notSubscribed) $ \rstate -> do
                         (runExceptT $ flip runReaderT h $ chatroomSetSubscribe (head $ roomStateData rstate) True) >>= \case
                              Right () -> return ()
-                             Left err -> eprint (showErebosError err)
+                             Left err -> eprint $ plainText $ T.pack $ showErebosError err
 
         Just diff -> do
             modifyMVar_ chatroomSetVar $ return . const set
@@ -901,11 +900,11 @@ watchChatroomsForCli tui eprint h chatroomSetVar contextVar contextOptsVar autoS
                             when (not tui || isSelected) $ do
                                 tzone <- getCurrentTimeZone
                                 forM_ (reverse $ getMessagesSinceState rstate oldroom) $ \msg -> do
-                                    eprint $ concat $
-                                        [ formatTime defaultTimeLocale "[%H:%M] " $ utcToLocalTime tzone $ zonedTimeToUTC $ cmsgTime msg
-                                        , maybe "<unnamed>" T.unpack $ idName $ cmsgFrom msg
+                                    eprint $ plainText $ T.concat
+                                        [ T.pack $ formatTime defaultTimeLocale "[%H:%M] " $ utcToLocalTime tzone $ zonedTimeToUTC $ cmsgTime msg
+                                        , fromMaybe "<unnamed>" $ idName $ cmsgFrom msg
                                         , if cmsgLeave msg then " left" else ""
-                                        , maybe (if cmsgLeave msg then "" else " joined") ((": " ++) . T.unpack) $ cmsgText msg
+                                        , maybe (if cmsgLeave msg then "" else " joined") ((": " <>)) $ cmsgText msg
                                         ]
                     modifyMVar_ subscribedNumVar $ return
                         . (if roomStateSubscribe rstate then (+ 1) else id)
@@ -934,7 +933,7 @@ cmdChatrooms = do
     set <- asks ciSetContextOptions
     set WatchChatrooms $ map SelectedChatroom chatroomList
     forM_ (zip [1..] chatroomList) $ \(i :: Int, rstate) -> do
-        cmdPutStrLn $ "[" ++ show i ++ "] " ++ maybe "<unnamed>" T.unpack (roomName =<< roomStateRoom rstate)
+        cmdPutStrLn $ plainText $ "[" <> T.pack (show i) <> "] " <> fromMaybe "<unnamed>" (roomName =<< roomStateRoom rstate)
 
 cmdChatroomCreatePublic :: Command
 cmdChatroomCreatePublic = do
@@ -962,7 +961,7 @@ cmdContacts = do
     set <- asks ciSetContextOptions
     set WatchContacts $ map SelectedContact contacts
     forM_ (zip [1..] contacts) $ \(i :: Int, c) -> do
-        cmdPutStrLn $ T.unpack $ T.concat
+        cmdPutStrLn $ plainText $ T.concat
             [ "[", T.pack (show i), "] ", contactName c
             , case contactIdentity c of
                    Just idt | cname <- displayIdentity idt
@@ -994,7 +993,7 @@ cmdInviteContact = do
         Just (self :: ComposedIdentity) -> do
             invite <- createSingleContactInvite name
             dgst : _ <- return $ refDigest . storedRef <$> idDataF self
-            cmdPutStrLn $ "https://app.erebosprotocol.net/#inv" <> (maybe "" (("=" <>) . showInviteToken) (inviteToken invite)) <> "&from=blake2%23" <> drop 7 (show dgst)
+            cmdPutStrLn $ plainText $ "https://app.erebosprotocol.net/#inv" <> (maybe "" (("=" <>) . textInviteToken) (inviteToken invite)) <> "&from=blake2%23" <> T.pack (drop 7 (show dgst))
         Nothing -> do
             throwOtherError "no shared identity"
 
@@ -1026,7 +1025,7 @@ cmdConversations = do
     set <- asks ciSetContextOptions
     set WatchConversations $ map SelectedConversation conversations
     forM_ (zip [1..] conversations) $ \(i :: Int, conv) -> do
-        cmdPutStrLn $ "[" ++ show i ++ "] " ++ T.unpack (conversationName conv)
+        cmdPutStrLn $ plainText $ "[" <> T.pack (show i) <> "] " <> conversationName conv
 
 cmdNew :: Command
 cmdNew = do
@@ -1035,7 +1034,7 @@ cmdNew = do
     set WatchConversations $ map (SelectedConversation . fst) conversations
     tzone <- liftIO $ getCurrentTimeZone
     forM_ (zip [1..] conversations) $ \(i :: Int, ( conv, msg )) -> do
-        cmdPutStrLn $ "[" ++ show i ++ "] " ++ T.unpack (conversationName conv) ++ " " ++ T.unpack (fromAnsiText $ renderAnsiText $ formatMessageFT tzone msg)
+        cmdPutStrLn $ plainText ("[" <> T.pack (show i) <> "] " <> conversationName conv <> " ") <> formatMessageFT tzone msg
   where
     checkNew conv
         | (msg : _) <- conversationHistory conv
@@ -1049,23 +1048,23 @@ cmdDetails = do
     getSelectedOrManualContext >>= \case
         SelectedPeer peer -> do
             paddr <- getPeerAddress peer
-            cmdPutStrLn $ unlines
+            cmdPutStrLn $ plainText $ T.unlines
                 [ "Network peer:"
-                , "  " <> show paddr
+                , "  " <> T.pack (show paddr)
                 ]
             getPeerIdentity peer >>= \case
                 PeerIdentityUnknown _ -> do
                     cmdPutStrLn $ "unknown identity"
                 PeerIdentityRef wref _ -> do
                     cmdPutStrLn $ "Identity ref:"
-                    cmdPutStrLn $ "  " <> BC.unpack (showRefDigest $ wrDigest wref)
+                    cmdPutStrLn $ plainText $ "  " <> T.decodeUtf8 (showRefDigest $ wrDigest wref)
                 PeerIdentityFull pid -> printContactOrIdentityDetails pid
 
         SelectedContact contact -> do
             printContactDetails contact
 
         SelectedChatroom rstate -> do
-            cmdPutStrLn $ "Chatroom: " <> (T.unpack $ fromMaybe (T.pack "<unnamed>") $ roomName =<< roomStateRoom rstate)
+            cmdPutStrLn $ plainText $ "Chatroom: " <> (fromMaybe "<unnamed>" $ roomName =<< roomStateRoom rstate)
 
         SelectedConversation conv -> do
             case conversationPeer conv of
@@ -1084,7 +1083,7 @@ cmdDetails = do
         cmdPutStrLn $ "Contact:"
         prefix <- case contactCustomName contact of
             Just name -> do
-                cmdPutStrLn $ "  " <> T.unpack name
+                cmdPutStrLn $ plainText $ "  " <> name
                 return $ Just "alias of"
             Nothing -> do
                 return $ Nothing
@@ -1101,11 +1100,11 @@ cmdDetails = do
 
     printIdentityDetailsBody prefix identity = do
         forM_ (zip (False : repeat True) $ unfoldOwners identity) $ \(owned, cpid) -> do
-            cmdPutStrLn $ unwords $ concat
+            cmdPutStrLn $ plainText $ T.unwords $ concat
                 [ [ "  " ]
                 , if owned then [ "owned by" ] else maybeToList prefix
-                , [ maybe "<unnamed>" T.unpack (idName cpid) ]
-                , map (BC.unpack . showRefDigest . refDigest . storedRef) $ idExtDataF cpid
+                , [ fromMaybe "<unnamed>" (idName cpid) ]
+                , map (T.decodeUtf8 . showRefDigest . refDigest . storedRef) $ idExtDataF cpid
                 ]
 
 cmdDiscovery :: Command
