@@ -165,13 +165,14 @@ getInputLine term@Terminal {..} handleResult = do
             writeTVar termHistory . addLine =<< readTVar termHistory
             writeTVar termHistoryPos 0
 
-    ( x, c ) <- case handleResult mbLine of
-        KeepPrompt x -> return ( x, AnsiText "\n" )
-        ErasePrompt x -> return ( x, AnsiText "\r" )
+    ( x, clear ) <- case handleResult mbLine of
+        KeepPrompt x -> return ( x, \statusLen -> AnsiText $ "\ESC[" <> T.pack (show statusLen) <> "G\ESC[1K\n\ESC[J" )
+        ErasePrompt x -> return ( x, \_ -> AnsiText "\r\ESC[J" )
     when termAnsi $ do
         withMVar termLock $ \_ -> do
+            status <- atomically $ readTVar termPromptStatus
             prompt <- atomically $ getCurrentPromptLine term
-            putAnsi $ c <> AnsiText "\ESC[J" <> prompt
+            putAnsi $ clear (formattedTextLength status) <> prompt
     return x
 
   where
