@@ -9,6 +9,8 @@ module Erebos.Storage.Backend (
     Complete, Partial,
     Storage, PartialStorage,
     newStorage,
+    withStorageBackend,
+
     refDigestBytes,
 
     WatchID, startWatchID, nextWatchID,
@@ -29,6 +31,9 @@ newStorage stBackend = do
     stRefGeneration <- newMVar =<< HT.new
     stRefRoots <- newMVar =<< HT.new
     return Storage {..}
+
+withStorageBackend :: Storage' c -> (forall bck. (StorageBackend bck, BackendCompleteness bck ~ c) => bck -> IO a) -> IO a
+withStorageBackend Storage {..} f = f stBackend
 
 
 refDigestBytes :: RefDigest -> ByteString

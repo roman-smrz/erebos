@@ -47,6 +47,8 @@ module Erebos.Object.Internal (
 ) where
 
 import Control.Applicative
+import Control.DeepSeq
+import Control.Exception
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
@@ -200,6 +202,12 @@ storeObject = unsafeStoreObject
 
 storeRawBytes :: PartialStorage -> BL.ByteString -> IO PartialRef
 storeRawBytes = unsafeStoreRawBytes
+
+unsafeStoreRawBytes :: Storage' c -> BL.ByteString -> IO (Ref' c)
+unsafeStoreRawBytes st@Storage {..} raw = do
+    dgst <- evaluate $ force $ hashToRefDigest raw
+    backendStoreBytes stBackend dgst raw
+    return $ Ref st dgst
 
 serializeRecItem :: ByteString -> RecItem' c -> [ByteString]
 serializeRecItem name (RecEmpty) = [name, BC.pack ":e", BC.singleton ' ', BC.singleton '\n']

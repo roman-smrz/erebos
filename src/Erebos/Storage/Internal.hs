@@ -15,7 +15,6 @@ module Erebos.Storage.Internal (
     StorageBackend(..),
     Complete, Partial,
 
-    unsafeStoreRawBytes,
     ioLoadBytesFromStorage,
 
     Generation(..),
@@ -26,7 +25,6 @@ module Erebos.Storage.Internal (
 import Control.Arrow
 import Control.Concurrent
 import Control.DeepSeq
-import Control.Exception
 import Control.Monad.Identity
 
 import Crypto.Hash
@@ -274,12 +272,6 @@ instance StorageCompleteness Partial where
     type LoadResult Partial a = Either RefDigest a
     returnLoadResult = id
     ioLoadBytes (Ref st dgst) = maybe (Left dgst) Right <$> ioLoadBytesFromStorage st dgst
-
-unsafeStoreRawBytes :: Storage' c -> BL.ByteString -> IO (Ref' c)
-unsafeStoreRawBytes st@Storage {..} raw = do
-    dgst <- evaluate $ force $ hashToRefDigest raw
-    backendStoreBytes stBackend dgst raw
-    return $ Ref st dgst
 
 ioLoadBytesFromStorage :: Storage' c -> RefDigest -> IO (Maybe BL.ByteString)
 ioLoadBytesFromStorage Storage {..} dgst =
