@@ -323,6 +323,7 @@ instance Service DiscoveryService where
 #ifdef ENABLE_ICE_SUPPORT
                         getIceConfig >>= \case
                             Just config -> do
+                                printOp <- asks svcPrintOp
                                 void $ liftIO $ forkIO $ do
                                     ice <- iceCreateSession config PjIceSessRoleControlling $ \ice -> do
                                         rinfo <- iceRemoteInfo ice
@@ -338,7 +339,7 @@ instance Service DiscoveryService where
                                             DiscoveryConnectionRequest (emptyConnection (Left $ storedRef $ idData self) edgst') { dconnIceInfo = Just rinfo }
                                         case res of
                                             Right _ -> return ()
-                                            Left err -> putStrLn $ "Discovery: failed to send connection request: " ++ err
+                                            Left err -> printOp $ "Discovery: failed to send connection request: " ++ err
 
                                     runAsService $ do
                                         let upd dp = dp { dpIceSession = Just ice }
@@ -391,12 +392,13 @@ instance Service DiscoveryService where
                     peer <- asks svcPeer
                     getIceConfig >>= \case
                         Just config -> do
+                            printOp <- asks svcPrintOp
                             liftIO $ void $ iceCreateSession config PjIceSessRoleControlled $ \ice -> do
                                 rinfo <- iceRemoteInfo ice
                                 res <- runExceptT $ sendToPeer peer $ DiscoveryConnectionResponse rconn { dconnIceInfo = Just rinfo }
                                 case res of
                                     Right _ -> iceConnect ice prinfo $ void $ serverPeerIce server ice
-                                    Left err -> putStrLn $ "Discovery: failed to send connection response: " ++ err
+                                    Left err -> printOp $ "Discovery: failed to send connection response: " ++ err
                         Nothing -> do
                             return ()
 #endif
