@@ -19,7 +19,7 @@ module Erebos.Network (
     serverPeer,
     serverPeerCustom,
     findPeer,
-    dropPeer,
+    dropPeer, dropPeerAddress,
     isPeerDropped,
     sendToPeer, sendManyToPeer,
     sendToPeerStored, sendManyToPeerStored,
@@ -347,8 +347,12 @@ startServer serverOptions serverOrigHead logd' serverServices = do
                 writeFlowIO serverRawPath (DatagramAddress saddr, msg)
 
             forkServerThread server $ forever $ do
-                (paddr, msg) <- readFlowIO serverRawPath
-                handle (\(e :: SomeException) -> atomically . logd $ "failed to send packet to " ++ show paddr ++ ": " ++ show e) $ do
+                ( paddr, msg ) <- readFlowIO serverRawPath
+                let logAndDropAddress :: SomeException -> IO ()
+                    logAndDropAddress e = do
+                        atomically . logd $ "failed to send packet to " ++ show paddr ++ ": " ++ show e
+                        dropPeerAddress server paddr
+                handle logAndDropAddress $ do
                     case paddr of
                         CustomPeerAddress addr -> sendBytesToAddress addr msg
                         DatagramAddress addr -> void $ S.sendTo sock msg addr
@@ -885,13 +889,23 @@ findPeer server test = withMVar (serverPeers server) (helper . M.elems)
 
 dropPeer :: MonadIO m => Peer -> m ()
 dropPeer peer = liftIO $ do
-    modifyMVar_ (serverPeers $ peerServer peer) $ \pvalue -> do
-        atomically $ do
-            readTVar (peerState peer) >>= \case
-                PeerConnected conn -> connClose conn
-                _ -> return()
-            writeTVar (peerState peer) PeerDropped
-        return $ M.delete (peerAddress peer) pvalue
+    modifyMVar_ (serverPeers $ peerServer peer) $ dropPeerInner peer
+
+dropPeerAddress :: MonadIO m => Server -> PeerAddress -> m ()
+dropPeerAddress server paddr = liftIO $ do
+    modifyMVar_ (serverPeers server) $ \pvalue -> do
+        case find ((paddr ==) . peerAddress) pvalue of
+            Just peer -> dropPeerInner peer pvalue
+            Nothing -> return pvalue
+
+dropPeerInner :: Peer -> Map PeerAddress Peer -> IO (Map PeerAddress Peer)
+dropPeerInner peer pvalue = do
+    atomically $ do
+        readTVar (peerState peer) >>= \case
+            PeerConnected conn -> connClose conn
+            _ -> return()
+        writeTVar (peerState peer) PeerDropped
+    return $ M.delete (peerAddress peer) pvalue
 
 isPeerDropped :: MonadIO m => Peer -> m Bool
 isPeerDropped peer = liftIO $ atomically $ readTVar (peerState peer) >>= \case
@@ -952,7 +966,7 @@ sendToPeerList peer parts = do
     case res of
         Right () -> return ()
         Left err -> liftIO $ atomically $ writeTQueue (serverErrorLog $ peerServer peer) $
-            "failed to send packet to " <> show (peerAddress peer) <> ": " <> err
+            "failed to prepare packet to " <> show (peerAddress peer) <> ": " <> err
 
 sendToPeerS' :: SecurityRequirement -> Peer -> [TransportHeaderItem] -> TransportPacket Ref -> STM ()
 sendToPeerS' secure Peer {..} ackedBy packet = do
