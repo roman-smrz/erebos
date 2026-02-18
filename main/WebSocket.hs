@@ -30,7 +30,9 @@ instance PeerAddressType WebSocketAddress where
     sendBytesToAddress (WebSocketAddress _ conn) msg = do
         WS.sendDataMessage conn $ WS.Binary $ BL.fromStrict msg
     connectionToAddressClosed (WebSocketAddress _ conn) = do
-        WS.sendClose conn BL.empty
+        WS.sendClose conn BL.empty `catch` \e -> if
+            | Just WS.ConnectionClosed <- fromException e -> return ()
+            | otherwise -> throwIO e
 
 startWebsocketServer :: Server -> String -> Int -> (String -> IO ()) -> IO ()
 startWebsocketServer server addr port logd = do
@@ -40,7 +42,15 @@ startWebsocketServer server addr port logd = do
             u <- newUnique
             let paddr = WebSocketAddress u conn
             void $ serverPeerCustom server paddr
-            handle (\(e :: SomeException) -> logd $ "WebSocket thread exception: " ++ show e) $ do
+
+            let handler e
+                    | Just WS.CloseRequest {} <- fromException e = do
+                        dropPeerAddress server $ CustomPeerAddress paddr
+                    | Just WS.ConnectionClosed <- fromException e = do
+                        dropPeerAddress server $ CustomPeerAddress paddr
+                    | otherwise = do
+                        logd $ "WebSocket thread exception: " ++ show e
+            handle handler $ do
                 WS.withPingThread conn 30 (return ()) $ do
                     forever $ do
                         WS.receiveDataMessage conn >>= \case
