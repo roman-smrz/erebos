@@ -403,9 +403,7 @@ startServer serverOptions serverOrigHead logd' serverServices = do
                                         case paddr of
                                             DatagramAddress _ -> return ()
                                             CustomPeerAddress caddr -> connectionToAddressClosed caddr
-
                                         dropPeer peer
-                                        atomically $ writeTChan serverChanPeer peer
                             peerLoop
 
                     ReceivedAnnounce addr _ -> do
@@ -902,8 +900,10 @@ dropPeerInner :: Peer -> Map PeerAddress Peer -> IO (Map PeerAddress Peer)
 dropPeerInner peer pvalue = do
     atomically $ do
         readTVar (peerState peer) >>= \case
-            PeerConnected conn -> connClose conn
-            _ -> return()
+            PeerConnected conn -> do
+                connClose conn
+                writeTChan (serverChanPeer $ peerServer peer) peer
+            _ -> return ()
         writeTVar (peerState peer) PeerDropped
     return $ M.delete (peerAddress peer) pvalue
 
