@@ -31,7 +31,7 @@ module Erebos.Storable (
     loadZRef,
 
     Stored,
-    fromStored, storedRef,
+    fromStored, storedRef, refDigest,
     wrappedStore, wrappedLoad,
     copyStored,
     unsafeMapStored,

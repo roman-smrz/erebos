@@ -17,7 +17,9 @@ module Erebos.Conversation (
     isChatroomStateConversation,
     reloadConversation,
     lookupConversations,
+    lookupConversationByRef,
 
+    conversationReference,
     conversationName,
     conversationPeer,
     conversationHistory,
@@ -113,6 +115,12 @@ reloadConversation cur@(ChatroomConversation rstate) =
 lookupConversations :: MonadHead LocalState m => m [ Conversation ]
 lookupConversations = map DirectMessageConversation . dmThreadList . lookupSharedValue . lsShared . fromStored <$> getLocalHead
 
+lookupConversationByRef :: MonadHead LocalState m => RefDigest -> m (Maybe Conversation)
+lookupConversationByRef dgst = find ((dgst ==) . conversationReference) <$> lookupConversations
+
+
+conversationReference :: Conversation -> RefDigest
+conversationReference = withConversation convReference
 
 conversationName :: Conversation -> Text
 conversationName (DirectMessageConversation thread) = fromMaybe (T.pack "<unnamed>") $ idName $ msgPeer thread
