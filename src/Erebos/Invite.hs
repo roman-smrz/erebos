@@ -31,6 +31,7 @@ import Data.Ord
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Encoding
+import Data.Time.LocalTime
 
 import Erebos.Contact
 import Erebos.Discovery
@@ -49,12 +50,14 @@ import Erebos.Util
 data Invite = Invite
     { inviteData :: [ Stored InviteData ]
     , inviteToken :: Maybe InviteToken
-    , inviteAccepted :: [ Stored (Signed ExtendedIdentityData) ]
+    , inviteCreated :: Maybe ZonedTime
+    , inviteAccepted :: [ ( Stored (Signed ExtendedIdentityData), Maybe ZonedTime ) ]
     , inviteContact :: Maybe Text
     }
 
 data InviteData = InviteData
     { invdPrev :: [ Stored InviteData ]
+    , invdTime :: Maybe ZonedTime
     , invdToken :: Maybe InviteToken
     , invdAccepted :: Maybe (Stored (Signed ExtendedIdentityData))
     , invdContact :: Maybe Text
@@ -63,12 +66,14 @@ data InviteData = InviteData
 instance Storable InviteData where
     store' x = storeRec $ do
         mapM_ (storeRef "PREV") $ invdPrev x
+        mapM_ (storeDate "time") $ invdTime x
         mapM_ (storeBinary "token") $ invdToken x
         mapM_ (storeRef "accepted") $ invdAccepted x
         mapM_ (storeText "contact") $ invdContact x
 
     load' = loadRec $ InviteData
         <$> loadRefs "PREV"
+        <*> loadMbDate "time"
         <*> loadMbBinary "token"
         <*> loadMbRef "accepted"
         <*> loadMbText "contact"
@@ -93,7 +98,8 @@ instance Mergeable Invite where
     mergeSorted invdata = Invite
         { inviteData = invdata
         , inviteToken = findPropertyFirst invdToken invdata
-        , inviteAccepted = findProperty invdAccepted invdata
+        , inviteCreated = join $ findPropertyFirst (\invd -> (const $ invdTime invd) <$> invdTime invd) invdata
+        , inviteAccepted = findProperty (\invd -> ( , invdTime invd ) <$> invdAccepted invd) invdata
         , inviteContact = findPropertyFirst invdContact invdata
         }
 
@@ -161,9 +167,11 @@ instance SharedType (Set AcceptedInvite) where
 
 createSingleContactInvite :: MonadHead LocalState m => Text -> m Invite
 createSingleContactInvite name = do
+    time <- liftIO getZonedTime
     token <- liftIO $ getRandomBytes 32
     invite <- mergeSorted @Invite . (: []) <$> mstore InviteData
         { invdPrev = []
+        , invdTime = Just time
         , invdToken = Just token
         , invdAccepted = Nothing
         , invdContact = Just name
@@ -260,6 +268,7 @@ instance Service InviteService where
                     , [] <- inviteAccepted invite
                     -> do
                         asks (inviteHookAccepted . svcAttributes) >>= ($ invite)
+                        time <- liftIO getZonedTime
                         identity <- asks svcPeerIdentity
                         cdata <- mstore ContactData
                             { cdPrev = []
@@ -268,6 +277,7 @@ instance Service InviteService where
                             }
                         invdata <- mstore InviteData
                             { invdPrev = inviteData invite
+                            , invdTime = Just time
                             , invdToken = Nothing
                             , invdAccepted = Just (idExtData identity)
                             , invdContact = Nothing
