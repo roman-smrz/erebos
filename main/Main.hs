@@ -450,24 +450,27 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
             pid@(PeerIdentityFull _) -> do
                 dropped <- isPeerDropped peer
                 shown <- showPeer pid <$> getPeerAddress peer
-                let update [] = ([(peer, shown)], (Nothing, "NEW"))
+                let labelNew = withStyle (setForegroundColor Green noStyle) $ plainText "NEW"
+                    labelUpd = withStyle (setForegroundColor Yellow noStyle) $ plainText "UPD"
+                    labelDel = withStyle (setForegroundColor Red noStyle) $ plainText "DEL"
+                let update [] = ( [ ( peer, shown ) ], ( Nothing, labelNew ) )
                     update ((p,s):ps)
-                        | p == peer && dropped = (ps, (Nothing, "DEL"))
-                        | p == peer = ((peer, shown) : ps, (Just s, "UPD"))
+                        | p == peer && dropped = ( ps, ( Nothing, labelDel ) )
+                        | p == peer = ( ( peer, shown ) : ps, ( Just s, labelUpd ) )
                         | otherwise = first ((p,s):) $ update ps
                 let ctxUpdate n [] = ([SelectedPeer peer], n)
                     ctxUpdate n (ctx:ctxs)
                         | SelectedPeer p <- ctx, p == peer = (ctx:ctxs, n)
                         | otherwise = first (ctx:) $ ctxUpdate (n + 1) ctxs
-                (op, updateType) <- modifyMVar peers (return . update)
-                let updateType' = if dropped then "DEL" else updateType
+                ( op, updateType ) <- modifyMVar peers (return . update)
+                let updateType' = if dropped then labelDel else updateType
                 modifyMVar_ contextOptions $ \case
                     ( watch, clist )
                       | watch == Just WatchPeers || not tui
                       -> do
                         let ( clist', idx ) = ctxUpdate (1 :: Int) clist
                         when (Just shown /= op) $ do
-                            extPrintLn $ plainText $ T.pack $ "[" <> show idx <> "] PEER " <> updateType' <> " " <> shown
+                            extPrintLn $ "[" <> withStyle contextIndexStyle (plainText $ T.pack $ show idx) <> "] PEER " <> updateType' <> " " <> plainText shown
                         return ( Just WatchPeers, clist' )
                     cur -> return cur
             _ -> return ()
@@ -515,13 +518,17 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
     hidePrompt term
 
 
+contextIndexStyle :: TextStyle
+contextIndexStyle = setForegroundColor BrightCyan noStyle
+
+
 data CommandInput = CommandInput
     { ciServer :: Server
     , ciTerminal :: Terminal
     , ciLine :: String
     , ciPrint :: FormattedText -> IO ()
     , ciOptions :: Options
-    , ciPeers :: CommandM [(Peer, String)]
+    , ciPeers :: CommandM [ ( Peer, Text ) ]
     , ciContextOptions :: CommandM [ CommandContext ]
     , ciSetContextOptions :: ContextWatchOptions -> [ CommandContext ] -> Command
     , ciContextVar :: MVar CommandContext
@@ -688,7 +695,7 @@ cmdPeers = do
     set <- asks ciSetContextOptions
     set WatchPeers $ map (SelectedPeer . fst) peers
     forM_ (zip [1..] peers) $ \(i :: Int, (_, name)) -> do
-        cmdPutStrLn $ plainText $ T.pack $ "[" ++ show i ++ "] " ++ name
+        cmdPutStrLn $ "[" <> withStyle contextIndexStyle (plainText $ T.pack $ show i) <> "] " <> plainText name
 
 cmdPeerAdd :: Command
 cmdPeerAdd = void $ do
@@ -726,13 +733,13 @@ cmdPeerDrop = do
     dropPeer =<< getSelectedPeer
     modify $ \s -> s { csContext = NoContext }
 
-showPeer :: PeerIdentity -> PeerAddress -> String
+showPeer :: PeerIdentity -> PeerAddress -> Text
 showPeer pidentity paddr =
     let name = case pidentity of
                     PeerIdentityUnknown _  -> "<noid>"
-                    PeerIdentityRef wref _ -> "<" ++ BC.unpack (showRefDigest $ wrDigest wref) ++ ">"
-                    PeerIdentityFull pid   -> T.unpack $ displayIdentity pid
-     in name ++ " [" ++ show paddr ++ "]"
+                    PeerIdentityRef wref _ -> "<" <> T.decodeUtf8 (showRefDigest $ wrDigest wref) <> ">"
+                    PeerIdentityFull pid   -> displayIdentity pid
+     in name <> " [" <> T.pack (show paddr) <> "]"
 
 cmdJoin :: Command
 cmdJoin = joinChatroom =<< getSelectedChatroom
