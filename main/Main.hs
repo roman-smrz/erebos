@@ -204,6 +204,25 @@ options =
         tell [ "Invalid value of --discovery-tunnel: ‘" <> name <> "’\n" ]
         return $ \_ _ -> False
 
+debugOptions :: [ OptDescr (Options -> Writer [ String ] Options) ]
+debugOptions =
+    [ Option [] [ "discovery-debug-log" ]
+        (NoArg (serviceAttr $ \attrs -> return attrs { discoveryDebugLog = True }))
+        ""
+    ]
+  where
+    updateService :: (Service s, Monad m, Typeable m) => (ServiceAttributes s -> m (ServiceAttributes s)) -> SomeService -> m SomeService
+    updateService f some@(SomeService proxy attrs)
+        | Just f' <- cast f = SomeService proxy <$> f' attrs
+        | otherwise = return some
+
+    serviceAttr :: (Service s, Monad m, Typeable m) => (ServiceAttributes s -> m (ServiceAttributes s)) -> Options -> m Options
+    serviceAttr f opts = do
+        services' <- forM (optServices opts) $ \sopt -> do
+            service <- updateService f (soptService sopt)
+            return sopt { soptService = service }
+        return opts { optServices = services' }
+
 servicesOptions :: [ OptDescr (Options -> Writer [ String ] Options) ]
 servicesOptions = concatMap helper $ "all" : map soptName availableServices
   where
@@ -233,7 +252,7 @@ main = do
             progName <- getProgName
             hPutStrLn stderr $ concat errs <> "Try `" <> progName <> " --help' for more information."
             exitFailure
-    (opts, args) <- (getOpt RequireOrder (options ++ servicesOptions) <$> getArgs) >>= \case
+    (opts, args) <- (getOpt RequireOrder (options ++ servicesOptions ++ debugOptions) <$> getArgs) >>= \case
         (wo, args, []) ->
             case runWriter (foldM (flip ($)) defaultOptions wo) of
                 ( o, [] )   -> return ( o, args )

@@ -67,6 +67,7 @@ data DiscoveryAttributes = DiscoveryAttributes
     , discoveryTurnPort :: Maybe Word16
     , discoveryTurnServer :: Maybe Text
     , discoveryProvideTunnel :: Peer -> PeerAddress -> Bool
+    , discoveryDebugLog :: Bool
     }
 
 defaultDiscoveryAttributes :: DiscoveryAttributes
@@ -76,6 +77,7 @@ defaultDiscoveryAttributes = DiscoveryAttributes
     , discoveryTurnPort = Nothing
     , discoveryTurnServer = Nothing
     , discoveryProvideTunnel = \_ _ -> False
+    , discoveryDebugLog = False
     }
 
 data DiscoveryConnection = DiscoveryConnection
@@ -248,6 +250,13 @@ instance Service DiscoveryService where
             peer <- asks svcPeer
             paddrs <- getPeerAddresses peer
 
+            debugLog $ unwords
+                [ "new peer"
+                , show [ refDigest $ storedRef $ idData pid, refDigest $ storedRef $ idExtData pid ]
+                , show $ map (refDigest . storedRef) $ idDataF $ finalOwner pid
+                , show paddrs
+                ]
+
             let insertHelper new old | dpPriority new > dpPriority old = new
                                      | otherwise                       = old
 
@@ -288,6 +297,7 @@ instance Service DiscoveryService where
                 }
 
         DiscoverySearch edgst -> do
+            pid <- asks svcPeerIdentity
             dpeer <- M.lookup (either refDigest id edgst) . dgsPeers <$> svcGetGlobal
             peer <- asks svcPeer
             paddr <- asks svcPeerAddress
@@ -295,7 +305,11 @@ instance Service DiscoveryService where
             let offerTunnel
                     | discoveryProvideTunnel attrs peer paddr = (++ [ DiscoveryTunnel ])
                     | otherwise                               = id
-            replyPacket $ DiscoveryResult edgst $ maybe [] (offerTunnel . dpAddress) dpeer
+            let results = maybe [] (offerTunnel . dpAddress) dpeer
+            replyPacket $ DiscoveryResult edgst results
+            debugLog $ "search by " <> show (refDigest $ storedRef $ idData pid) <>
+                " for " <> show (either refDigest id edgst) <>
+                " result [" <> T.unpack (T.intercalate "," $ map toText results) <> "]"
 
         DiscoveryResult _ [] -> do
             -- not found
@@ -421,6 +435,8 @@ instance Service DiscoveryService where
                                         replyPacket $ DiscoveryConnectionResponse rconn
                                     | fromSource : _ <- streams -> do
                                         void $ liftIO $ forkIO $ runPeerService @DiscoveryService dpeer $ do
+                                            debugLog $ "setting up tunnel from " <> show (either refDigest id $ dconnSource conn) <>
+                                                " to " <> show (either refDigest id $ dconnTarget conn)
                                             toTarget <- openStream
                                             svcModify $ \s -> s { dpsRelayedTunnelRequests =
                                                 ( either refDigest id $ dconnSource conn, ( fromSource, toTarget )) : dpsRelayedTunnelRequests s }
@@ -542,6 +558,13 @@ instance Service DiscoveryService where
         forM_ pstates $ \( _, DiscoveryPeerState {..} ) -> do
             mapM_ iceStopThread dpsIceConfig
 #endif
+
+
+debugLog :: String -> ServiceHandler DiscoveryService ()
+debugLog str = do
+    asks (discoveryDebugLog . svcAttributes) >>= \case
+        True -> svcPrint $ "discovery: " <> str
+        False -> return ()
 
 
 identityDigests :: Foldable f => Identity f -> [ RefDigest ]
