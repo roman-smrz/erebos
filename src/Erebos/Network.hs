@@ -908,6 +908,7 @@ dropPeerInner peer pvalue = do
             PeerConnected conn -> do
                 connClose conn
                 writeTChan (serverChanPeer $ peerServer peer) peer
+                notifyServicesOfPeer False peer
             _ -> return ()
         writeTVar (peerState peer) PeerDropped
     return $ M.delete (peerAddress peer) pvalue

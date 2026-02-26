@@ -553,6 +553,19 @@ instance Service DiscoveryService where
         forM_ searchingFor $ \dgst -> do
             sendToPeer peer $ DiscoverySearch (Right dgst)
 
+    serviceUpdatedPeer = do
+        pid <- asks svcPeerIdentity
+        peer <- asks svcPeer
+        isPeerDropped peer >>= \case
+            True -> do
+                peers <- dgsPeers <$> svcGetGlobal
+                let peers' = M.filter ((Just peer /=) . dpPeer) peers
+                svcModifyGlobal $ \s -> s { dgsPeers = peers' }
+                debugLog $ "dropped peer " <> show [ refDigest $ storedRef $ idData pid, refDigest $ storedRef $ idExtData pid ] <>
+                    ", map size " <> show (M.size peers) <> " -> " <> show (M.size peers')
+            False -> do
+                debugLog $ "updated peer " <> show [ refDigest $ storedRef $ idData pid, refDigest $ storedRef $ idExtData pid ]
+
 #ifdef ENABLE_ICE_SUPPORT
     serviceStopServer _ _ _ pstates = do
         forM_ pstates $ \( _, DiscoveryPeerState {..} ) -> do
