@@ -26,6 +26,7 @@ import Control.Monad.Reader
 
 import Data.List
 import Data.Ord
+import Data.Proxy
 import Data.Set (Set)
 import Data.Set qualified as S
 import Data.Text (Text)
@@ -85,11 +86,20 @@ defaultDirectMessageAttributes = DirectMessageAttributes
     { dmOwnerMismatch = svcPrint "Owner mismatch"
     }
 
+data DirectMessageGlobalState = DirectMessageGlobalState
+    { dmgsLastState :: Maybe [ Stored MessageState ]
+    }
+
 instance Service DirectMessage where
     serviceID _ = mkServiceID "c702076c-4928-4415-8b6b-3e839eafcb0d"
 
     type ServiceAttributes DirectMessage = DirectMessageAttributes
     defaultServiceAttributes _ = defaultDirectMessageAttributes
+
+    type ServiceGlobalState DirectMessage = DirectMessageGlobalState
+    emptyServiceGlobalState _ = DirectMessageGlobalState
+        { dmgsLastState = Nothing
+        }
 
     serviceHandler smsg = do
         let msg = fromStored smsg
@@ -293,8 +303,12 @@ syncDirectMessageToPeer (DirectMessageThreads mss _) = do
                 return unchanged
 
 findMissingPeers :: Server -> DirectMessageThreads -> ExceptT ErebosError IO ()
-findMissingPeers server threads = do
-    forM_ (dmThreadList threads) $ \thread -> do
+findMissingPeers server (DirectMessageThreads states threads) = do
+    prev <- modifyServiceGlobalState server (Proxy @DirectMessage) $ \gs ->
+        ( gs { dmgsLastState = Just states }, dmgsLastState gs )
+    let diffPeers = map (msPeer . fromStored) $ maybe states (storedDifference states) prev
+
+    forM_ (takeWhile (\t -> any (sameIdentity $ msgPeer t) diffPeers) threads) $ \thread -> do
         when (msgHead thread /= msgReceived thread) $ do
             mapM_ (discoverySearch server) $ map (refDigest . storedRef) $ idDataF $ msgPeer thread
 
