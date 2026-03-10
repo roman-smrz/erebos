@@ -622,11 +622,16 @@ discoverySearch server dgst = do
                     return $ dgst `elem` identityDigests pid
                 _ -> return False
         when (not $ or match) $ do
-            modifyServiceGlobalState server (Proxy @DiscoveryService) $ \s -> (, ()) s
-                { dgsSearchingFor = S.insert dgst $ dgsSearchingFor s
-                }
-            forM_ peers $ \peer -> do
-                sendToPeer peer $ DiscoverySearch $ Right dgst
+            alreadySearching <- modifyServiceGlobalState server (Proxy @DiscoveryService) $ \s ->
+                let alreadySearching = S.member dgst $ dgsSearchingFor s
+                 in ( if alreadySearching then s else s
+                         { dgsSearchingFor =  S.insert dgst $ dgsSearchingFor s
+                         }
+                    , alreadySearching
+                    )
+            when (not alreadySearching) $ do
+                forM_ peers $ \peer -> do
+                    sendToPeer peer $ DiscoverySearch $ Right dgst
 
 
 data TunnelAddress = TunnelAddress
