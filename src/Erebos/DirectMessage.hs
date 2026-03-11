@@ -306,9 +306,9 @@ findMissingPeers :: Server -> DirectMessageThreads -> ExceptT ErebosError IO ()
 findMissingPeers server (DirectMessageThreads states threads) = do
     prev <- modifyServiceGlobalState server (Proxy @DirectMessage) $ \gs ->
         ( gs { dmgsLastState = Just states }, dmgsLastState gs )
-    let diffPeers = map (msPeer . fromStored) $ maybe states (storedDifference states) prev
+    let diffPeers = map (msPeer . fromStored) . storedDifference states <$> prev
 
-    forM_ (takeWhile (\t -> any (sameIdentity $ msgPeer t) diffPeers) threads) $ \thread -> do
+    forM_ (takeWhile (\t -> maybe True (any (sameIdentity $ msgPeer t)) diffPeers) threads) $ \thread -> do
         when (msgHead thread /= msgReceived thread) $ do
             mapM_ (discoverySearch server) $ map (refDigest . storedRef) $ idDataF $ msgPeer thread
 

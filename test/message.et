@@ -267,6 +267,41 @@ test DirectMessageDiscovery:
 	# Verify the first message
 	expect /dm-received from Owner1 new yes text hello_to_p4/ from p4
 
+	# Prepare unsent messages, followed by a delivered one:
+	for p in [ p3, p4 ]:
+		send "stop-server" to p
+		expect /stop-server-done/ from p
+
+	send "dm-send-identity $p4_owner msg1_to_p4" to p1
+	send "dm-send-identity $p3_owner msg_to_p3" to p1
+	send "dm-send-identity $p4_owner msg2_to_p4" to p1
+	send "dm-send-identity $p2_owner msg_to_p2" to p1
+	expect /dm-received from Owner1 new yes text msg_to_p2/ from p2
+
+	# Restart servers to remove peers:
+	for p in [ p1, p2, pd ]:
+		with p:
+			send "stop-server"
+	for p in [ p1, p2, pd ]:
+		with p:
+			expect /stop-server-done/
+	for p in [ p1, p2, p3, p4, pd ]:
+		with p:
+			send "start-server services $services"
+	for p in [ p2, p3, p4, p1 ]:
+		with p:
+			send "peer-add ${pd.node.ip}"
+			expect:
+				/peer 1 addr ${pd.node.ip} 29665/
+				/peer 1 id Discovery/
+		expect from pd:
+			/peer [0-9]+ addr ${p.node.ip} 29665/
+			/peer [0-9]+ id Device. Owner./
+
+	expect /dm-received from Owner1 new yes text msg1_to_p4/ from p4
+	expect /dm-received from Owner1 new yes text msg2_to_p4/ from p4
+	expect /dm-received from Owner1 new yes text msg_to_p3/ from p3
+
 	for p in [ p1, p2, p3, p4, pd ]:
 		send "stop-server" to p
 	for p in [ p1, p2, p3, p4, pd ]:
