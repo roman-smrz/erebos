@@ -1,8 +1,8 @@
 job build:
-  shell:
-    - cabal build -fci
-    - mkdir build
-    - cp $(cabal list-bin erebos) build/erebos
+  shell: |
+    cabal build --ghc-options='-Werror -Wno-error=unused-imports'
+    mkdir build
+    cp $(cabal list-bin erebos) build/erebos
   artifact erebos:
     path: build/erebos
 

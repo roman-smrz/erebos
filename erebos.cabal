@@ -34,11 +34,6 @@ Extra-Source-Files:
 Flag ice
     Description:    Enable peer discovery with ICE support using pjproject
 
-Flag ci
-    description:    Options for CI testing
-    default: False
-    manual: True
-
 Flag cryptonite
     description:    Use deprecated 'cryptonite' package
     default: False
@@ -52,12 +47,6 @@ common common
         -Wall
         -Wno-x-partial
         -fdefer-typed-holes
-
-    if flag(ci)
-        ghc-options:
-            -Werror
-            -- sometimes needed for backward/forward compatibility:
-            -Wno-error=unused-imports
 
     build-depends:
         base ^>= { 4.15, 4.16, 4.17, 4.18, 4.19, 4.20, 4.21 },
