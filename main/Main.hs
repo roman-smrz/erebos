@@ -540,6 +540,9 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
 contextIndexStyle :: TextStyle
 contextIndexStyle = setForegroundColor BrightCyan noStyle
 
+printSelectOption :: Int -> FormattedText -> CommandM ()
+printSelectOption i label = cmdPutStrLn $ "[" <> withStyle contextIndexStyle (plainText $ T.pack $ show i) <> "] " <> label
+
 
 data CommandInput = CommandInput
     { ciServer :: Server
@@ -714,7 +717,7 @@ cmdPeers = do
     set <- asks ciSetContextOptions
     set WatchPeers $ map (SelectedPeer . fst) peers
     forM_ (zip [1..] peers) $ \(i :: Int, (_, name)) -> do
-        cmdPutStrLn $ "[" <> withStyle contextIndexStyle (plainText $ T.pack $ show i) <> "] " <> plainText name
+        printSelectOption i $ plainText name
 
 cmdPeerAdd :: Command
 cmdPeerAdd = void $ do
@@ -970,7 +973,7 @@ cmdChatrooms = do
     set <- asks ciSetContextOptions
     set WatchChatrooms $ map SelectedChatroom chatroomList
     forM_ (zip [1..] chatroomList) $ \(i :: Int, rstate) -> do
-        cmdPutStrLn $ plainText $ "[" <> T.pack (show i) <> "] " <> fromMaybe "<unnamed>" (roomName =<< roomStateRoom rstate)
+        printSelectOption i $ plainText $ fromMaybe "<unnamed>" (roomName =<< roomStateRoom rstate)
 
 cmdChatroomCreatePublic :: Command
 cmdChatroomCreatePublic = do
@@ -998,8 +1001,8 @@ cmdContacts = do
     set <- asks ciSetContextOptions
     set WatchContacts $ map SelectedContact contacts
     forM_ (zip [1..] contacts) $ \(i :: Int, c) -> do
-        cmdPutStrLn $ plainText $ T.concat
-            [ "[", T.pack (show i), "] ", contactName c
+        printSelectOption i $ plainText $ T.concat
+            [ contactName c
             , case contactIdentity c of
                    Just idt | cname <- displayIdentity idt
                             , cname /= contactName c
@@ -1062,7 +1065,7 @@ cmdConversations = do
     set <- asks ciSetContextOptions
     set WatchConversations $ map SelectedConversation conversations
     forM_ (zip [1..] conversations) $ \(i :: Int, conv) -> do
-        cmdPutStrLn $ plainText $ "[" <> T.pack (show i) <> "] " <> conversationName conv
+        printSelectOption i $ plainText $ conversationName conv
 
 cmdNew :: Command
 cmdNew = do
@@ -1071,7 +1074,7 @@ cmdNew = do
     set WatchConversations $ map (SelectedConversation . fst) conversations
     tzone <- liftIO $ getCurrentTimeZone
     forM_ (zip [1..] conversations) $ \(i :: Int, ( conv, msg )) -> do
-        cmdPutStrLn $ plainText ("[" <> T.pack (show i) <> "] " <> conversationName conv <> " ") <> formatMessageFT tzone msg
+        printSelectOption i $ plainText (conversationName conv <> " ") <> formatMessageFT tzone msg
   where
     checkNew conv
         | (msg : _) <- conversationHistory conv
