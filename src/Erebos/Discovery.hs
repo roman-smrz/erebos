@@ -682,7 +682,7 @@ receiveFromTunnel server taddr = do
             receivedFromCustomAddress server taddr stpData
             receiveFromTunnel server taddr
         StreamClosed {} -> do
-            return ()
+            dropPeerAddress server $ CustomPeerAddress taddr
 
 
 discoverySetupTunnel :: Peer -> RefDigest -> IO ()
