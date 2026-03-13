@@ -281,6 +281,8 @@ connClose conn@Connection {..} = do
             writeTVar cChannel ChannelClosed
             writeTVar gConnections . filter (/=conn) =<< readTVar gConnections
             writeFlow cDataInternal Nothing
+            streams <- readTVar cInStreams
+            forM_ streams $ \( _, s ) -> writeFlow (sFlowIn s) (StreamClosed 0)
 
 connAddWriteStream :: Connection addr -> STM (Either String (TransportHeaderItem, RawStreamWriter, IO ()))
 connAddWriteStream conn@Connection {..} = do
