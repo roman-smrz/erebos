@@ -1,5 +1,15 @@
 # Revision history for erebos
 
+## 0.2.1 -- 2026-03-15
+
+* Initial support for `ondemand` object type.
+* New service and shared state for invites.
+* Show the number of conversations with unread messages in CLI prompt.
+* Show unread messages when selecting conversation.
+* Added `/new` command to list conversations with new (unread) messages.
+* Gracefully handle invalid record objects.
+* Fixes and improvements in discovery service and tunnel support.
+
 ## 0.2.0 -- 2025-08-06
 
 * Weak references in records
