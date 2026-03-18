@@ -62,6 +62,8 @@ import GHC.Conc.Sync (unsafeIOToSTM)
 import Network.Socket hiding (ControlMessage)
 import Network.Socket.ByteString qualified as S
 
+import System.IO.Error
+
 import Erebos.Error
 import Erebos.Identity
 import Erebos.Network.Address
@@ -115,6 +117,7 @@ getNextPeerChange = atomically . readTChan . serverChanPeer
 
 data ServerOptions = ServerOptions
     { serverPort :: PortNumber
+    , serverRetryUnspecifiedPort :: Bool
     , serverLocalDiscovery :: Bool
     , serverErrorPrefix :: String
     , serverTestLog :: Bool
@@ -123,6 +126,7 @@ data ServerOptions = ServerOptions
 defaultServerOptions :: ServerOptions
 defaultServerOptions = ServerOptions
     { serverPort = discoveryPort
+    , serverRetryUnspecifiedPort = True
     , serverLocalDiscovery = True
     , serverErrorPrefix = ""
     , serverTestLog = False
@@ -293,10 +297,16 @@ startServer serverOptions serverOrigHead logd' serverServices = do
     let open addr = do
             sock <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
             putMVar serverSocket sock
-            setSocketOption sock ReuseAddr 1
             setSocketOption sock Broadcast 1
             withFdSocket sock setCloseOnExecIfNeeded
-            bind sock (addrAddress addr)
+            bind sock (addrAddress addr) `catchIOError` \e -> if
+                | isAlreadyInUseError e && serverRetryUnspecifiedPort serverOptions
+                , SockAddrInet6 _ f h s <- addrAddress addr
+                -> do atomically $ logd $ if serverPort serverOptions == discoveryPort
+                        then "Failed to bind default discovery port, will not receive discovery packets on local network."
+                        else "Failed to bind port " <> show (serverPort serverOptions) <> ", retrying with ephemeral one."
+                      bind sock (SockAddrInet6 0 f h s)
+                | otherwise -> ioError e
             return sock
 
         loop sock = do

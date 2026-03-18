@@ -120,7 +120,7 @@ availableServices =
 options :: [ OptDescr (Options -> Writer [ String ] Options) ]
 options =
     [ Option [ 'p' ] [ "port" ]
-        (ReqArg (\p -> so $ \opts -> opts { serverPort = read p }) "<port>")
+        (ReqArg (\p -> so $ \opts -> opts { serverPort = read p, serverRetryUnspecifiedPort = False }) "<port>")
         "local port to bind"
     , Option [ 's' ] [ "silent" ]
         (NoArg (so $ \opts -> opts { serverLocalDiscovery = False }))
