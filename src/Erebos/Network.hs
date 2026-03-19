@@ -95,6 +95,7 @@ data Server = Server
     , serverIdentity_ :: MVar UnifiedIdentity
     , serverThreads :: MVar [ThreadId]
     , serverSocket :: MVar Socket
+    , serverSocketClosed :: MVar ()
     , serverRawPath :: SymFlow (PeerAddress, BC.ByteString)
     , serverControlFlow :: Flow (ControlMessage PeerAddress) (ControlRequest PeerAddress)
     , serverDataResponse :: TQueue (Peer, Maybe PartialRef)
@@ -264,6 +265,7 @@ startServer serverOptions serverOrigHead logd' serverServices = do
     serverIdentity_ <- newMVar $ headLocalIdentity serverOrigHead
     serverThreads <- newMVar []
     serverSocket <- newEmptyMVar
+    serverSocketClosed <- newEmptyMVar
     (serverRawPath, protocolRawPath) <- newFlowIO
     (serverControlFlow, protocolControlFlow) <- newFlowIO
     serverDataResponse <- newTQueueIO
@@ -419,7 +421,8 @@ startServer serverOptions serverOrigHead logd' serverServices = do
               }
         addr:_ <- getAddrInfo (Just hints) Nothing (Just $ show $ serverPort serverOptions)
         let open = socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
-        bracket open close $ \sock -> do
+            closeAndNotify sock = close sock >> putMVar serverSocketClosed ()
+        bracket open closeAndNotify $ \sock -> do
             withFdSocket sock setCloseOnExecIfNeeded
             setSocketOption sock Broadcast 1
             bind sock (addrAddress addr) `catchIOError` \e -> if
@@ -457,6 +460,7 @@ stopServer server@Server {..} = do
                     _ -> emptyServiceState proxy
             serviceStopServer proxy server gs ps
         mapM_ killThread =<< takeMVar serverThreads
+    takeMVar serverSocketClosed
 
 dataResponseWorker :: Server -> IO ()
 dataResponseWorker server = forever $ do
