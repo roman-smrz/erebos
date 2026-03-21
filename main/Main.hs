@@ -70,6 +70,7 @@ data Options = Options
     , optChatroomAutoSubscribe :: Maybe Int
     , optDmBotEcho :: Maybe Text
     , optWebSocketServer :: Maybe Int
+    , optWebSocketDebugLog :: Bool
     , optShowHelp :: Bool
     , optShowVersion :: Bool
     }
@@ -95,6 +96,7 @@ defaultOptions = Options
     , optChatroomAutoSubscribe = Nothing
     , optDmBotEcho = Nothing
     , optWebSocketServer = Nothing
+    , optWebSocketDebugLog = False
     , optShowHelp = False
     , optShowVersion = False
     }
@@ -208,6 +210,9 @@ debugOptions :: [ OptDescr (Options -> Writer [ String ] Options) ]
 debugOptions =
     [ Option [] [ "discovery-debug-log" ]
         (NoArg (serviceAttr $ \attrs -> return attrs { discoveryDebugLog = True }))
+        ""
+    , Option [] [ "websocket-debug-log" ]
+        (NoArg (\opts -> return opts { optWebSocketDebugLog = True }))
         ""
     ]
   where
@@ -460,7 +465,10 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
             map soptService $ filter soptEnabled $ optServices opts
 
     case optWebSocketServer opts of
-        Just port -> startWebsocketServer server "::" port (extPrintLn . plainText . T.pack)
+        Just port -> startWebsocketServer server (extPrintLn . plainText . T.pack) defaultWebSocketOptions
+            { wsPort = port
+            , wsDebugLog = optWebSocketDebugLog opts
+            }
         Nothing -> return ()
 
     void $ liftIO $ forkIO $ void $ forever $ do

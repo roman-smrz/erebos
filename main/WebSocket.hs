@@ -1,5 +1,6 @@
 module WebSocket (
     WebSocketAddress(..),
+    WebSocketOptions(..), defaultWebSocketOptions,
     startWebsocketServer,
 ) where
 
@@ -34,10 +35,27 @@ instance PeerAddressType WebSocketAddress where
             | Just WS.ConnectionClosed <- fromException e -> return ()
             | otherwise -> throwIO e
 
-startWebsocketServer :: Server -> String -> Int -> (String -> IO ()) -> IO ()
-startWebsocketServer server addr port logd = do
+
+data WebSocketOptions = WebSocketOptions
+    { wsAddress :: String
+    , wsPort :: Int
+    , wsDebugLog :: Bool
+    }
+
+defaultWebSocketOptions :: WebSocketOptions
+defaultWebSocketOptions = WebSocketOptions
+    { wsAddress = "::"
+    , wsPort = 80
+    , wsDebugLog = False
+    }
+
+
+startWebsocketServer :: Server -> (String -> IO ()) -> WebSocketOptions -> IO ()
+startWebsocketServer server logd WebSocketOptions {..} = do
     void $ forkIO $ do
-        WS.runServer addr port $ \pending -> do
+        WS.runServer wsAddress wsPort $ \pending -> do
+            when wsDebugLog $ do
+                logd $ "WebSocket request: " <> show (WS.pendingRequest pending)
             conn <- WS.acceptRequest pending
             u <- newUnique
             let paddr = WebSocketAddress u conn
