@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module WebSocket (
     WebSocketAddress(..),
     WebSocketOptions(..), defaultWebSocketOptions,
@@ -8,6 +10,7 @@ import Control.Concurrent
 import Control.Exception
 import Control.Monad
 
+import Data.ByteString.Char8 qualified as BC
 import Data.ByteString.Lazy qualified as BL
 import Data.Unique
 
@@ -16,21 +19,22 @@ import Erebos.Network
 import Network.WebSockets qualified as WS
 
 
-data WebSocketAddress = WebSocketAddress Unique WS.Connection
+data WebSocketAddress = WebSocketAddress Unique (Maybe String) WS.Connection
 
 instance Eq WebSocketAddress where
-    WebSocketAddress u _ == WebSocketAddress u' _ = u == u'
+    WebSocketAddress u _ _ == WebSocketAddress u' _ _ = u == u'
 
 instance Ord WebSocketAddress where
-    compare (WebSocketAddress u _) (WebSocketAddress u' _) = compare u u'
+    compare (WebSocketAddress u _ _) (WebSocketAddress u' _ _) = compare u u'
 
 instance Show WebSocketAddress where
-    show (WebSocketAddress _ _) = "websocket"
+    show (WebSocketAddress _ Nothing _) = "websocket"
+    show (WebSocketAddress _ (Just addr) _) = "websocket " <> addr
 
 instance PeerAddressType WebSocketAddress where
-    sendBytesToAddress (WebSocketAddress _ conn) msg = do
+    sendBytesToAddress (WebSocketAddress _ _ conn) msg = do
         WS.sendDataMessage conn $ WS.Binary $ BL.fromStrict msg
-    connectionToAddressClosed (WebSocketAddress _ conn) = do
+    connectionToAddressClosed (WebSocketAddress _ _ conn) = do
         WS.sendClose conn BL.empty `catch` \e -> if
             | Just WS.ConnectionClosed <- fromException e -> return ()
             | otherwise -> throwIO e
@@ -58,7 +62,8 @@ startWebsocketServer server logd WebSocketOptions {..} = do
                 logd $ "WebSocket request: " <> show (WS.pendingRequest pending)
             conn <- WS.acceptRequest pending
             u <- newUnique
-            let paddr = WebSocketAddress u conn
+            let mbaddr = fmap BC.unpack $ lookup "X-Real-IP" $ WS.requestHeaders $ WS.pendingRequest pending
+            let paddr = WebSocketAddress u mbaddr conn
             void $ serverPeerCustom server paddr
 
             let handler e
