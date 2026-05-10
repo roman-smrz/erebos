@@ -403,6 +403,7 @@ cmdLoadType = do
                     Rec {} -> "rec"
                     OnDemand {} -> "ondemand"
                     Chunked {} -> "chunked"
+                    Dir {} -> "dir"
                     ZeroObject {} -> "zero"
                     UnknownObject utype _ -> "unknown " <> decodeUtf8 utype
             cmdOut $ "load-type " <> T.unpack otype

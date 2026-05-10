@@ -11,6 +11,7 @@ module Erebos.Object (
     storeRawBytes, lazyLoadBytes,
 
     RecItem, RecItem'(..),
+    DirItem, DirItem'(..),
 
     Ref, PartialRef, RefDigest,
     refDigest, refFromDigest,
