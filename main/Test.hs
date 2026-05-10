@@ -402,6 +402,7 @@ cmdLoadType = do
                     Blob {} -> "blob"
                     Rec {} -> "rec"
                     OnDemand {} -> "ondemand"
+                    Chunked {} -> "chunked"
                     ZeroObject {} -> "zero"
                     UnknownObject utype _ -> "unknown " <> decodeUtf8 utype
             cmdOut $ "load-type " <> T.unpack otype

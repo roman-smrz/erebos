@@ -133,6 +133,7 @@ copyObject' :: forall c c'. (StorageCompleteness c, StorageCompleteness c') => S
 copyObject' _ (Blob bs) = return $ return $ Blob bs
 copyObject' st (Rec rs) = fmap Rec . sequence <$> mapM (\( n, item ) -> fmap ( n, ) <$> copyRecItem' st item) rs
 copyObject' _ (OnDemand size dgst) = return $ return $ OnDemand size dgst
+copyObject' _ (Chunked size dgsts) = return $ return $ Chunked size dgsts
 copyObject' _ ZeroObject = return $ return ZeroObject
 copyObject' _ (UnknownObject otype content) = return $ return $ UnknownObject otype content
 
@@ -156,6 +157,7 @@ data Object' c
     = Blob ByteString
     | Rec [ ( ByteString, RecItem' c ) ]
     | OnDemand Word64 RefDigest
+    | Chunked Word64 [ RefDigest ]
     | ZeroObject
     | UnknownObject ByteString ByteString
     deriving (Show)
@@ -187,6 +189,9 @@ serializeObject = \case
     OnDemand size dgst ->
         let cnt = BC.unlines [ BC.pack (show size), showRefDigest dgst ]
          in BL.fromChunks [ BC.pack "ondemand ", BC.pack (show $ B.length cnt), BC.singleton '\n', cnt ]
+    Chunked size dgsts ->
+        let cnt = BC.unlines $ BC.pack (show size) : map showRefDigest dgsts
+         in BL.fromChunks [ BC.pack "chunked ", BC.pack (show $ B.length cnt), BC.singleton '\n', cnt ]
     ZeroObject -> BL.empty
     UnknownObject otype cnt -> BL.fromChunks [ otype, BC.singleton ' ', BC.pack (show $ B.length cnt), BC.singleton '\n', cnt ]
 
@@ -260,6 +265,9 @@ unsafeDeserializeObject st bytes =
                 | otype == BC.pack "ondemand"
                 , Just ondemand <- parseOnDemand st content
                     -> return ondemand
+                | otype == BC.pack "chunked"
+                , Just chunked <- parseChunked st content
+                    -> return chunked
                 | otherwise
                     -> return $ UnknownObject otype content
         _ -> throwOtherError $ "malformed object"
@@ -316,6 +324,20 @@ parseOnDemand _ body = do
     guard (B.null sizeRest)
     dgst <- readRefDigest $ B.take newline2 $ B.drop (newline1 + 1) body
     return $ OnDemand (fromIntegral size) dgst
+
+parseChunked :: Storage' c -> ByteString -> Maybe (Object' c)
+parseChunked _ body = do
+    tsize : trefs <- strictLines body
+    ( size, sizeRest ) <- BC.readInt tsize
+    guard (B.null sizeRest)
+    dgsts <- mapM readRefDigest trefs
+    return $ Chunked (fromIntegral size) dgsts
+  where
+    strictLines bs
+        | B.null bs = Just []
+        | otherwise = do
+            newline <- BC.elemIndex '\n' bs
+            (B.take newline bs :) <$> strictLines (B.drop (newline + 1) bs)
 
 
 deserializeObject :: PartialStorage -> BL.ByteString -> Except ErebosError (PartialObject, BL.ByteString)
@@ -375,8 +397,9 @@ class Storable a => ZeroStorable a where
 
 data Store
     = StoreBlob ByteString
-    | StoreRec (forall c. StorageCompleteness c => Storage' c -> [IO [(ByteString, RecItem' c)]])
+    | StoreRec (forall c. StorageCompleteness c => Storage' c -> [ IO [ ( ByteString, RecItem' c ) ]])
     | StoreOnDemand Word64 RefDigest
+    | StoreChunked Word64 [ RefDigest ]
     | StoreZero
     | StoreUnknown ByteString ByteString
 
@@ -387,10 +410,11 @@ evalStoreObject :: StorageCompleteness c => Storage' c -> Store -> IO (Object' c
 evalStoreObject _ (StoreBlob x) = return $ Blob x
 evalStoreObject s (StoreRec f) = Rec . concat <$> sequence (f s)
 evalStoreObject _ (StoreOnDemand size dgst) = return $ OnDemand size dgst
+evalStoreObject _ (StoreChunked size dgsts) = return $ Chunked size dgsts
 evalStoreObject _ StoreZero = return ZeroObject
 evalStoreObject _ (StoreUnknown otype content) = return $ UnknownObject otype content
 
-newtype StoreRecM c a = StoreRecM (ReaderT (Storage' c) (Writer [IO [(ByteString, RecItem' c)]]) a)
+newtype StoreRecM c a = StoreRecM (ReaderT (Storage' c) (Writer [ IO [ ( ByteString, RecItem' c ) ]]) a)
     deriving (Functor, Applicative, Monad)
 
 type StoreRec c = StoreRecM c ()
@@ -424,6 +448,7 @@ instance Storable Object where
         Rec xs' <- copyObject st (Rec xs)
         return xs'
     store' (OnDemand size dgst) = StoreOnDemand size dgst
+    store' (Chunked size dgsts) = StoreChunked size dgsts
     store' ZeroObject = StoreZero
     store' (UnknownObject otype content) = StoreUnknown otype content
 
