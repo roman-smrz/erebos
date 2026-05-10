@@ -685,3 +685,54 @@ test ObjectFormat:
 			send "load-type $r"
 			expect /load-type (.*)/ capture type
 			guard (type == "unknown chunked")
+
+		# Empty dir object
+		local:
+			send "store-raw EOF"
+			send "dir 0\n"
+			send "EOF"
+			expect /store-done ($refpat)/ capture r
+
+			send "load-type $r"
+			expect /load-type (.*)/ capture type
+			guard (type == "dir")
+
+		# Small dir object
+		local:
+			send:
+				"store dir"
+				"$blob_test_ref $empty_rec_ref some_file"
+				"$blob_test_ref $empty_rec_ref some file"
+				"$blob_test_ref $empty_rec_ref some file\n\twith\n\tnewlines"
+				"$blob_test_ref $empty_rec_ref special chars !@#\$%^&*()\\/=?+"
+				"$blob_test_ref $empty_rec_ref last file"
+				""
+			expect /store-done ($refpat)/ capture r
+
+			send "load-type $r"
+			expect /load-type (.*)/ capture type
+			guard (type == "dir")
+
+		# Invalid dir object
+		local:
+			send:
+				"store dir"
+				"$blob_test_ref some_file"
+				""
+			expect /store-done ($refpat)/ capture r
+
+			send "load-type $r"
+			expect /load-type (.*)/ capture type
+			guard (type == "unknown dir")
+
+		# Invalid dir object
+		local:
+			send:
+				"store dir"
+				"0"
+				""
+			expect /store-done ($refpat)/ capture r
+
+			send "load-type $r"
+			expect /load-type (.*)/ capture type
+			guard (type == "unknown dir")
