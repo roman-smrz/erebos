@@ -625,3 +625,63 @@ test ObjectFormat:
 			send "load-type $r"
 			expect /load-type (.*)/ capture type
 			guard (type == "ondemand")
+
+		# Empty chunked object
+		local:
+			send "store-raw EOF"
+			send "chunked 2\n0\n"
+			send "EOF"
+			expect /store-done ($refpat)/ capture r
+
+			send "load-type $r"
+			expect /load-type (.*)/ capture type
+			guard (type == "chunked")
+
+		send "store blob"
+		send "test"
+		send ""
+		expect /store-done ($refpat)/ capture blob_test_ref
+
+		# Chunked object
+		local:
+			send "store-raw EOF"
+			send "chunked 146\n8\n$blob_test_ref\n$blob_test_ref\n"
+			send "EOF"
+			expect /store-done ($refpat)/ capture r
+
+			send "load-type $r"
+			expect /load-type (.*)/ capture type
+			guard (type == "chunked")
+
+		# Invalid chunked object (missing last newline)
+		local:
+			send "store-raw EOF"
+			send "chunked 145\n8\n$blob_test_ref\n$blob_test_ref"
+			send "EOF"
+			expect /store-done ($refpat)/ capture r
+
+			send "load-type $r"
+			expect /load-type (.*)/ capture type
+			guard (type == "unknown chunked")
+
+		# Invalid chunked object (missing size)
+		local:
+			send "store-raw EOF"
+			send "chunked 144\n$blob_test_ref\n$blob_test_ref\n"
+			send "EOF"
+			expect /store-done ($refpat)/ capture r
+
+			send "load-type $r"
+			expect /load-type (.*)/ capture type
+			guard (type == "unknown chunked")
+
+		# Invalid chunked object (invalid ref)
+		local:
+			send "store-raw EOF"
+			send "chunked 78\n8\nabc\n$blob_test_ref\n"
+			send "EOF"
+			expect /store-done ($refpat)/ capture r
+
+			send "load-type $r"
+			expect /load-type (.*)/ capture type
+			guard (type == "unknown chunked")
