@@ -10,7 +10,7 @@ module Erebos.Object.Internal (
 
     Object, PartialObject, Object'(..),
     RecItem, RecItem'(..),
-    DirItem, DirItem'(..),
+    DirItem(..),
     serializeObject, deserializeObject, deserializeObjects,
     ioLoadObject, ioLoadBytes,
     storeRawBytes, lazyLoadBytes,
@@ -136,10 +136,7 @@ copyObject' _ (Blob bs) = return $ return $ Blob bs
 copyObject' st (Rec rs) = fmap Rec . sequence <$> mapM (\( n, item ) -> fmap ( n, ) <$> copyRecItem' st item) rs
 copyObject' _ (OnDemand size dgst) = return $ return $ OnDemand size dgst
 copyObject' _ (Chunked size dgsts) = return $ return $ Chunked size dgsts
-copyObject' st (Dir items) = fmap Dir . sequence <$> mapM copyItem items
-  where
-    copyItem (DirItem d m f) = do d' <- copyRef' st d; m' <- copyRef' st m;
-                                  return $ DirItem <$> d' <*> m' <*> pure f
+copyObject' _ (Dir items) = return $ return $ Dir items
 copyObject' _ ZeroObject = return $ return ZeroObject
 copyObject' _ (UnknownObject otype content) = return $ return $ UnknownObject otype content
 
@@ -164,7 +161,7 @@ data Object' c
     | Rec [ ( ByteString, RecItem' c ) ]
     | OnDemand Word64 RefDigest
     | Chunked Word64 [ RefDigest ]
-    | Dir [ DirItem' c ]
+    | Dir [ DirItem ]
     | ZeroObject
     | UnknownObject ByteString ByteString
     deriving (Show)
@@ -187,14 +184,12 @@ data RecItem' c
 
 type RecItem = RecItem' Complete
 
-data DirItem' c = DirItem
-    { dirItemData :: Ref' c
-    , dirItemMetadata :: Ref' c
+data DirItem = DirItem
+    { dirItemData :: RefDigest
+    , dirItemMetadata :: RefDigest
     , dirItemFilename :: Text
     }
     deriving (Show)
-
-type DirItem = DirItem' Complete
 
 
 serializeObject :: Object' c -> BL.ByteString
@@ -210,7 +205,7 @@ serializeObject = \case
         let cnt = BC.unlines $ BC.pack (show size) : map showRefDigest dgsts
          in BL.fromChunks [ BC.pack "chunked ", BC.pack (show $ B.length cnt), BC.singleton '\n', cnt ]
     Dir items ->
-        let cnt = BL.fromChunks $ map (\(DirItem d m f) -> BC.concat [ showRef d, BC.singleton ' ', showRef m, BC.singleton ' ', serializeText f, BC.singleton '\n' ]) items
+        let cnt = BL.fromChunks $ map (\(DirItem d m f) -> BC.concat [ showRefDigest d, BC.singleton ' ', showRefDigest m, BC.singleton ' ', serializeText f, BC.singleton '\n' ]) items
          in BL.fromChunks [ BC.pack "dir ", BC.pack (show $ BL.length cnt), BC.singleton '\n' ] `BL.append` cnt
     ZeroObject -> BL.empty
     UnknownObject otype cnt -> BL.fromChunks [ otype, BC.singleton ' ', BC.pack (show $ B.length cnt), BC.singleton '\n', cnt ]
@@ -368,7 +363,7 @@ parseChunked _ body = do
 parseDir :: Storage' c -> ByteString -> Maybe (Object' c)
 parseDir st body = Dir <$> parseDirBody st body
 
-parseDirBody :: Storage' c -> ByteString -> Maybe [ DirItem' c ]
+parseDirBody :: Storage' c -> ByteString -> Maybe [ DirItem ]
 parseDirBody _ body | B.null body = Just []
 parseDirBody st body = do
     space1 <- BC.elemIndex ' ' body
@@ -377,8 +372,8 @@ parseDirBody st body = do
     let dataRefB = B.take space1 body
         metaRefB = B.take space2 $ B.drop (space1 + 1) body
         filename = decodeUtf8With lenientDecode filenameB
-    dataRef <- Ref st <$> readRefDigest dataRefB
-    metaRef <- Ref st <$> readRefDigest metaRefB
+    dataRef <- readRefDigest dataRefB
+    metaRef <- readRefDigest metaRefB
     (DirItem dataRef metaRef filename :) <$> parseDirBody st remainingBody
 
 
@@ -442,7 +437,7 @@ data Store
     | StoreRec (forall c. StorageCompleteness c => Storage' c -> [ IO [ ( ByteString, RecItem' c ) ]])
     | StoreOnDemand Word64 RefDigest
     | StoreChunked Word64 [ RefDigest ]
-    | StoreDir (forall c. StorageCompleteness c => Storage' c -> IO [ DirItem' c ])
+    | StoreDir [ DirItem ]
     | StoreZero
     | StoreUnknown ByteString ByteString
 
@@ -454,7 +449,7 @@ evalStoreObject _ (StoreBlob x) = return $ Blob x
 evalStoreObject s (StoreRec f) = Rec . concat <$> sequence (f s)
 evalStoreObject _ (StoreOnDemand size dgst) = return $ OnDemand size dgst
 evalStoreObject _ (StoreChunked size dgsts) = return $ Chunked size dgsts
-evalStoreObject s (StoreDir f) = Dir <$> f s
+evalStoreObject _ (StoreDir items) = return $ Dir items
 evalStoreObject _ StoreZero = return ZeroObject
 evalStoreObject _ (StoreUnknown otype content) = return $ UnknownObject otype content
 
@@ -493,9 +488,7 @@ instance Storable Object where
         return xs'
     store' (OnDemand size dgst) = StoreOnDemand size dgst
     store' (Chunked size dgsts) = StoreChunked size dgsts
-    store' (Dir items) = StoreDir $ \st -> do
-        Dir items' <- copyObject st (Dir items)
-        return items'
+    store' (Dir items) = StoreDir items
     store' ZeroObject = StoreZero
     store' (UnknownObject otype content) = StoreUnknown otype content
 
