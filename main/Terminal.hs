@@ -13,6 +13,8 @@ module Terminal (
 
     TerminalLine,
     printLine,
+    updateLine,
+    updateLinePart,
 
     printBottomLines,
     clearBottomLines,
@@ -55,10 +57,12 @@ data Terminal = Terminal
     , termHistory :: TVar [ String ]
     , termHistoryPos :: TVar Int
     , termHistoryStash :: TVar ( String, String )
+    , termBottomIndex :: TVar Int
     }
 
 data TerminalLine = TerminalLine
     { tlTerminal :: Terminal
+    , tlLineIndex :: Int
     , tlLineCount :: Int
     }
 
@@ -102,6 +106,7 @@ initTerminal termCompletionFunc = do
     termHistory <- newTVarIO []
     termHistoryPos <- newTVarIO 0
     termHistoryStash <- newTVarIO ( "", "" )
+    termBottomIndex <- newTVarIO 0
     return Terminal {..}
 
 bracketSet :: IO a -> (a -> IO b) -> a -> IO c -> IO c
@@ -166,7 +171,9 @@ getInputLine term@Terminal {..} handleResult = do
             writeTVar termHistoryPos 0
 
     ( x, clear ) <- case handleResult mbLine of
-        KeepPrompt x -> return ( x, \statusLen -> AnsiText $ "\ESC[" <> T.pack (show statusLen) <> "G\ESC[1K\n\ESC[J" )
+        KeepPrompt x -> do
+            atomically $ writeTVar termBottomIndex . (+ 1) =<< readTVar termBottomIndex
+            return ( x, \statusLen -> AnsiText $ "\ESC[" <> T.pack (show statusLen) <> "G\ESC[1K\n\ESC[J" )
         ErasePrompt x -> return ( x, \_ -> AnsiText "\r\ESC[J" )
     when termAnsi $ do
         withMVar termLock $ \_ -> do
@@ -390,8 +397,30 @@ printLine tlTerminal@Terminal {..} str = do
           else do
             T.putStr $ renderPlainText $ endWithNewline str
 
+        tlLineIndex <- atomically $ do
+            bindex <- readTVar termBottomIndex
+            writeTVar termBottomIndex $ bindex + tlLineCount
+            return bindex
+
         hFlush stdout
         return TerminalLine {..}
+
+updateLine :: TerminalLine -> FormattedText -> IO ()
+updateLine tl str = updateLinePart tl 0 (str <> "\ESC[K")
+
+updateLinePart :: TerminalLine -> Int -> FormattedText -> IO ()
+updateLinePart TerminalLine {..} offset str = do
+    let Terminal {..} = tlTerminal
+    when termAnsi $ do
+        withMVar termLock $ \_ -> do
+            let updLineCount = formattedTextHeight str
+            bindex <- atomically $ readTVar termBottomIndex
+            putAnsi $ mconcat
+                [ AnsiText $ "\ESC[s\ESC[" <> T.pack (show (bindex - tlLineIndex)) <> "F\ESC[" <> T.pack (show (offset + 1)) <> "G"
+                , renderAnsiText str
+                , mconcat $ replicate (tlLineCount - updLineCount) $ AnsiText "\r\ESC[K"
+                , AnsiText $ "\ESC[u"
+                ]
 
 
 printBottomLines :: Terminal -> String -> IO ()
