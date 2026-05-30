@@ -1,5 +1,221 @@
 module graph
 
+
+test FilterCommon:
+    spawn as p
+    with p:
+        send:
+            "store rec"
+            "num:i 1"
+            ""
+        expect /store-done (blake2#[0-9a-f]*)/ capture r1_1
+
+        send:
+            "store rec"
+            "num:i 1"
+            "PREV:r $r1_1"
+            ""
+        expect /store-done (blake2#[0-9a-f]*)/ capture r2_1
+
+        send:
+            "store rec"
+            "num:i 1"
+            "PREV:r $r2_1"
+            ""
+        expect /store-done (blake2#[0-9a-f]*)/ capture r3_1
+
+        send:
+            "store rec"
+            "num:i 1"
+            "PREV:r $r3_1"
+            ""
+        expect /store-done (blake2#[0-9a-f]*)/ capture r4_1
+
+        # r4_1
+        #  |
+        # r3_1
+        #  |
+        # r2_1
+        #  |
+        # r1_1
+
+        send "stored-common-ancestors $r2_1 | $r4_1"
+        expect /stored-common-ancestors-item $r2_1/
+        local:
+            expect /stored-common-ancestors-(.*)/ capture done
+            guard (done == "done")
+
+
+        send:
+            "store rec"
+            "num:i 2"
+            "PREV:r $r2_1"
+            ""
+        expect /store-done (blake2#[0-9a-f]*)/ capture r3_2
+
+        send:
+            "store rec"
+            "num:i 2"
+            "PREV:r $r3_2"
+            ""
+        expect /store-done (blake2#[0-9a-f]*)/ capture r4_2
+
+        # r4_1  r4_2
+        #  |     |
+        # r3_1  r3_2
+        #   \   /
+        #    r2_1
+        #     |
+        #    r1_1
+
+        send "stored-common-ancestors $r4_1 | $r4_2"
+        expect /stored-common-ancestors-item $r2_1/
+        local:
+            expect /stored-common-ancestors-(.*)/ capture done
+            guard (done == "done")
+
+
+        send:
+            "store rec"
+            "num:i 3"
+            ""
+        expect /store-done (blake2#[0-9a-f]*)/ capture r1_3
+
+        send:
+            "store rec"
+            "num:i 3"
+            "PREV:r $r1_3"
+            ""
+        expect /store-done (blake2#[0-9a-f]*)/ capture r2_3
+
+        # r4_1  r4_2
+        #  |     |
+        # r3_1  r3_2
+        #   \   /
+        #    r2_1     r2_3
+        #     |        |
+        #    r1_1     r1_2
+
+        send "stored-common-ancestors $r4_1 $r4_2 | $r2_3"
+        local:
+            expect /stored-common-ancestors-(.*)/ capture done
+            guard (done == "done")
+
+
+        send:
+            "store rec"
+            "num:i 1"
+            "PREV:r $r4_1"
+            "PREV:r $r4_2"
+            ""
+        expect /store-done (blake2#[0-9a-f]*)/ capture r5_1
+
+        #    r5_1
+        #   /   \
+        # r4_1  r4_2
+        #  |     |
+        # r3_1  r3_2
+        #   \   /
+        #    r2_1
+        #     |
+        #    r1_1
+
+        send "stored-common-ancestors $r5_1 | $r3_2"
+        expect /stored-common-ancestors-item $r3_2/
+        local:
+            expect /stored-common-ancestors-(.*)/ capture done
+            guard (done == "done")
+
+
+        send:
+            "store rec"
+            "num:i 2"
+            "PREV:r $r4_2"
+            ""
+        expect /store-done (blake2#[0-9a-f]*)/ capture r5_2
+
+        #    r5_1   r5_2
+        #   /   \   /
+        # r4_1  r4_2
+        #  |     |
+        # r3_1  r3_2
+        #   \   /
+        #    r2_1
+        #     |
+        #    r1_1
+
+        send "stored-common-ancestors $r5_1 | $r5_2 $r3_1"
+        expect /stored-common-ancestors-item $r3_1/
+        expect /stored-common-ancestors-item $r4_2/
+        local:
+            expect /stored-common-ancestors-(.*)/ capture done
+            guard (done == "done")
+
+
+        send:
+            "store rec"
+            "num:i 3"
+            "PREV:r $r2_3"
+            ""
+        expect /store-done (blake2#[0-9a-f]*)/ capture r3_3
+
+        send:
+            "store rec"
+            "num:i 4"
+            "PREV:r $r2_3"
+            ""
+        expect /store-done (blake2#[0-9a-f]*)/ capture r3_4
+
+        # r4_1  r4_2
+        #  |     |
+        # r3_1  r3_2  r3_3  r3_4
+        #   \   /       \   /
+        #    r2_1        r2_3
+        #     |           |
+        #    r1_1        r1_2
+
+        send "stored-common-ancestors $r4_1 $r3_3 | $r4_2 $r3_4"
+        expect /stored-common-ancestors-item $r2_1/
+        expect /stored-common-ancestors-item $r2_3/
+        local:
+            expect /stored-common-ancestors-(.*)/ capture done
+            guard (done == "done")
+
+
+        send:
+            "store rec"
+            "num:i 1"
+            "PREV:r $r4_2"
+            "PREV:r $r3_3"
+            ""
+        expect /store-done (blake2#[0-9a-f]*)/ capture r5_3
+
+        send:
+            "store rec"
+            "num:i 1"
+            "PREV:r $r4_1"
+            "PREV:r $r3_4"
+            ""
+        expect /store-done (blake2#[0-9a-f]*)/ capture r5_4
+
+        #    ->   r5_3   <--r5_4
+        #   /    /   \       |
+        # r4_1  r4_2  \      |
+        #  |     |     |     |
+        # r3_1  r3_2  r3_3  r3_4
+        #   \   /       \   /
+        #    r2_1        r2_3
+        #     |           |
+        #    r1_1        r1_2
+
+        send "stored-common-ancestors $r5_3 | $r5_4"
+        expect /stored-common-ancestors-item $r2_1/
+        expect /stored-common-ancestors-item $r2_3/
+        local:
+            expect /stored-common-ancestors-(.*)/ capture done
+            guard (done == "done")
+
+
 test StoredDifference:
     spawn as p1
     with p1:
