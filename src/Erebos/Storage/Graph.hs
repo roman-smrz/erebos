@@ -9,6 +9,7 @@ module Erebos.Storage.Graph (
     precedes,
     precedesOrEquals,
     filterAncestors,
+    commonAncestors,
     storedRoots,
     walkAncestors,
 
@@ -23,6 +24,7 @@ module Erebos.Storage.Graph (
     graphToList,
 ) where
 
+import Control.Arrow
 import Control.Concurrent.MVar
 
 import Data.ByteString.Char8 qualified as BC
@@ -31,6 +33,7 @@ import Data.List
 import Data.List.NonEmpty (NonEmpty)
 import Data.List.NonEmpty qualified as NE
 import Data.Maybe
+import Data.Ord
 import Data.Set (Set)
 import Data.Set qualified as S
 
@@ -126,6 +129,37 @@ filterAncestors xs = let xs' = uniq $ sort xs
                                                 in helper remains' $ uniq $ sort (px ++ filter (/=x) walk)
                                      Nothing -> remains
 
+commonAncestors :: Storable a => [ Stored a ] -> [ Stored a ] -> StoredTips a
+commonAncestors [] _ = []
+commonAncestors _ [] = []
+commonAncestors oxs oys = sort $ gom oxs' oys'
+  where
+    maximumGen = maximumBy (comparing (\(Generation n) ->  n))
+    oxs' = map (storedGeneration &&& id) oxs
+    oys' = map (storedGeneration &&& id) oys
+
+    gom [] _ = []
+    gom _ [] = []
+    gom xs ys = go (maximumGen (map fst xs ++ map fst ys)) xs ys
+
+    go g xs ys =
+        let ( cxs, nxs ) = partition ((g ==) . fst) xs
+            ( cys, nys ) = partition ((g ==) . fst) ys
+            ( common, ( cxs', cys' ) ) = takeCommon (uniq $ sort $ map snd cxs) (uniq $ sort $ map snd cys)
+            pxs = map (storedGeneration &&& id) $ concatMap previous cxs'
+            pys = map (storedGeneration &&& id) $ concatMap previous cys'
+         in case ( pxs, pys ) of
+                ( [], [] ) -> common ++ gom nxs nys
+                ( _ , _  ) -> common ++ go (maximumGen (map fst pxs ++ map fst pys)) (pxs ++ nxs) (pys ++ nys)
+
+    takeCommon (x : xs) (y : ys)
+        | x < y = second (first  (x :)) $ takeCommon xs (y : ys)
+        | y < x = second (second (y :)) $ takeCommon (x : xs) ys
+        | otherwise = first (x :) $ takeCommon xs ys
+    takeCommon [] ys = ( [], ( [], ys ))
+    takeCommon xs [] = ( [], ( xs, [] ))
+
+
 storedRoots :: Storable a => Stored a -> [Stored a]
 storedRoots x = do
     let st = refStorage $ storedRef x
@@ -188,9 +222,8 @@ graphFromTips h = Graph h []
 
 graphRemoveTips :: Storable a => StoredTips a -> Graph a -> Graph a
 graphRemoveTips remove g =
-    let gtails = if null (graphTail g) then remove
-                                       else filterAncestors $ graphTail g ++ remove
-        gheads = filter (\h -> not $ any (h `precedesOrEquals`) gtails) (graphHead g)
+    let gheads = filter (\h -> not $ any (h `precedesOrEquals`) remove) (graphHead g)
+        gtails = commonAncestors gheads $ graphTail g ++ remove
      in Graph { graphHead = gheads, graphTail = gtails }
 
 graphSize :: Storable a => Graph a -> Int

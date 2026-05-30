@@ -51,6 +51,7 @@ import Erebos.Set
 import Erebos.State
 import Erebos.Storable
 import Erebos.Storage
+import Erebos.Storage.Graph
 import Erebos.Storage.Head
 import Erebos.Storage.Merge
 import Erebos.Sync
@@ -291,6 +292,7 @@ commands =
     , ( "stored-roots", cmdStoredRoots )
     , ( "stored-set-add", cmdStoredSetAdd )
     , ( "stored-set-list", cmdStoredSetList )
+    , ( "stored-common-ancestors", cmdStoredCommonAncestors )
     , ( "stored-difference", cmdStoredDifference )
     , ( "head-create", cmdHeadCreate )
     , ( "head-replace", cmdHeadReplace )
@@ -460,6 +462,19 @@ cmdStoredSetList = do
     forM_ items $ \item -> do
         cmdOut $ "stored-set-item" ++ concatMap ((' ':) . show . refDigest . storedRef) item
     cmdOut $ "stored-set-done"
+
+cmdStoredCommonAncestors :: Command
+cmdStoredCommonAncestors = do
+    st <- asks tiStorage
+    ( trefs1, "|" : trefs2 ) <- span (/= "|") <$> asks tiParams
+
+    let loadObjs = mapM (maybe (fail "invalid ref") (return . wrappedLoad @Object) <=< liftIO . readRef st . encodeUtf8)
+    objs1 <- loadObjs trefs1
+    objs2 <- loadObjs trefs2
+
+    forM_ (commonAncestors objs1 objs2) $ \item -> do
+        cmdOut $ "stored-common-ancestors-item " ++ (show $ refDigest $ storedRef item)
+    cmdOut $ "stored-common-ancestors-done"
 
 cmdStoredDifference :: Command
 cmdStoredDifference = do
