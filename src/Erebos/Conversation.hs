@@ -131,7 +131,7 @@ conversationPeer (DirectMessageConversation thread) = Just $ msgPeer thread
 conversationPeer (ChatroomConversation _) = Nothing
 
 conversationHistory :: Conversation -> [ Message ]
-conversationHistory = withConversation $ map (uncurry Message) . convMessageListSince Nothing
+conversationHistory = withConversation $ map (uncurry Message) . snd . convMessageListSince Nothing
 
 
 sendMessage :: (MonadHead LocalState m, MonadError e m, FromErebosError e) => Conversation -> Text -> m ()

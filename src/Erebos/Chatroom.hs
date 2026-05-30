@@ -69,7 +69,7 @@ instance ConversationType ChatroomState ChatMessage where
 
     convReference = refDigest . storedRef . head . filterAncestors . concatMap storedRoots . roomStateData
 
-    convMessageListSince mbSince cstate =
+    convMessageListSince mbSince cstate = ( 0, ) $
         map (, False) $ threadToListSince (maybe [] roomStateMessageData mbSince) (roomStateMessageData cstate)
 
 

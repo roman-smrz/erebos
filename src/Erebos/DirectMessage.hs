@@ -53,7 +53,7 @@ instance ConversationType DirectMessageThread DirectMessage where
 
     convReference = refDigest . storedRef . head . idDataF . msgPeer
 
-    convMessageListSince mbSince thread =
+    convMessageListSince mbSince thread = ( 0, ) $
         threadToListHelper (msgSeen thread) (maybe S.empty (S.fromAscList . msgHead) mbSince) (msgHead thread)
 
 

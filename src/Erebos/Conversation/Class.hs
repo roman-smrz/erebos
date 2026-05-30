@@ -17,4 +17,7 @@ class (Typeable conv, Typeable msg) => ConversationType conv msg | conv -> msg, 
     convMessageText :: msg -> Maybe Text
 
     convReference :: conv -> RefDigest
-    convMessageListSince :: Maybe conv -> conv -> [ ( msg, Bool ) ]
+    convMessageListSince
+        :: Maybe conv -- ^ Original state to diff from
+        -> conv       -- ^ Current state
+        -> ( Int, [ ( msg, Bool ) ] ) -- ^ Number of removed, list of added messages
