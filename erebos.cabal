@@ -109,6 +109,7 @@ library
         Erebos.Storable
         Erebos.Storage
         Erebos.Storage.Backend
+        Erebos.Storage.Graph
         Erebos.Storage.Head
         Erebos.Storage.Key
         Erebos.Storage.Merge
