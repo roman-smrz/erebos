@@ -42,6 +42,7 @@ import Erebos.Object
 import Erebos.Service
 import Erebos.State
 import Erebos.Storable
+import Erebos.Storage.Graph
 import Erebos.Storage.Head
 import Erebos.Storage.Merge
 
@@ -334,12 +335,10 @@ dmThreadToListSinceUnread :: DirectMessageThread -> DirectMessageThread -> [ ( D
 dmThreadToListSinceUnread since thread = threadToListHelper (msgSeen thread) (S.fromAscList $ msgHead since) (msgHead thread)
 
 threadToListHelper :: [ Stored DirectMessage ] -> Set (Stored DirectMessage) -> [ Stored DirectMessage ] -> [ ( DirectMessage, Bool ) ]
-threadToListHelper seen used msgs
-    | msg : msgs' <- filter (`S.notMember` used) $ reverse $ sortBy (comparing cmpView) msgs =
-        ( fromStored msg, not $ any (msg `precedesOrEquals`) seen ) : threadToListHelper seen (S.insert msg used) (msgs' ++ msgPrev (fromStored msg))
-    | otherwise = []
+threadToListHelper seen used msgs = map (\msg -> ( fromStored msg, isNew msg )) $ graphToList cmp $ graphRemoveTips (S.toList used) $ graphFromTips msgs
   where
-    cmpView msg = (zonedTimeToUTC $ msgTime $ fromStored msg, msg)
+    cmp = comparing $ zonedTimeToUTC . msgTime . fromStored
+    isNew msg = not $ any (msg `precedesOrEquals`) seen
 
 dmThreadView :: [ Stored MessageState ] -> [ DirectMessageThread ]
 dmThreadView = helper []
