@@ -16,6 +16,11 @@ module Erebos.Storage.Graph (
     findPropertyFirst,
 
     storedDifference,
+
+    Graph,
+    graphFromTips, graphRemoveTips,
+    graphSize,
+    graphToList,
 ) where
 
 import Control.Concurrent.MVar
@@ -98,6 +103,9 @@ generationsBy parents xs = NE.unfoldr gen ( xs, S.fromList xs )
             added -> let next = foldr S.insert cur added
                       in Just ( added, next )
 
+
+type StoredTips a = [ Stored a ]
+
 -- |Returns set containing all given objects and their ancestors
 ancestors :: Storable a => [Stored a] -> Set (Stored a)
 ancestors = NE.last . generations
@@ -108,8 +116,8 @@ precedes x y = not $ x `elem` filterAncestors [x, y]
 precedesOrEquals :: Storable a => Stored a -> Stored a -> Bool
 precedesOrEquals x y = filterAncestors [ x, y ] == [ y ]
 
-filterAncestors :: Storable a => [Stored a] -> [Stored a]
-filterAncestors [x] = [x]
+filterAncestors :: Storable a => [ Stored a ] -> StoredTips a
+filterAncestors [ x ] = [ x ]
 filterAncestors xs = let xs' = uniq $ sort xs
                       in helper xs' xs'
     where helper remains walk = case generationMax walk of
@@ -168,3 +176,40 @@ storedDifference xs' ys' =
         yg = S.toAscList $ NE.last $ generationsBy (filteredPrevious xs) $ filterAncestors (ys ++ xs) `diffSorted` xs
 
      in xg `mergeUniq` yg
+
+
+data Graph a = Graph
+    { graphHead :: StoredTips a
+    , graphTail :: StoredTips a
+    }
+
+graphFromTips :: StoredTips a -> Graph a
+graphFromTips h = Graph h []
+
+graphRemoveTips :: Storable a => StoredTips a -> Graph a -> Graph a
+graphRemoveTips remove g =
+    let gtails = if null (graphTail g) then remove
+                                       else filterAncestors $ graphTail g ++ remove
+        gheads = filter (\h -> not $ any (h `precedesOrEquals`) gtails) (graphHead g)
+     in Graph { graphHead = gheads, graphTail = gtails }
+
+graphSize :: Storable a => Graph a -> Int
+graphSize = length . graphToList (\_ _ -> EQ)
+
+graphToList :: Storable a => (Stored a -> Stored a -> Ordering) -> Graph a -> [ Stored a ]
+graphToList cmp Graph {..} = go S.empty graphHead
+  where
+    go _ [] = []
+    go used (x : xs)
+        | ( x', xs' ) <- selectMax x xs
+        = x' : go (S.insert x used) (xs' ++ filter (\(p :: Stored a) -> not $ p `S.member` used || any (p `precedesOrEquals`) graphTail) (previous x))
+
+    cmp' x y = case cmp x y of EQ -> compare x y
+                               o  -> o
+
+    selectMax y (x : xs)
+        = case cmp' y x of
+              LT -> (y :) <$> selectMax x xs
+              EQ -> selectMax y xs
+              GT -> (x :) <$> selectMax y xs
+    selectMax y [] = ( y, [] )
