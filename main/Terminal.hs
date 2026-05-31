@@ -15,6 +15,7 @@ module Terminal (
     printLine,
     updateLine,
     updateLinePart,
+    eraseLinesSince,
 
     printBottomLines,
     clearBottomLines,
@@ -421,6 +422,15 @@ updateLinePart TerminalLine {..} offset str = do
                 , mconcat $ replicate (tlLineCount - updLineCount) $ AnsiText "\r\ESC[K"
                 , AnsiText $ "\ESC[u"
                 ]
+
+eraseLinesSince :: TerminalLine -> IO ()
+eraseLinesSince TerminalLine {..} = do
+    let Terminal {..} = tlTerminal
+    when termAnsi $ do
+        withMVar termLock $ \_ -> do
+            bindex <- atomically $ readTVar termBottomIndex
+            putAnsi $ AnsiText $ "\ESC[" <> T.pack (show (bindex - tlLineIndex)) <> "F\ESC[J"
+            atomically $ writeTVar termBottomIndex tlLineIndex
 
 
 printBottomLines :: Terminal -> String -> IO ()
