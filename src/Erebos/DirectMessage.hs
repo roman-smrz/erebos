@@ -13,6 +13,7 @@ module Erebos.DirectMessage (
 
     DirectMessageThread(..),
     dmThreadToList, dmThreadToListSince, dmThreadToListUnread, dmThreadToListSinceUnread,
+    dmThreadToListChange,
     dmThreadView,
 
     watchDirectMessageThreads,
@@ -54,8 +55,8 @@ instance ConversationType DirectMessageThread DirectMessage where
 
     convReference = refDigest . storedRef . head . idDataF . msgPeer
 
-    convMessageListSince mbSince thread = ( 0, ) $
-        threadToListHelper (msgSeen thread) (maybe S.empty (S.fromAscList . msgHead) mbSince) (msgHead thread)
+    convMessageListSince Nothing      thread = ( 0, ) $ dmThreadToListUnread thread
+    convMessageListSince (Just since) thread = dmThreadToListChange since thread
 
 
 data DirectMessage = DirectMessage
@@ -339,6 +340,18 @@ threadToListHelper seen used msgs = map (\msg -> ( fromStored msg, isNew msg )) 
   where
     cmp = comparing $ zonedTimeToUTC . msgTime . fromStored
     isNew msg = not $ any (msg `precedesOrEquals`) seen
+
+dmThreadToListChange :: DirectMessageThread -> DirectMessageThread -> ( Int, [ ( DirectMessage, Bool ) ] )
+dmThreadToListChange since thread =
+    ( graphSize $ graphRemoveTips bottom $ graphFromTips (msgHead since)
+    , map (\msg -> ( fromStored msg, isNew msg )) $ graphToList cmp $ graphRemoveTips bottom $ graphFromTips (msgHead thread)
+    )
+  where
+    cmp = comparing $ zonedTimeToUTC . msgTime . fromStored
+    isNew msg = not $ any (msg `precedesOrEquals`) (msgSeen thread)
+    bottom
+        | msgSeen since == msgSeen thread = msgHead since
+        | otherwise = commonAncestors (msgHead since) (msgSeen since)
 
 dmThreadView :: [ Stored MessageState ] -> [ DirectMessageThread ]
 dmThreadView = helper []
