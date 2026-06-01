@@ -413,12 +413,25 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
     let getInputCommand = getInputCommandTui . Left
 
     contextVar <- liftIO $ newMVar NoContext
+    currentLinesVar <- liftIO $ newMVar []
 
     _ <- liftIO $ do
         tzone <- getCurrentTimeZone
         let self = finalOwner $ headLocalIdentity erebosHead
         watchDirectMessageThreads erebosHead $ \prev cur -> do
-            forM_ (reverse $ dmThreadToListSince prev cur) $ \msg -> do
+            let ( remove, messages ) = dmThreadToListChange prev cur
+            when (remove > 0) $ do
+                modifyMVar_ currentLinesVar $ \clines -> if
+                    | l : ls <- drop (remove - 1) clines -> do
+                        eraseLinesSince l
+                        return ls
+                    | _ : _ <- clines -> do
+                        eraseLinesSince (last clines)
+                        return []
+                    | otherwise -> do
+                        return []
+
+            forM_ (reverse messages) $ \( msg, new ) -> do
                 withMVar contextVar $ \ctx -> do
                     mbpid <- case ctx of
                         SelectedPeer peer -> getPeerIdentity peer >>= return . \case
@@ -429,7 +442,10 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
                         SelectedConversation conv -> return $ conversationPeer conv
                         _ -> return Nothing
                     when (not tui || maybe False (msgPeer cur `sameIdentity`) mbpid) $ do
-                        extPrintLn $ plainText $ T.pack $ formatDirectMessage tzone msg
+                        line <- printLine term $
+                            (if new then withStyle (setForegroundColor BrightYellow noStyle) else id) $
+                            plainText $ T.pack $ formatDirectMessage tzone msg
+                        modifyMVar_ currentLinesVar $ return . (line :)
 
                 case optDmBotEcho opts of
                     Just prefix
@@ -523,6 +539,7 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
                     , ciSetContextOptions = \watch ctxs -> liftIO $ modifyMVar_ contextOptions $ const $ return ( Just watch, ctxs )
                     , ciContextVar = contextVar
                     , ciContextOptionsVar = contextOptions
+                    , ciCurrentLinesVar = currentLinesVar
                     , ciChatroomSetVar = chatroomSetVar
                     }
                 return ( either (const ctx) csContext res, res )
@@ -563,6 +580,7 @@ data CommandInput = CommandInput
     , ciSetContextOptions :: ContextWatchOptions -> [ CommandContext ] -> Command
     , ciContextVar :: MVar CommandContext
     , ciContextOptionsVar :: MVar ( Maybe ContextWatchOptions, [ CommandContext ] )
+    , ciCurrentLinesVar :: MVar [ TerminalLine ]
     , ciChatroomSetVar :: MVar (Set ChatroomState)
     }
 
@@ -816,7 +834,9 @@ cmdSelectContext = do
         Right conv -> do
             liftIO $ updatePromptStatus term h (Just conv)
             tzone <- liftIO $ getCurrentTimeZone
-            mapM_ (cmdPutStrLn . formatMessageFT tzone) $ takeWhile messageUnread $ conversationHistory conv
+            tlines <- liftIO $ mapM (printLine term . formatMessageFT tzone) $ takeWhile messageUnread $ conversationHistory conv
+            var <- asks ciCurrentLinesVar
+            liftIO $ modifyMVar_ var $ \_ -> return (reverse tlines)
         Left _ -> do
             liftIO $ updatePromptStatus term h Nothing
 
@@ -837,7 +857,10 @@ cmdHistory = void $ do
     case conversationHistory conv of
         thread@(_:_) -> do
             tzone <- liftIO $ getCurrentTimeZone
-            mapM_ (cmdPutStrLn . formatMessageFT tzone) $ reverse $ take 50 thread
+            term <- asks ciTerminal
+            tlines <- liftIO $ mapM (printLine term . formatMessageFT tzone) $ reverse $ take 50 thread
+            var <- asks ciCurrentLinesVar
+            liftIO $ modifyMVar_ var $ \_ -> return (reverse tlines)
         [] -> do
             cmdPutStrLn $ withStyle (setForegroundColor BrightBlack noStyle) $ plainText "(empty history)"
 
