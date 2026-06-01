@@ -5,6 +5,7 @@ module Terminal (
     Terminal,
     hasTerminalUI,
     withTerminal,
+    holdFlush,
     setPrompt,
     setPromptStatus,
     showPrompt, hidePrompt,
@@ -59,6 +60,7 @@ data Terminal = Terminal
     , termHistoryPos :: TVar Int
     , termHistoryStash :: TVar ( String, String )
     , termBottomIndex :: TVar Int
+    , termHoldFlush :: TVar Int
     }
 
 data TerminalLine = TerminalLine
@@ -108,6 +110,7 @@ initTerminal termCompletionFunc = do
     termHistoryPos <- newTVarIO 0
     termHistoryStash <- newTVarIO ( "", "" )
     termBottomIndex <- newTVarIO 0
+    termHoldFlush <- newTVarIO 0
     return Terminal {..}
 
 bracketSet :: IO a -> (a -> IO b) -> a -> IO c -> IO c
@@ -121,6 +124,22 @@ withTerminal compl act = do
         bracketSet (hGetBuffering stdin) (hSetBuffering stdin) NoBuffering $
         bracketSet (hGetBuffering stdout) (hSetBuffering stdout) (BlockBuffering Nothing) $
             act term
+
+
+termFlush :: Terminal -> IO ()
+termFlush Terminal {..} = do
+    join $ atomically $ do
+        readTVar termHoldFlush >>= \case
+            0 -> return $ hFlush stdout
+            _ -> return $ return ()
+
+holdFlush :: Terminal -> IO a -> IO a
+holdFlush term@Terminal {..} act = do
+    atomically $ writeTVar termHoldFlush . (+ 1) =<< readTVar termHoldFlush
+    x <- act
+    atomically $ writeTVar termHoldFlush . subtract 1 =<< readTVar termHoldFlush
+    termFlush term
+    return x
 
 
 putAnsi :: AnsiText -> IO ()
@@ -201,7 +220,7 @@ getInputLine term@Terminal {..} handleResult = do
                             writeTVar termInput ( pre', post )
                             getCurrentPromptLine term
                         putAnsi $ "\r" <> prompt
-                        hFlush stdout
+                        termFlush term
 
                 termCompletionFunc ( T.pack pre, T.pack post ) >>= \case
 
@@ -310,7 +329,7 @@ getInputLine term@Terminal {..} handleResult = do
             str <- atomically $ f =<< readTVar termInput
             when (termAnsi && not (T.null $ fromAnsiText str)) $ do
                 putAnsi str
-                hFlush stdout
+                termFlush term
         go
 
 
@@ -332,7 +351,7 @@ redrawPrompt term = do
     promptLine <- getCurrentPromptLine term
     return $ do
         putAnsi $ "\r\ESC[K" <> promptLine
-        hFlush stdout
+        termFlush term
 
 setPrompt :: Terminal -> FormattedText -> IO ()
 setPrompt Terminal { termAnsi = False } _ = do
@@ -403,7 +422,7 @@ printLine tlTerminal@Terminal {..} str = do
             writeTVar termBottomIndex $ bindex + tlLineCount
             return bindex
 
-        hFlush stdout
+        termFlush tlTerminal
         return TerminalLine {..}
 
 updateLine :: TerminalLine -> FormattedText -> IO ()
@@ -443,19 +462,19 @@ printBottomLines term@Terminal {..} str = do
             withMVar termLock $ \_ -> do
                 atomically $ writeTVar termBottomLines blines
                 drawBottomLines term
-                hFlush stdout
+                termFlush term
 
 clearBottomLines :: Terminal -> IO ()
 clearBottomLines Terminal { termAnsi = False } = do
     return ()
-clearBottomLines Terminal {..} = do
+clearBottomLines term@Terminal {..} = do
     withMVar termLock $ \_ -> do
         atomically (readTVar termBottomLines) >>= \case
             []  -> return ()
             _:_ -> do
                 atomically $ writeTVar termBottomLines []
                 putStr $ "\ESC[s\n\ESC[J\ESC[u"
-                hFlush stdout
+                termFlush term
 
 drawBottomLines :: Terminal -> IO ()
 drawBottomLines Terminal {..} = do

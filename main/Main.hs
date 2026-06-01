@@ -418,7 +418,7 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
     _ <- liftIO $ do
         tzone <- getCurrentTimeZone
         let self = finalOwner $ headLocalIdentity erebosHead
-        watchDirectMessageThreads erebosHead $ \prev cur -> do
+        watchDirectMessageThreads erebosHead $ \prev cur -> holdFlush term $ do
             let ( remove, messages ) = dmThreadToListChange prev cur
             when (remove > 0) $ do
                 modifyMVar_ currentLinesVar $ \clines -> if
