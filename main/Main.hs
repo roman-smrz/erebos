@@ -385,7 +385,9 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
                 Right prompt -> return prompt
             lift $ setPrompt term $ plainText $ T.pack prompt
             join $ lift $ getInputLine term $ \case
-                Just input@('/' : _) -> KeepPrompt $ return input
+                Just input@('/' : _)
+                    | "/seen" : _ <- words input -> ErasePrompt $ return input
+                    | otherwise -> KeepPrompt $ return input
                 Just input -> ErasePrompt $ case reverse input of
                     _ | all isSpace input -> getInputLinesTui eprompt
                     '\\':rest -> (reverse ('\n':rest) ++) <$> getInputLinesTui (Right ">> ")
@@ -711,6 +713,7 @@ commands =
     , ( "invite-accept", cmdInviteAccept )
     , ( "conversations", cmdConversations )
     , ( "new", cmdNew )
+    , ( "seen", cmdSeen )
     , ( "details", cmdDetails )
     , ( "discovery", cmdDiscovery )
     , ( "join", cmdJoin )
@@ -1112,6 +1115,9 @@ cmdNew = do
         , messageUnread msg
         = Just ( conv, msg )
     checkNew _ = Nothing
+
+cmdSeen :: Command
+cmdSeen = markAllSeen =<< getSelectedConversation
 
 
 cmdDetails :: Command

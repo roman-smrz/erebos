@@ -95,12 +95,12 @@ Test chatroom [19:03] Some Name: Hi
 `/conversations`  
 : List started conversations with contacts or other peers.
 
-`/new`
+`/new`  
 : List conversations with new (unread) messages.
 
 `/<number>`  
 : Select conversation, contact or peer `<number>` based on the last
-  `/conversations`, `/contacts` or `/peers` output list.
+  `/conversations`, `/contacts`, `/peers` or `/new` output list.
 
 `<message>`  
 : Send `<message>` to selected conversation.
@@ -112,6 +112,9 @@ Test chatroom [19:03] Some Name: Hi
 `/details [<number>]`  
 : Show information about the selected conversations, contact or peer; or the
   one identified by `<number>` if given.
+
+`/seen`  
+: Mark all messages in the current conversation as seen.
 
 ### Chatrooms
 

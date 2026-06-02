@@ -26,6 +26,7 @@ module Erebos.Conversation (
 
     sendMessage,
     deleteConversation,
+    markAllSeen,
 ) where
 
 import Control.Monad.Except
@@ -141,3 +142,6 @@ sendMessage (ChatroomConversation rstate) text = sendChatroomMessage rstate text
 deleteConversation :: (MonadHead LocalState m, MonadError e m, FromErebosError e) => Conversation -> m ()
 deleteConversation (DirectMessageConversation _) = throwOtherError "deleting direct message conversation is not supported"
 deleteConversation (ChatroomConversation rstate) = deleteChatroomByStateData (head $ roomStateData rstate)
+
+markAllSeen :: (MonadHead LocalState m, MonadError e m, FromErebosError e) => Conversation -> m ()
+markAllSeen = withConversation convMarkAllSeen

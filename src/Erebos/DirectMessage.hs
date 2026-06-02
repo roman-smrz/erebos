@@ -58,6 +58,8 @@ instance ConversationType DirectMessageThread DirectMessage where
     convMessageListSince Nothing      thread = ( 0, ) $ dmThreadToListUnread thread
     convMessageListSince (Just since) thread = dmThreadToListChange since thread
 
+    convMarkAllSeen DirectMessageThread {..} = dmMarkAsSeen msgPeer
+
 
 data DirectMessage = DirectMessage
     { msgFrom :: ComposedIdentity

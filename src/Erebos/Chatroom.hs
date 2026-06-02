@@ -72,6 +72,8 @@ instance ConversationType ChatroomState ChatMessage where
     convMessageListSince mbSince cstate = ( 0, ) $
         map (, False) $ threadToListSince (maybe [] roomStateMessageData mbSince) (roomStateMessageData cstate)
 
+    convMarkAllSeen _ = return ()
+
 
 data ChatroomData = ChatroomData
     { rdPrev :: [Stored (Signed ChatroomData)]
