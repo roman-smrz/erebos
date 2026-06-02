@@ -837,7 +837,8 @@ cmdSelectContext = do
         Right conv -> do
             liftIO $ updatePromptStatus term h (Just conv)
             tzone <- liftIO $ getCurrentTimeZone
-            tlines <- liftIO $ mapM (printLine term . formatMessageFT tzone) $ takeWhile messageUnread $ conversationHistory conv
+            tlines <- liftIO $ mapM (printLine term . formatMessageFT tzone) $
+                reverse $ takeWhile messageUnread $ conversationHistory conv
             var <- asks ciCurrentLinesVar
             liftIO $ modifyMVar_ var $ \_ -> return (reverse tlines)
         Left _ -> do
