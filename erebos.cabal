@@ -124,6 +124,7 @@ library
         Erebos.Network.Channel
         Erebos.Network.Protocol
         Erebos.Object.Internal
+        Erebos.Storable.Internal
         Erebos.Storage.Disk
         Erebos.Storage.Internal
         Erebos.Storage.Memory

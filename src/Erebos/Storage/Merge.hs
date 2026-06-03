@@ -24,9 +24,8 @@ module Erebos.Storage.Merge (
 import Data.Kind
 
 import Erebos.Object
-import Erebos.Storable
+import Erebos.Storable.Internal
 import Erebos.Storage.Graph
-import Erebos.Storage.Internal
 
 
 class Storable (Component a) => Mergeable a where

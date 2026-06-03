@@ -11,7 +11,9 @@ import Control.Monad.IO.Class
 import Data.ByteArray
 import Data.Typeable
 
-import Erebos.Storable
+import Erebos.Error
+import Erebos.Object.Internal
+import Erebos.Storable.Internal
 import Erebos.Storage.Internal
 
 class Storable pub => KeyPair sec pub | sec -> pub, pub -> sec where

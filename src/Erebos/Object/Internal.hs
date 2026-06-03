@@ -6,7 +6,8 @@ module Erebos.Object.Internal (
     readRef, showRef,
     readRefDigest, showRefDigest,
     refDigestFromByteString, hashToRefDigest,
-    copyRef, partialRef, partialRefFromDigest,
+    copyRef, copyRef', partialRef, partialRefFromDigest,
+    zeroRef,
 
     Object, PartialObject, Object'(..),
     RecItem, RecItem'(..),
@@ -15,9 +16,6 @@ module Erebos.Object.Internal (
     ioLoadObject, ioLoadBytes,
     storeRawBytes, lazyLoadBytes,
     storeObject,
-    collectObjects, collectStoredObjects,
-
-    MonadStorage(..),
 
     Storable(..), ZeroStorable(..),
     StorableText(..), StorableDate(..), StorableUUID(..),
@@ -40,12 +38,6 @@ module Erebos.Object.Internal (
     loadMbEmpty, loadMbInt, loadMbNum, loadMbText, loadMbBinary, loadMbDate, loadMbUUID, loadMbRef, loadMbRawRef, loadMbRawWeak,
     loadTexts, loadBinaries, loadRefs, loadRawRefs, loadRawWeaks,
     loadZRef,
-
-    Stored,
-    fromStored, storedRef,
-    wrappedStore, wrappedLoad,
-    copyStored,
-    unsafeMapStored,
 ) where
 
 import Control.Applicative
@@ -69,8 +61,6 @@ import Data.Char
 import Data.Function
 import Data.Maybe
 import Data.Ratio
-import Data.Set (Set)
-import Data.Set qualified as S
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Encoding
@@ -386,38 +376,8 @@ deserializeObjects st bytes = do (obj, rest) <- deserializeObject st bytes
                                  (obj:) <$> deserializeObjects st rest
 
 
-collectObjects :: Object -> [Object]
-collectObjects obj = obj : map fromStored (fst $ collectOtherStored S.empty obj)
-
-collectStoredObjects :: Stored Object -> [Stored Object]
-collectStoredObjects obj = obj : (fst $ collectOtherStored S.empty $ fromStored obj)
-
-collectOtherStored :: Set RefDigest -> Object -> ([Stored Object], Set RefDigest)
-collectOtherStored seen (Rec items) = foldr helper ([], seen) $ map snd items
-    where helper (RecRef ref) (xs, s) | r <- refDigest ref
-                                      , r `S.notMember` s
-                                      = let o = wrappedLoad ref
-                                            (xs', s') = collectOtherStored (S.insert r s) $ fromStored o
-                                         in ((o : xs') ++ xs, s')
-          helper _          (xs, s) = (xs, s)
-collectOtherStored seen _ = ([], seen)
-
-
 deriving instance StorableUUID HeadID
 deriving instance StorableUUID HeadTypeID
-
-
-class Monad m => MonadStorage m where
-    getStorage :: m Storage
-    mstore :: Storable a => a -> m (Stored a)
-
-    default mstore :: MonadIO m => Storable a => a -> m (Stored a)
-    mstore x = do
-        st <- getStorage
-        wrappedStore st x
-
-instance MonadIO m => MonadStorage (ReaderT Storage m) where
-    getStorage = ask
 
 
 class Storable a where
@@ -810,36 +770,6 @@ loadRawWeaks name = mapMaybe p <$> loadRecItems
     p ( name', RecRef x )  | name' == bname = Just (refDigest x)
     p ( name', RecWeak x ) | name' == bname = Just x
     p _                                     = Nothing
-
-
-
-instance Storable a => Storable (Stored a) where
-    store st = copyRef st . storedRef
-    store' (Stored _ x) = store' x
-    load' = Stored <$> loadCurrentRef <*> load'
-
-instance ZeroStorable a => ZeroStorable (Stored a) where
-    fromZero st = Stored (zeroRef st) $ fromZero st
-
-fromStored :: Stored a -> a
-fromStored = storedObject'
-
-storedRef :: Stored a -> Ref
-storedRef = storedRef'
-
-wrappedStore :: MonadIO m => Storable a => Storage -> a -> m (Stored a)
-wrappedStore st x = do ref <- liftIO $ store st x
-                       return $ Stored ref x
-
-wrappedLoad :: Storable a => Ref -> Stored a
-wrappedLoad ref = Stored ref (load ref)
-
-copyStored :: forall m a. MonadIO m => Storage -> Stored a -> m (Stored a)
-copyStored st (Stored ref' x) = liftIO $ returnLoadResult . fmap (\r -> Stored r x) <$> copyRef' st ref'
-
--- |Passed function needs to preserve the object representation to be safe
-unsafeMapStored :: (a -> b) -> Stored a -> Stored b
-unsafeMapStored f (Stored ref x) = Stored ref (f x)
 
 
 showRatio :: Rational -> String

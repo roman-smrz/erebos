@@ -30,7 +30,7 @@ import Data.Bifunctor
 import Data.Typeable
 
 import Erebos.Object
-import Erebos.Storable
+import Erebos.Storable.Internal
 import Erebos.Storage.Backend
 import Erebos.Storage.Internal
 import Erebos.UUID qualified as U

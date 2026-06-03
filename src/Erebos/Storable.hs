@@ -43,3 +43,4 @@ module Erebos.Storable (
 
 import Erebos.Error
 import Erebos.Object.Internal
+import Erebos.Storable.Internal
