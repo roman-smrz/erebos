@@ -1,13 +1,11 @@
 module Erebos.Storage.Internal (
     Storage'(..), Storage, PartialStorage,
-    Ref'(..), Ref, PartialRef,
     RefDigest(..),
     WatchID, startWatchID, nextWatchID,
     WatchList(..), WatchListItem(..), watchListAdd, watchListDel,
 
-    refStorage,
-    refDigest, refDigestFromByteString,
-    showRef, showRefDigest, showRefDigestParts,
+    refDigestFromByteString,
+    showRefDigest, showRefDigestParts,
     readRefDigest,
     hashToRefDigest,
 
@@ -176,35 +174,8 @@ newtype RefDigest = RefDigest (Digest Blake2b_256)
 instance Show RefDigest where
     show = BC.unpack . showRefDigest
 
-data Ref' c = Ref (Storage' c) RefDigest
-
-type Ref = Ref' Complete
-type PartialRef = Ref' Partial
-
-instance Eq (Ref' c) where
-    Ref _ d1 == Ref _ d2  =  d1 == d2
-
-instance Show (Ref' c) where
-    show ref@(Ref st _) = show st ++ ":" ++ BC.unpack (showRef ref)
-
-instance ByteArrayAccess (Ref' c) where
-    length (Ref _ dgst) = BA.length dgst
-    withByteArray (Ref _ dgst) = BA.withByteArray dgst
-
 instance Hashable RefDigest where
     hashWithSalt salt ref = salt `xor` unsafePerformIO (BA.withByteArray ref peek)
-
-instance Hashable (Ref' c) where
-    hashWithSalt salt ref = salt `xor` unsafePerformIO (BA.withByteArray ref peek)
-
-refStorage :: Ref' c -> Storage' c
-refStorage (Ref st _) = st
-
-refDigest :: Ref' c -> RefDigest
-refDigest (Ref _ dgst) = dgst
-
-showRef :: Ref' c -> ByteString
-showRef = showRefDigest . refDigest
 
 showRefDigestParts :: RefDigest -> (ByteString, ByteString)
 showRefDigestParts x = (BC.pack "blake2", showHex x)
@@ -243,18 +214,18 @@ type Partial = Either RefDigest
 class (Traversable compl, Monad compl, Typeable compl) => StorageCompleteness compl where
     type LoadResult compl a :: Type
     returnLoadResult :: compl a -> LoadResult compl a
-    ioLoadBytes :: Ref' compl -> IO (compl BL.ByteString)
+    unsafeLoadBytes :: Storage' compl -> RefDigest -> IO (compl BL.ByteString)
 
 instance StorageCompleteness Complete where
     type LoadResult Complete a = a
     returnLoadResult = runIdentity
-    ioLoadBytes ref@(Ref st dgst) = maybe (error $ "Ref not found in complete storage: "++show ref) Identity
+    unsafeLoadBytes st dgst = maybe (error $ "Ref not found in complete storage: "++show dgst) Identity
         <$> ioLoadBytesFromStorage st dgst
 
 instance StorageCompleteness Partial where
     type LoadResult Partial a = Either RefDigest a
     returnLoadResult = id
-    ioLoadBytes (Ref st dgst) = maybe (Left dgst) Right <$> ioLoadBytesFromStorage st dgst
+    unsafeLoadBytes st dgst = maybe (Left dgst) Right <$> ioLoadBytesFromStorage st dgst
 
 ioLoadBytesFromStorage :: Storage' c -> RefDigest -> IO (Maybe BL.ByteString)
 ioLoadBytesFromStorage Storage {..} dgst =

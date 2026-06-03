@@ -11,7 +11,7 @@ defined here as well.
 module Erebos.Storable (
     Storable(..), ZeroStorable(..),
     StorableText(..), StorableDate(..), StorableUUID(..),
-    StorageCompleteness(..),
+    StorageCompleteness,
 
     Store, StoreRec,
     storeBlob, storeRec, storeZero,

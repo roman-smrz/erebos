@@ -1,8 +1,9 @@
 module Erebos.Object.Internal (
     Storage, PartialStorage, StorageCompleteness,
 
-    Ref, PartialRef, RefDigest,
+    Ref, PartialRef, RefDigest, Ref'(..),
     refDigest, refFromDigest,
+    refStorage,
     readRef, showRef,
     readRefDigest, showRefDigest,
     refDigestFromByteString, hashToRefDigest,
@@ -59,6 +60,7 @@ import Data.ByteString.Lazy qualified as BL
 import Data.ByteString.Lazy.Char8 qualified as BLC
 import Data.Char
 import Data.Function
+import Data.Hashable
 import Data.Maybe
 import Data.Ratio
 import Data.Text (Text)
@@ -79,6 +81,33 @@ import Erebos.UUID (UUID)
 import Erebos.UUID qualified as U
 import Erebos.Util
 
+
+data Ref' c = Ref (Storage' c) RefDigest
+
+type Ref = Ref' Complete
+type PartialRef = Ref' Partial
+
+instance Eq (Ref' c) where
+    Ref _ d1 == Ref _ d2  =  d1 == d2
+
+instance Show (Ref' c) where
+    show ref@(Ref st _) = show st ++ ":" ++ BC.unpack (showRef ref)
+
+instance BA.ByteArrayAccess (Ref' c) where
+    length (Ref _ dgst) = BA.length dgst
+    withByteArray (Ref _ dgst) = BA.withByteArray dgst
+
+instance Hashable (Ref' c) where
+    hashWithSalt salt = hashWithSalt salt . refDigest
+
+refStorage :: Ref' c -> Storage' c
+refStorage (Ref st _) = st
+
+refDigest :: Ref' c -> RefDigest
+refDigest (Ref _ dgst) = dgst
+
+showRef :: Ref' c -> ByteString
+showRef = showRefDigest . refDigest
 
 zeroRef :: Storage' c -> Ref' c
 zeroRef s = Ref s (RefDigest h)
@@ -256,6 +285,9 @@ ioLoadObject ref@(Ref st rhash) = do
 lazyLoadBytes :: forall c. StorageCompleteness c => Ref' c -> LoadResult c BL.ByteString
 lazyLoadBytes ref | isZeroRef ref = returnLoadResult (return BL.empty :: c BL.ByteString)
 lazyLoadBytes ref = returnLoadResult $ unsafePerformIO $ ioLoadBytes ref
+
+ioLoadBytes :: StorageCompleteness c => Ref' c -> IO (c BL.ByteString)
+ioLoadBytes (Ref st dgst) = unsafeLoadBytes st dgst
 
 unsafeDeserializeObject :: Storage' c -> BL.ByteString -> Except ErebosError (Object' c, BL.ByteString)
 unsafeDeserializeObject _  bytes | BL.null bytes = return (ZeroObject, bytes)

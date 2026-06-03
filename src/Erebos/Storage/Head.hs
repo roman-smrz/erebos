@@ -29,7 +29,7 @@ import Control.Monad.Reader
 import Data.Bifunctor
 import Data.Typeable
 
-import Erebos.Object
+import Erebos.Object.Internal
 import Erebos.Storable.Internal
 import Erebos.Storage.Backend
 import Erebos.Storage.Internal
