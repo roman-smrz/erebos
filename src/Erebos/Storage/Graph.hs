@@ -160,7 +160,7 @@ commonAncestors oxs oys = sort $ gom oxs' oys'
     takeCommon xs [] = ( [], ( xs, [] ))
 
 
-storedRoots :: Storable a => Stored a -> [Stored a]
+storedRoots :: Storable a => Stored a -> [ Stored a ]
 storedRoots x = do
     let st = refStorage $ storedRef x
     unsafePerformIO $ withMVar (stRefRoots st) $ \ht -> do
@@ -168,8 +168,8 @@ storedRoots x = do
                 Just roots -> return roots
                 Nothing -> do
                     roots <- case previous y of
-                        [] -> return [refDigest $ storedRef y]
-                        ps -> map (refDigest . storedRef) . filterAncestors . map (wrappedLoad @Object . Ref st) . concat <$> mapM doLookup ps
+                        [] -> return [ refDigest $ storedRef y ]
+                        ps -> foldl' mergeUniq [] <$> mapM doLookup ps
                     HT.insert ht (refDigest $ storedRef y) roots
                     return roots
         map (wrappedLoad . Ref st) <$> doLookup x
