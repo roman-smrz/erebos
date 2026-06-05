@@ -23,6 +23,7 @@ module Erebos.Conversation (
     conversationName,
     conversationPeer,
     conversationHistory,
+    conversationHistoryChange,
 
     sendMessage,
     deleteConversation,
@@ -85,6 +86,11 @@ withConversation :: (forall conv msg. ConversationType conv msg => conv -> a) ->
 withConversation f (DirectMessageConversation conv) = f conv
 withConversation f (ChatroomConversation conv) = f conv
 
+withConversations :: (forall conv msg. ConversationType conv msg => Maybe conv -> conv -> a) -> Conversation -> Conversation -> a
+withConversations f (DirectMessageConversation conv) (DirectMessageConversation conv') = f (Just conv) conv'
+withConversations f (ChatroomConversation conv) (ChatroomConversation conv') = f (Just conv) conv'
+withConversations f _ conv = withConversation (f Nothing) conv
+
 isSameConversation :: Conversation -> Conversation -> Bool
 isSameConversation (DirectMessageConversation t) (DirectMessageConversation t')
     = sameIdentity (msgPeer t) (msgPeer t')
@@ -133,6 +139,9 @@ conversationPeer (ChatroomConversation _) = Nothing
 
 conversationHistory :: Conversation -> [ Message ]
 conversationHistory = withConversation $ map (uncurry Message) . snd . convMessageListSince Nothing
+
+conversationHistoryChange :: Conversation -> Conversation -> ( Int, [ Message ] )
+conversationHistoryChange = withConversations $ \since -> fmap (map (uncurry Message)) . convMessageListSince since
 
 
 sendMessage :: (MonadHead LocalState m, MonadError e m, FromErebosError e) => Conversation -> Text -> m ()
