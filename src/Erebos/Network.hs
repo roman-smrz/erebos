@@ -333,11 +333,11 @@ startServer serverOptions serverOrigHead logd' serverServices = do
             forM_ serverServices $ \(SomeService service _) -> do
                 forM_ (serviceStorageWatchers service) $ \case
                     SomeStorageWatcher sel act -> do
-                        watchHeadWith serverOrigHead (sel . headStoredObject) $ \x -> do
+                        watchHeadWith serverOrigHead (sel . headStoredObject) $ \_ -> do
                             withMVar serverPeers $ mapM_ $ \peer -> atomically $ do
                                 readTVar (peerIdentityVar peer) >>= \case
                                     PeerIdentityFull _ -> writeTQueue serverIOActions $ do
-                                        runPeerService peer $ act x
+                                        runPeerService peer $ act . sel =<< svcGetLocal
                                     _ -> return ()
                     GlobalStorageWatcher sel act -> do
                         watchHeadWith serverOrigHead (sel . headStoredObject) $ \x -> do
