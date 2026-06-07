@@ -95,19 +95,21 @@ initTestState = TestState
 data TestInput = TestInput
     { tiOutput :: Output
     , tiStorage :: Storage
-    , tiParams :: [Text]
+    , tiParams :: [ Text ]
+    , tiDmLogChange :: MVar Bool
     }
 
 
 runTestTool :: Storage -> IO ()
 runTestTool st = do
     out <- newMVar ()
+    changeVar <- newMVar False
     let testLoop = getLineMb >>= \case
             Just line -> do
                 case T.words line of
                     (cname:params)
                         | Just (CommandM cmd) <- lookup cname commands -> do
-                            runReaderT cmd $ TestInput out st params
+                            runReaderT cmd $ TestInput out st params changeVar
                         | otherwise -> fail $ "Unknown command '" ++ T.unpack cname ++ "'"
                     [] -> return ()
                 testLoop
@@ -247,9 +249,15 @@ inviteAttributes out = (defaultServiceAttributes Proxy)
         afterCommit $ outLine out $ "invite-reply " <> showInviteToken token <> " invalid"
     }
 
-dmThreadWatcher :: ComposedIdentity -> Output -> DirectMessageThread -> DirectMessageThread -> IO ()
-dmThreadWatcher self out prev cur = do
-    forM_ (reverse $ dmThreadToListSinceUnread prev cur) $ \( msg, new ) -> do
+dmThreadWatcher :: MVar Bool -> ComposedIdentity -> Output -> DirectMessageThread -> DirectMessageThread -> IO ()
+dmThreadWatcher changeVar self out prev cur = do
+    change <- readMVar changeVar
+    let ( removed, added )
+            | change = dmThreadToListChange prev cur
+            | otherwise = ( 0, dmThreadToListSinceUnread prev cur )
+    when (removed > 0) $ do
+        outLine out $ unwords [ "dm-removed", show removed ]
+    forM_ (reverse added) $ \( msg, new ) -> do
         outLine out $ unwords
             [ if sameIdentity self (msgFrom msg)
                  then "dm-sent"
@@ -326,6 +334,7 @@ commands =
     , ( "contact-reject", cmdContactReject )
     , ( "contact-list", cmdContactList )
     , ( "contact-set-name", cmdContactSetName )
+    , ( "dm-log-change", cmdDmLogChange )
     , ( "dm-send-peer", cmdDmSendPeer )
     , ( "dm-send-contact", cmdDmSendContact )
     , ( "dm-send-identity", cmdDmSendIdentity )
@@ -544,7 +553,8 @@ cmdHeadUnwatch = do
 initTestHead :: Head LocalState -> Command
 initTestHead h = do
     let self = finalOwner $ headLocalIdentity h
-    _ <- liftIO . watchDirectMessageThreads h . dmThreadWatcher self =<< asks tiOutput
+    changeVar <- asks tiDmLogChange
+    _ <- liftIO . watchDirectMessageThreads h . dmThreadWatcher changeVar self =<< asks tiOutput
     modify $ \s -> s { tsHead = Just h }
 
 loadTestHead :: CommandM (Head LocalState)
@@ -934,6 +944,12 @@ cmdContactSetName = do
     contact <- getContact cid
     updateLocalState_ $ updateSharedState_ $ contactSetName contact name
     cmdOut "contact-set-name-done"
+
+cmdDmLogChange :: Command
+cmdDmLogChange = do
+    var <- asks tiDmLogChange
+    liftIO $ modifyMVar_ var $ return . const True
+    cmdOut "dm-log-change-done"
 
 cmdDmSendPeer :: Command
 cmdDmSendPeer = do
