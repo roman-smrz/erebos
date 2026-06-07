@@ -324,8 +324,10 @@ test DirectMessageSeen:
 	send "identity-info $p2id" to p2
 	expect /identity-info ref $p2id base ($refpat) owner ($refpat).*/ from p2 capture p2base, p2owner
 
-	send "start-server services $services" to p1
-	send "start-server services $services" to p2
+	for p in [ p1, p2 ]:
+		send "start-server services $services" to p
+		send "dm-log-change" to p
+		expect /dm-log-change-done/ from p
 
 	expect from p1:
 		/peer ([0-9]+) addr ${p2.node.ip} 29665/ capture peer1_2
@@ -335,22 +337,29 @@ test DirectMessageSeen:
 		/peer ([0-9]+) addr ${p1.node.ip} 29665/ capture peer2_1
 		/peer $peer2_1 id Device1 Owner1/
 
-	for i in [ 1 .. 2 ]:
+	for i in [ 1 .. 3 ]:
 		send "dm-send-peer $peer1_2 msg_a_$i" to p1
 		expect /dm-sent from Owner1 new no text msg_a_$i/ from p1
 		expect /dm-received from Owner1 new yes text msg_a_$i/ from p2
 
-	for i in [ 1 .. 2 ]:
+	send "dm-send-peer $peer2_1 msg_b_1" to p2
+	expect /dm-removed 3/ from p2
+	for i in [ 1 .. 3 ]:
+		expect /dm-received from Owner1 new no text msg_a_$i/ from p2
+	expect /dm-sent from Owner2 new no text msg_b_1/ from p2
+	expect /dm-received from Owner2 new yes text msg_b_1/ from p1
+
+	for i in [ 2 .. 3 ]:
 		send "dm-send-peer $peer2_1 msg_b_$i" to p2
 		expect /dm-sent from Owner2 new no text msg_b_$i/ from p2
 		expect /dm-received from Owner2 new yes text msg_b_$i/ from p1
 
 	send "dm-list-identity $p2owner" to p1
 	send "dm-list-identity $p1owner" to p2
-	for i in [ 1 .. 2 ]:
+	for i in [ 1 .. 3 ]:
 		expect /dm-list-item from Owner1 new no text msg_a_$i/ from p1
 		expect /dm-list-item from Owner1 new no text msg_a_$i/ from p2
-	for i in [ 1 .. 2 ]:
+	for i in [ 1 .. 3 ]:
 		expect /dm-list-item from Owner2 new yes text msg_b_$i/ from p1
 		expect /dm-list-item from Owner2 new no text msg_b_$i/ from p2
 	for p in [ p1, p2 ]:
@@ -364,10 +373,10 @@ test DirectMessageSeen:
 
 	send "dm-list-identity $p2owner" to p1
 	send "dm-list-identity $p1owner" to p2
-	for i in [1..2]:
+	for i in [ 1 .. 3 ]:
 		expect /dm-list-item from Owner1 new no text msg_a_$i/ from p1
 		expect /dm-list-item from Owner1 new no text msg_a_$i/ from p2
-	for i in [1..2]:
+	for i in [ 1 .. 3 ]:
 		expect /dm-list-item from Owner2 new no text msg_b_$i/ from p1
 		expect /dm-list-item from Owner2 new no text msg_b_$i/ from p2
 	for p in [ p1, p2 ]:
