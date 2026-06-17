@@ -13,6 +13,10 @@ module Erebos.Storage.Graph (
     storedRoots,
     walkAncestors,
 
+    Property,
+    emptyProperty,
+    propertyValue, propertyValueFirst,
+    findProperty', findPropertyUpdate,
     findProperty,
     findPropertyFirst,
 
@@ -186,15 +190,55 @@ walkAncestors f = helper . sortBy cmp
                    Just GT -> LT
                    _ -> compare x y
 
-findProperty :: forall a b. Storable a => (a -> Maybe b) -> [Stored a] -> [b]
-findProperty sel = map (fromJust . sel . fromStored) . filterAncestors . (findPropHeads sel =<<)
 
-findPropertyFirst :: forall a b. Storable a => (a -> Maybe b) -> [Stored a] -> Maybe b
-findPropertyFirst sel = fmap (fromJust . sel . fromStored) . listToMaybe . filterAncestors . (findPropHeads sel =<<)
+data Property a b = Property
+    { propSelector :: Stored a -> Maybe b
+    , propSource :: [ Stored a ]
+    , propHeads :: StoredTips a
+    }
 
-findPropHeads :: forall a b. Storable a => (a -> Maybe b) -> Stored a -> [Stored a]
-findPropHeads sel sobj | Just _ <- sel $ fromStored sobj = [sobj]
-                       | otherwise = findPropHeads sel =<< previous sobj
+emptyProperty :: (a -> Maybe b) -> Property a b
+emptyProperty sel = Property
+    { propSelector = sel . fromStored
+    , propSource = []
+    , propHeads = []
+    }
+
+propertyValue :: Property a b -> [ b ]
+propertyValue Property {..} = map (fromJust . propSelector) $ propHeads
+
+propertyValueFirst :: Property a b -> Maybe b
+propertyValueFirst Property {..} = fmap (fromJust . propSelector) $ listToMaybe $ propHeads
+
+findProperty' :: forall a b. Storable a => (a -> Maybe b) -> [ Stored a ] -> Property a b
+findProperty' sel propSource =
+    let propSelector = sel . fromStored
+        propHeads = filterAncestors $ findPropHeads (isJust . propSelector) =<< propSource
+     in Property {..}
+
+findPropertyUpdate :: forall a b. Storable a => Property a b -> [ Stored a ] -> Property a b
+findPropertyUpdate prop source = prop
+    { propSource = source
+    , propHeads = secondPass
+    }
+  where
+    selectedOrOldSource x = x `elem` propSource prop || isJust (propSelector prop x)
+    firstPass = findPropHeads selectedOrOldSource =<< source
+    ( foundOldSource, foundNewHeads ) = partition (`elem` propSource prop) firstPass
+    secondPass = filterAncestors $ if
+        | sort foundOldSource == propSource prop -> propHeads prop ++ foundNewHeads
+        | otherwise -> (findPropHeads (isJust . propSelector prop) =<< foundOldSource) ++ foundNewHeads
+
+findProperty :: forall a b. Storable a => (a -> Maybe b) -> [ Stored a ] -> [ b ]
+findProperty sel = propertyValue . findProperty' sel
+
+findPropertyFirst :: forall a b. Storable a => (a -> Maybe b) -> [ Stored a ] -> Maybe b
+findPropertyFirst sel = propertyValueFirst . findProperty' sel
+
+findPropHeads :: forall a. Storable a => (Stored a -> Bool) -> Stored a -> [ Stored a ]
+findPropHeads sel sobj
+    | sel sobj = [ sobj ]
+    | otherwise = findPropHeads sel =<< previous sobj
 
 
 -- | Compute symmetrict difference between two stored histories. In other
