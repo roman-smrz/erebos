@@ -102,7 +102,7 @@ directMessageConversation peer = do
     createOrUpdateDirectMessagePeer peer
     (find (sameIdentity peer . msgPeer) . dmThreadList . lookupSharedValue . lsShared . fromStored <$> getLocalHead) >>= \case
         Just thread -> return $ DirectMessageConversation thread
-        Nothing -> return $ DirectMessageConversation $ DirectMessageThread peer [] [] [] []
+        Nothing -> return $ DirectMessageConversation $ dmEmptyThread peer
 
 chatroomConversation :: MonadHead LocalState m => ChatroomState -> m (Maybe Conversation)
 chatroomConversation rstate = chatroomConversationByStateData (head $ roomStateData rstate)

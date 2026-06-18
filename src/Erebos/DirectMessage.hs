@@ -11,7 +11,8 @@ module Erebos.DirectMessage (
     DirectMessageThreads,
     dmThreadList,
 
-    DirectMessageThread(..),
+    DirectMessageThread(msgPeer, msgHead, msgSent, msgSeen, msgReceived),
+    dmEmptyThread,
     dmThreadToList, dmThreadToListSince, dmThreadToListUnread, dmThreadToListSinceUnread,
     dmThreadToListChange,
     dmThreadView,
@@ -323,6 +324,15 @@ data DirectMessageThread = DirectMessageThread
     , msgSent :: [ Stored DirectMessage ]
     , msgSeen :: [ Stored DirectMessage ]
     , msgReceived :: [ Stored DirectMessage ]
+    }
+
+dmEmptyThread :: ComposedIdentity -> DirectMessageThread
+dmEmptyThread peer = DirectMessageThread
+    { msgPeer = peer
+    , msgHead = []
+    , msgSent = []
+    , msgSeen = []
+    , msgReceived = []
     }
 
 dmThreadToList :: DirectMessageThread -> [ DirectMessage ]
