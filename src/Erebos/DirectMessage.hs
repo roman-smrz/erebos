@@ -27,6 +27,7 @@ import Control.Monad.Except
 import Control.Monad.Reader
 
 import Data.List
+import Data.Maybe
 import Data.Ord
 import Data.Proxy
 import Data.Set (Set)
@@ -91,6 +92,10 @@ defaultDirectMessageAttributes = DirectMessageAttributes
     { dmOwnerMismatch = svcPrint "Owner mismatch"
     }
 
+data DirectMessagePeerState = DirectMessagePeerState
+    { dmpsLastThread :: Maybe DirectMessageThread
+    }
+
 data DirectMessageGlobalState = DirectMessageGlobalState
     { dmgsLastState :: Maybe [ Stored MessageState ]
     }
@@ -100,6 +105,11 @@ instance Service DirectMessage where
 
     type ServiceAttributes DirectMessage = DirectMessageAttributes
     defaultServiceAttributes _ = defaultDirectMessageAttributes
+
+    type ServiceState DirectMessage = DirectMessagePeerState
+    emptyServiceState _ = DirectMessagePeerState
+        { dmpsLastThread = Nothing
+        }
 
     type ServiceGlobalState DirectMessage = DirectMessageGlobalState
     emptyServiceGlobalState _ = DirectMessageGlobalState
@@ -290,28 +300,25 @@ syncDirectMessageToPeer :: DirectMessageThreads -> ServiceHandler DirectMessage 
 syncDirectMessageToPeer (DirectMessageThreads mss _) = do
     pid <- finalOwner <$> asks svcPeerIdentity
     peer <- asks svcPeer
-    let thread = messageThreadFor (dmEmptyThread pid) mss
+    pthread <- fromMaybe (dmEmptyThread pid) . dmpsLastThread <$> svcGet
+    let thread = messageThreadFor pthread mss
     mapM_ (sendToPeerStored peer) $ msgHead thread
-    updateLocalState_ $ \ls -> do
-        let powner = finalOwner pid
-        flip updateSharedState_ ls $ \unchanged@(DirectMessageThreads prev _) -> do
-            let ready = concat $ propertyValue $ findMsgProperty powner msReady prev
-                sent = concat $ propertyValue $ findMsgProperty powner msSent prev
-                sent' = filterAncestors (ready ++ sent)
-
-            if sent' /= sent
-              then do
+    when (msgHead thread /= msgSent thread) $ do
+        updateLocalState_ $ \ls -> do
+            let powner = finalOwner pid
+            flip updateSharedState_ ls $ \_ -> do
                 next <- mstore MessageState
-                    { msPrev = prev
+                    { msPrev = mss
                     , msPeer = powner
                     , msReady = []
-                    , msSent = sent'
+                    , msSent = msgHead thread
                     , msReceived = []
                     , msSeen = []
                     }
                 return $ DirectMessageThreads [ next ] (dmThreadView [ next ])
-              else do
-                return unchanged
+    svcModify $ \s -> s
+        { dmpsLastThread = Just thread
+        }
 
 findMissingPeers :: Server -> DirectMessageThreads -> ExceptT ErebosError IO ()
 findMissingPeers server (DirectMessageThreads states threads) = do
