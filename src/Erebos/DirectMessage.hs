@@ -422,23 +422,34 @@ messageThreadFor pthread mss =
 
 
 watchDirectMessageThreads :: Head LocalState -> (DirectMessageThread -> DirectMessageThread -> IO ()) -> IO WatchedHead
-watchDirectMessageThreads h f = do
+watchDirectMessageThreads h callback = do
     prevVar <- newMVar Nothing
     watchHeadWith h (lookupSharedValue . lsShared . headObject) $ \(DirectMessageThreads sms _) -> do
         modifyMVar_ prevVar $ \case
-            Just prev -> do
+            Just ( prev, prevPeers ) -> do
                 let addPeer (p : ps) p'
                         | p `sameIdentity` p' = p : ps
                         | otherwise = p : addPeer ps p'
                     addPeer [] p' = [ p' ]
+                let changedPeers = foldl' addPeer [] $ map (msPeer . fromStored) $ storedDifference prev sms
 
-                let peers = foldl' addPeer [] $ map (msPeer . fromStored) $ storedDifference prev sms
-                forM_ peers $ \peer -> do
-                    f (messageThreadFor (dmEmptyThread peer) prev) (messageThreadFor (dmEmptyThread peer) sms)
-                return (Just sms)
+                let updatePeer (px@( p, x ) : ps) p' f
+                        | p `sameIdentity` p' = let x' = f x in ( ( x, x' ), ( p', x' ) : ps )
+                        | otherwise = (px :) <$> updatePeer ps p' f
+                    updatePeer [] p' f =
+                        let x = dmEmptyThread p'; x' = f x
+                         in ( ( x, x' ), [ ( p', x' ) ] )
+
+                peers <- (\f -> foldM f prevPeers changedPeers) $ \peers peer -> do
+                    let ( ( t, t' ), peers' ) = updatePeer peers peer $ \pt ->
+                            messageThreadFor pt sms
+                    callback t t'
+                    return peers'
+                return (Just ( sms, peers ))
 
             Nothing -> do
-                return (Just sms)
+                return (Just ( sms, [] ))
+
 
 formatDirectMessage :: TimeZone -> DirectMessage -> String
 formatDirectMessage tzone msg = concat
