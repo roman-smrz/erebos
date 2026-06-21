@@ -111,8 +111,8 @@ instance Service DirectMessage where
         powner <- asks $ finalOwner . svcPeerIdentity
         erb <- svcGetLocal
         let DirectMessageThreads prev _ = lookupSharedValue $ lsShared $ fromStored erb
-            sent = findMsgProperty powner msSent prev
-            received = findMsgProperty powner msReceived prev
+            sent = concat $ propertyValue $ findMsgProperty powner msSent prev
+            received = concat $ propertyValue $ findMsgProperty powner msReceived prev
             received' = filterAncestors $ smsg : received
         if powner `sameIdentity` msgFrom msg ||
                filterAncestors sent == filterAncestors (smsg : sent)
@@ -190,11 +190,17 @@ instance Mergeable DirectMessageThreads where
 instance SharedType DirectMessageThreads where
     sharedTypeID _ = mkSharedTypeID "ee793681-5976-466a-b0f0-4e1907d3fade"
 
-findMsgProperty :: Foldable m => Identity m -> (MessageState -> [ a ]) -> [ Stored MessageState ] -> [ a ]
-findMsgProperty pid sel mss = concat $ flip findProperty mss $ \x -> do
+msgPropertySelector :: Foldable m => Identity m -> (MessageState -> [ a ]) -> MessageState -> Maybe [ a ]
+msgPropertySelector pid sel x = do
     guard $ msPeer x `sameIdentity` pid
     guard $ not $ null $ sel x
     return $ sel x
+
+findMsgProperty :: Foldable m => Identity m -> (MessageState -> [ a ]) -> [ Stored MessageState ] -> Property MessageState [ a ]
+findMsgProperty pid sel mss = flip findProperty' mss $ msgPropertySelector pid sel
+
+findMsgPropertyUpdate :: Property MessageState [ a ] -> [ Stored MessageState ] -> Property MessageState [ a ]
+findMsgPropertyUpdate prev mss = findPropertyUpdate prev mss
 
 
 sendDirectMessage :: (Foldable f, Applicative f, MonadHead LocalState m)
@@ -203,8 +209,8 @@ sendDirectMessage pid text = updateLocalState_ $ \ls -> do
     let self = localIdentity $ fromStored ls
         powner = finalOwner pid
     flip updateSharedState_ ls $ \(DirectMessageThreads prev _) -> do
-        let ready = findMsgProperty powner msReady prev
-            received = findMsgProperty powner msReceived prev
+        let ready = concat $ propertyValue $ findMsgProperty powner msReady prev
+            received = concat $ propertyValue $ findMsgProperty powner msReceived prev
 
         time <- liftIO getZonedTime
         smsg <- mstore DirectMessage
@@ -229,7 +235,7 @@ dmMarkAsSeen
 dmMarkAsSeen pid = do
     updateLocalState_ $ updateSharedState_ $ \(DirectMessageThreads prev _) -> do
         let powner = finalOwner pid
-            received = findMsgProperty powner msReceived prev
+            received = concat $ propertyValue $ findMsgProperty powner msReceived prev
         next <- mstore MessageState
             { msPrev = prev
             , msPeer = powner
@@ -284,13 +290,13 @@ syncDirectMessageToPeer :: DirectMessageThreads -> ServiceHandler DirectMessage 
 syncDirectMessageToPeer (DirectMessageThreads mss _) = do
     pid <- finalOwner <$> asks svcPeerIdentity
     peer <- asks svcPeer
-    let thread = messageThreadFor pid mss
+    let thread = messageThreadFor (dmEmptyThread pid) mss
     mapM_ (sendToPeerStored peer) $ msgHead thread
     updateLocalState_ $ \ls -> do
         let powner = finalOwner pid
         flip updateSharedState_ ls $ \unchanged@(DirectMessageThreads prev _) -> do
-            let ready = findMsgProperty powner msReady prev
-                sent = findMsgProperty powner msSent prev
+            let ready = concat $ propertyValue $ findMsgProperty powner msReady prev
+                sent = concat $ propertyValue $ findMsgProperty powner msSent prev
                 sent' = filterAncestors (ready ++ sent)
 
             if sent' /= sent
@@ -324,6 +330,10 @@ data DirectMessageThread = DirectMessageThread
     , msgSent :: [ Stored DirectMessage ]
     , msgSeen :: [ Stored DirectMessage ]
     , msgReceived :: [ Stored DirectMessage ]
+    , msgPropReady :: Property MessageState [ Stored DirectMessage ]
+    , msgPropSent :: Property MessageState [ Stored DirectMessage ]
+    , msgPropReceived :: Property MessageState [ Stored DirectMessage ]
+    , msgPropSeen :: Property MessageState [ Stored DirectMessage ]
     }
 
 dmEmptyThread :: ComposedIdentity -> DirectMessageThread
@@ -333,6 +343,10 @@ dmEmptyThread peer = DirectMessageThread
     , msgSent = []
     , msgSeen = []
     , msgReceived = []
+    , msgPropReady = emptyProperty $ msgPropertySelector peer msReady
+    , msgPropSent = emptyProperty $ msgPropertySelector peer msSent
+    , msgPropReceived = emptyProperty $ msgPropertySelector peer msReceived
+    , msgPropSeen = emptyProperty $ msgPropertySelector peer msSeen
     }
 
 dmThreadToList :: DirectMessageThread -> [ DirectMessage ]
@@ -373,22 +387,30 @@ dmThreadView = helper []
                       helper used $ msPrev (fromStored sms) ++ rest
                   | otherwise ->
                       let peer = msPeer $ fromStored sms
-                       in messageThreadFor peer mss : helper (peer : used) (msPrev (fromStored sms) ++ rest)
+                       in messageThreadFor (dmEmptyThread peer) mss : helper (peer : used) (msPrev (fromStored sms) ++ rest)
               _ -> []
 
-messageThreadFor :: ComposedIdentity -> [ Stored MessageState ] -> DirectMessageThread
-messageThreadFor peer mss =
-    let ready = findMsgProperty peer msReady mss
-        sent = findMsgProperty peer msSent mss
-        received = findMsgProperty peer msReceived mss
-        seen = findMsgProperty peer msSeen mss
+messageThreadFor :: DirectMessageThread -> [ Stored MessageState ] -> DirectMessageThread
+messageThreadFor pthread mss =
+    let readyProp = findMsgPropertyUpdate (msgPropReady pthread) mss
+        ready = concat $ propertyValue readyProp
+        sentProp = findMsgPropertyUpdate (msgPropSent pthread) mss
+        sent = concat $ propertyValue sentProp
+        receivedProp = findMsgPropertyUpdate (msgPropReceived pthread) mss
+        received = concat $ propertyValue receivedProp
+        seenProp = findMsgPropertyUpdate (msgPropSeen pthread) mss
+        seen = concat $ propertyValue seenProp
 
      in DirectMessageThread
-         { msgPeer = peer
+         { msgPeer = msgPeer pthread
          , msgHead = filterAncestors $ ready ++ received
          , msgSent = filterAncestors $ sent ++ received
          , msgSeen = filterAncestors $ ready ++ seen
          , msgReceived = filterAncestors $ received
+         , msgPropReady = readyProp
+         , msgPropSent = sentProp
+         , msgPropReceived = receivedProp
+         , msgPropSeen = seenProp
          }
 
 
@@ -405,7 +427,7 @@ watchDirectMessageThreads h f = do
 
                 let peers = foldl' addPeer [] $ map (msPeer . fromStored) $ storedDifference prev sms
                 forM_ peers $ \peer -> do
-                    f (messageThreadFor peer prev) (messageThreadFor peer sms)
+                    f (messageThreadFor (dmEmptyThread peer) prev) (messageThreadFor (dmEmptyThread peer) sms)
                 return (Just sms)
 
             Nothing -> do
