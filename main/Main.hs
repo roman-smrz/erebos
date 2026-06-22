@@ -444,9 +444,7 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
                         SelectedConversation conv -> return $ conversationPeer conv
                         _ -> return Nothing
                     when (not tui || maybe False (msgPeer cur `sameIdentity`) mbpid) $ do
-                        line <- printLine term $
-                            (if new then withStyle (setForegroundColor BrightYellow noStyle) else id) $
-                            plainText $ T.pack $ formatDirectMessage tzone msg
+                        line <- printLine term $ formatMessageFT tzone $ makeMessage new msg
                         modifyMVar_ currentLinesVar $ return . (line :)
 
                 case optDmBotEcho opts of

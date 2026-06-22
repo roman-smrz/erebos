@@ -2,6 +2,7 @@
 
 module Erebos.Conversation (
     Message,
+    makeMessage,
     messageFrom,
     messageTime,
     messageText,
@@ -50,6 +51,9 @@ import Erebos.TextFormat.Types
 
 
 data Message = forall conv msg. ConversationType conv msg => Message msg Bool
+
+makeMessage :: ConversationType conv msg => Bool -> msg -> Message
+makeMessage = flip Message
 
 withMessage :: (forall conv msg. ConversationType conv msg => msg -> a) -> Message -> a
 withMessage f (Message msg _) = f msg
