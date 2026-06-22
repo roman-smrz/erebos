@@ -444,7 +444,7 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
                         SelectedConversation conv -> return $ conversationPeer conv
                         _ -> return Nothing
                     when (not tui || maybe False (msgPeer cur `sameIdentity`) mbpid) $ do
-                        line <- printLine term $ formatMessageFT tzone $ makeMessage new msg
+                        line <- printLine term $ formatMessageLine tzone $ makeMessage new msg
                         modifyMVar_ currentLinesVar $ return . (line :)
 
                 case optDmBotEcho opts of
@@ -735,6 +735,18 @@ cmdPutStrLn str = do
     term <- asks ciTerminal
     void $ liftIO $ printLine term str
 
+formatMessageLine :: TimeZone -> Message -> FormattedText
+formatMessageLine tzone msg = mconcat
+    [ formatMessageStatus msg
+    , formatMessageFT tzone msg
+    ]
+
+formatMessageStatus :: Message -> FormattedText
+formatMessageStatus msg
+    | messageUnread msg = withStyle (setForegroundColor BrightYellow noStyle) $ plainText " * "
+    | otherwise = plainText "   "
+
+
 cmdUnknown :: String -> Command
 cmdUnknown cmd = cmdPutStrLn $ withStyle (setForegroundColor BrightRed noStyle) $ plainText $ "Unknown command: ‘" <> T.pack cmd <> "’"
 
@@ -835,7 +847,7 @@ cmdSelectContext = do
         Right conv -> do
             liftIO $ updatePromptStatus term h (Just conv)
             tzone <- liftIO $ getCurrentTimeZone
-            tlines <- liftIO $ mapM (printLine term . formatMessageFT tzone) $
+            tlines <- liftIO $ mapM (printLine term . formatMessageLine tzone) $
                 reverse $ takeWhile messageUnread $ conversationHistory conv
             var <- asks ciCurrentLinesVar
             liftIO $ modifyMVar_ var $ \_ -> return (reverse tlines)
@@ -860,7 +872,7 @@ cmdHistory = void $ do
         thread@(_:_) -> do
             tzone <- liftIO $ getCurrentTimeZone
             term <- asks ciTerminal
-            tlines <- liftIO $ mapM (printLine term . formatMessageFT tzone) $ reverse $ take 50 thread
+            tlines <- liftIO $ mapM (printLine term . formatMessageLine tzone) $ reverse $ take 50 thread
             var <- asks ciCurrentLinesVar
             liftIO $ modifyMVar_ var $ \_ -> return (reverse tlines)
         [] -> do

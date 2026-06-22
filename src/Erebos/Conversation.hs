@@ -74,12 +74,11 @@ formatMessage :: TimeZone -> Message -> String
 formatMessage tzone = T.unpack . renderPlainText . formatMessageFT tzone
 
 formatMessageFT :: TimeZone -> Message -> FormattedText
-formatMessageFT tzone msg =
-    (if messageUnread msg then FormattedText (CustomTextColor (Just BrightYellow) Nothing) else id) $ mconcat
-        [ PlainText $ T.pack $ formatTime defaultTimeLocale "[%H:%M] " $ utcToLocalTime tzone $ zonedTimeToUTC $ messageTime msg
-        , maybe "<unnamed>" PlainText $ idName $ messageFrom msg
-        , maybe "" ((": " <>) . PlainText) $ messageText msg
-        ]
+formatMessageFT tzone msg = mconcat
+    [ PlainText $ T.pack $ formatTime defaultTimeLocale "[%H:%M] " $ utcToLocalTime tzone $ zonedTimeToUTC $ messageTime msg
+    , maybe "<unnamed>" PlainText $ idName $ messageFrom msg
+    , maybe "" ((": " <>) . PlainText) $ messageText msg
+    ]
 
 
 data Conversation
