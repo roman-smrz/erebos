@@ -1,5 +1,6 @@
 module Erebos.Conversation.Class (
     ConversationType(..),
+    MessageExtra(..),
     RefDigest,
 ) where
 
@@ -15,10 +16,17 @@ import Erebos.Object
 import Erebos.State
 
 
+data MessageExtra
+    = UserJoined
+    | UserLeft
+
+
 class (Typeable conv, Typeable msg) => ConversationType conv msg | conv -> msg, msg -> conv where
     convMessageFrom :: msg -> ComposedIdentity
     convMessageTime :: msg -> ZonedTime
     convMessageText :: msg -> Maybe Text
+    convMessageExtra :: msg -> [ MessageExtra ]
+    convMessageExtra _ = []
 
     convReference :: conv -> RefDigest
     convMessageListSince

@@ -67,6 +67,11 @@ instance ConversationType ChatroomState ChatMessage where
     convMessageTime = cmsgTime
     convMessageText = cmsgText
 
+    convMessageExtra msg
+        | cmsgLeave msg = [ UserLeft ]
+        | Nothing <- cmsgText msg = [ UserJoined ]
+        | otherwise = []
+
     convReference = refDigest . storedRef . head . filterAncestors . concatMap storedRoots . roomStateData
 
     convMessageListSince mbSince cstate = ( 0, ) $

@@ -74,11 +74,15 @@ formatMessage :: TimeZone -> Message -> String
 formatMessage tzone = T.unpack . renderPlainText . formatMessageFT tzone
 
 formatMessageFT :: TimeZone -> Message -> FormattedText
-formatMessageFT tzone msg = mconcat
-    [ PlainText $ T.pack $ formatTime defaultTimeLocale "[%H:%M] " $ utcToLocalTime tzone $ zonedTimeToUTC $ messageTime msg
-    , maybe "<unnamed>" PlainText $ idName $ messageFrom msg
-    , maybe "" ((": " <>) . PlainText) $ messageText msg
+formatMessageFT tzone msg = mconcat $ concat
+    [ [ PlainText $ T.pack $ formatTime defaultTimeLocale "[%H:%M] " $ utcToLocalTime tzone $ zonedTimeToUTC $ messageTime msg ]
+    , [ maybe "<unnamed>" PlainText $ idName $ messageFrom msg ]
+    , map formatExtra $ withMessage convMessageExtra msg
+    , [ maybe "" ((": " <>) . PlainText) $ messageText msg ]
     ]
+  where
+    formatExtra UserJoined = " " <> withStyle (setForegroundColor BrightMagenta noStyle) (plainText "joined")
+    formatExtra UserLeft = " " <> withStyle (setForegroundColor Magenta noStyle) (plainText "left")
 
 
 data Conversation

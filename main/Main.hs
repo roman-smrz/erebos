@@ -24,7 +24,6 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as T
 import Data.Text.IO qualified as T
-import Data.Time.Format
 import Data.Time.LocalTime
 import Data.Typeable
 
@@ -985,12 +984,7 @@ watchChatroomsForCli tui eprint h chatroomSetVar contextVar contextOptsVar autoS
                             when (not tui || isSelected) $ do
                                 tzone <- getCurrentTimeZone
                                 forM_ (reverse $ getMessagesSinceState rstate oldroom) $ \msg -> do
-                                    eprint $ plainText $ T.concat
-                                        [ T.pack $ formatTime defaultTimeLocale "[%H:%M] " $ utcToLocalTime tzone $ zonedTimeToUTC $ cmsgTime msg
-                                        , fromMaybe "<unnamed>" $ idName $ cmsgFrom msg
-                                        , if cmsgLeave msg then " left" else ""
-                                        , maybe (if cmsgLeave msg then "" else " joined") ((": " <>)) $ cmsgText msg
-                                        ]
+                                    eprint $ formatMessageLine tzone $ makeMessage False msg
                     modifyMVar_ subscribedNumVar $ return
                         . (if roomStateSubscribe rstate then (+ 1) else id)
                         . (if roomStateSubscribe oldroom then subtract 1 else id)
