@@ -492,27 +492,24 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
             pid@(PeerIdentityFull _) -> do
                 dropped <- isPeerDropped peer
                 shown <- showPeer pid <$> getPeerAddress peer
-                let labelNew = withStyle (setForegroundColor Green noStyle) $ plainText "NEW"
-                    labelUpd = withStyle (setForegroundColor Yellow noStyle) $ plainText "UPD"
-                    labelDel = withStyle (setForegroundColor Red noStyle) $ plainText "DEL"
-                let update [] = ( [ ( peer, shown ) ], ( Nothing, labelNew ) )
+                let update [] = ( [ ( peer, shown ) ], ( Nothing, optionLabelNew ) )
                     update ((p,s):ps)
-                        | p == peer && dropped = ( ps, ( Nothing, labelDel ) )
-                        | p == peer = ( ( peer, shown ) : ps, ( Just s, labelUpd ) )
+                        | p == peer && dropped = ( ps, ( Nothing, optionLabelDel ) )
+                        | p == peer = ( ( peer, shown ) : ps, ( Just s, optionLabelUpd ) )
                         | otherwise = first ((p,s):) $ update ps
                 let ctxUpdate n [] = ([SelectedPeer peer], n)
                     ctxUpdate n (ctx:ctxs)
                         | SelectedPeer p <- ctx, p == peer = (ctx:ctxs, n)
                         | otherwise = first (ctx:) $ ctxUpdate (n + 1) ctxs
                 ( op, updateType ) <- modifyMVar peers (return . update)
-                let updateType' = if dropped then labelDel else updateType
+                let updateType' = if dropped then optionLabelDel else updateType
                 modifyMVar_ contextOptions $ \case
                     ( watch, clist )
                       | watch == Just WatchPeers || not tui
                       -> do
                         let ( clist', idx ) = ctxUpdate (1 :: Int) clist
                         when (Just shown /= op) $ do
-                            extPrintLn $ "[" <> withStyle contextIndexStyle (plainText $ T.pack $ show idx) <> "] PEER " <> updateType' <> " " <> plainText shown
+                            extPrintLn $ formatSelectOption idx $ "PEER " <> updateType' <> " " <> plainText shown
                         return ( Just WatchPeers, clist' )
                     cur -> return cur
             _ -> return ()
@@ -565,7 +562,15 @@ contextIndexStyle :: TextStyle
 contextIndexStyle = setForegroundColor BrightCyan noStyle
 
 printSelectOption :: Int -> FormattedText -> CommandM ()
-printSelectOption i label = cmdPutStrLn $ "[" <> withStyle contextIndexStyle (plainText $ T.pack $ show i) <> "] " <> label
+printSelectOption i label = cmdPutStrLn $ formatSelectOption i label
+
+formatSelectOption :: Int -> FormattedText -> FormattedText
+formatSelectOption i label = "[" <> withStyle contextIndexStyle (plainText $ T.pack $ show i) <> "] " <> label
+
+optionLabelNew, optionLabelUpd, optionLabelDel :: FormattedText
+optionLabelNew = withStyle (setForegroundColor Green noStyle) $ plainText "NEW"
+optionLabelUpd = withStyle (setForegroundColor Yellow noStyle) $ plainText "UPD"
+optionLabelDel = withStyle (setForegroundColor Red noStyle) $ plainText "DEL"
 
 
 data CommandInput = CommandInput
@@ -921,17 +926,17 @@ watchChatroomsForCli tui eprint h chatroomSetVar contextVar contextOptsVar autoS
                 | currentRoots <- filterAncestors (concatMap storedRoots $ roomStateData rstate)
                 , any ((`intersectsSorted` currentRoots) . storedRoots) $ roomStateData rstate'
                 -> do
-                    eprint $ plainText $ T.pack $ "[" <> show idx <> "] CHATROOM " <> updateType <> " " <> name
+                    eprint $ formatSelectOption idx $ "CHATROOM " <> updateType <> " " <> name
                     return (SelectedChatroom rstate : rest)
             selected : rest
                 -> do
                     (selected : ) <$> ctxUpdate updateType (idx + 1) rstate rest
             []
                 -> do
-                    eprint $ plainText $ T.pack $ "[" <> show idx <> "] CHATROOM " <> updateType <> " " <> name
+                    eprint $ formatSelectOption idx $ "CHATROOM " <> updateType <> " " <> name
                     return [ SelectedChatroom rstate ]
           where
-            name = maybe "<unnamed>" T.unpack $ roomName =<< roomStateRoom rstate
+            name = maybe "<unnamed>" plainText $ roomName =<< roomStateRoom rstate
 
     watchChatrooms h $ \set -> \case
         Nothing -> do
@@ -957,12 +962,12 @@ watchChatroomsForCli tui eprint h chatroomSetVar contextVar contextOptsVar autoS
                   | watch == Just WatchChatrooms || not tui
                   -> do
                     let upd c = \case
-                            AddedChatroom rstate -> ctxUpdate "NEW" 1 rstate c
-                            RemovedChatroom rstate -> ctxUpdate "DEL" 1 rstate c
+                            AddedChatroom rstate -> ctxUpdate optionLabelNew 1 rstate c
+                            RemovedChatroom rstate -> ctxUpdate optionLabelDel 1 rstate c
                             UpdatedChatroom _ rstate
                                 | any ((\rsd -> not (null (rsdRoom rsd))) . fromStored) (roomStateData rstate)
                                 -> do
-                                    ctxUpdate "UPD" 1 rstate c
+                                    ctxUpdate optionLabelUpd 1 rstate c
                                 | otherwise -> return c
                     ( watch, ) <$> foldM upd clist diff
                 cur -> return cur
