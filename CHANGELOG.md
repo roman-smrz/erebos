@@ -1,5 +1,12 @@
 # Revision history for erebos
 
+## 0.2.2 -- 2026-06-25
+
+* Initial support for `chunked` and `dir` object types.
+* Added `/seen` command to mark messages as seen.
+* Improved display of unread/seen messages.
+* Avoid binding the same UDP port from multiple server instances on a single host.
+
 ## 0.2.1 -- 2026-03-15
 
 * Initial support for `ondemand` object type.
