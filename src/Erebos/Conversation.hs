@@ -11,6 +11,7 @@ module Erebos.Conversation (
     formatMessageFT,
 
     Conversation,
+    makeConversation,
     isSameConversation,
     directMessageConversation,
     chatroomConversation,
@@ -39,6 +40,7 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Time.Format
 import Data.Time.LocalTime
+import Data.Typeable
 
 import Erebos.Chatroom
 import Erebos.Conversation.Class
@@ -88,6 +90,12 @@ formatMessageFT tzone msg = mconcat $ concat
 data Conversation
     = DirectMessageConversation DirectMessageThread
     | ChatroomConversation ChatroomState
+
+makeConversation :: ConversationType conv msg => conv -> Conversation
+makeConversation conv
+    | Just x <- cast conv = DirectMessageConversation x
+    | Just x <- cast conv = ChatroomConversation x
+    | otherwise = error "unhandled conversation type"
 
 withConversation :: (forall conv msg. ConversationType conv msg => conv -> a) -> Conversation -> a
 withConversation f (DirectMessageConversation conv) = f conv
