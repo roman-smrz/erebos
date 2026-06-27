@@ -437,7 +437,7 @@ watchDirectMessageThreads h callback = do
                         | p `sameIdentity` p' = let x' = f x in ( ( x, x' ), ( p', x' ) : ps )
                         | otherwise = (px :) <$> updatePeer ps p' f
                     updatePeer [] p' f =
-                        let x = dmEmptyThread p'; x' = f x
+                        let x = messageThreadFor (dmEmptyThread p') prev; x' = f x
                          in ( ( x, x' ), [ ( p', x' ) ] )
 
                 peers <- (\f -> foldM f prevPeers changedPeers) $ \peers peer -> do
