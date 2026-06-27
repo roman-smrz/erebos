@@ -382,3 +382,76 @@ test DirectMessageSeen:
 	for p in [ p1, p2 ]:
 		expect /dm-list-(.*)/ from p capture done
 		guard (done == "done")
+
+
+test MessageManyPeers:
+	tag: HsToDo
+
+	let services = "dm"
+
+	spawn as p1
+	spawn as p2
+	spawn as p3
+	spawn as p4
+	spawn as p5
+	spawn as p6
+	spawn as p7
+	spawn as p8
+
+	let ps = [ p1, p2, p3, p4, p5, p6, p7, p8 ]
+	send "create-identity Device1 Owner1" to p1
+	send "create-identity Device1 Owner2" to p2
+	send "create-identity Device1 Owner3" to p3
+	send "create-identity Device1 Owner4" to p4
+	send "create-identity Device1 Owner5" to p5
+	send "create-identity Device1 Owner6" to p6
+	send "create-identity Device1 Owner7" to p7
+	send "create-identity Device1 Owner8" to p8
+	for p in ps:
+		expect /create-identity-done ref $refpat/ from p
+
+	for p in ps:
+		send "start-server services $services" to p
+
+	for p in ps:
+		for i in [ 1 .. 7 ]:
+			expect from p:
+				/peer $i addr .*/
+				/peer $i id Device. Owner./
+
+	for p in ps:
+		for i in [ 1 .. 7 ]:
+			send "dm-send-peer $i some_message" to p
+	for p in ps:
+		for i in [ 1 .. 7 ]:
+			expect /dm-received from Owner. new yes text some_message/ from p
+
+
+test MessageManyConcurrent:
+	tag: HsToDo
+
+	let services = "dm"
+	let count = 40
+
+	spawn as p1
+	spawn as p2
+	let ps = [ p1, p2 ]
+
+	send "create-identity Device1 Owner1" to p1
+	send "create-identity Device1 Owner2" to p2
+	for p in ps:
+		expect /create-identity-done ref $refpat/ from p
+		send "start-server services $services" to p
+
+	for p in ps:
+		expect from p:
+			/peer 1 addr .*/
+			/peer 1 id Device. Owner./
+
+	for i in [ 1 .. count ]:
+		send "dm-send-peer 1 p1_$i" to p1
+		send "dm-send-peer 1 p2_$i" to p2
+
+	for i in [ 1 .. count ]:
+		expect /dm-received from Owner. new yes text p._[0-9]+/ from p1
+		expect /dm-received from Owner. new yes text p1_$i/ from p2
