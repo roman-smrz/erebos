@@ -3,302 +3,302 @@ module discovery
 def refpat = /blake2#[0-9a-f]*/
 
 test ManualDiscovery:
-	let services = "discovery"
+    let services = "discovery"
 
-	subnet sd
-	subnet s1
-	subnet s2
+    subnet sd
+    subnet s1
+    subnet s2
 
-	spawn as pd on sd
-	spawn as p1 on s1
-	spawn as p2 on s2
-	send "create-identity Discovery" to pd
-	send "create-identity Device1 Owner1" to p1
-	send "create-identity Device2 Owner2" to p2
+    spawn as pd on sd
+    spawn as p1 on s1
+    spawn as p2 on s2
+    send "create-identity Discovery" to pd
+    send "create-identity Device1 Owner1" to p1
+    send "create-identity Device2 Owner2" to p2
 
-	expect /create-identity-done ref ($refpat).*/ from p1 capture p1id
-	send "identity-info $p1id" to p1
-	expect /identity-info ref $p1id base ($refpat) owner ($refpat).*/ from p1 capture p1base, p1owner
-	send "identity-info $p1owner" to p1
-	expect /identity-info ref $p1owner base ($refpat).*/ from p1 capture p1obase
+    expect /create-identity-done ref ($refpat).*/ from p1 capture p1id
+    send "identity-info $p1id" to p1
+    expect /identity-info ref $p1id base ($refpat) owner ($refpat).*/ from p1 capture p1base, p1owner
+    send "identity-info $p1owner" to p1
+    expect /identity-info ref $p1owner base ($refpat).*/ from p1 capture p1obase
 
-	expect /create-identity-done ref $refpat.*/ from p2
-	expect /create-identity-done ref $refpat.*/ from pd
+    expect /create-identity-done ref $refpat.*/ from p2
+    expect /create-identity-done ref $refpat.*/ from pd
 
-	# Test discovery using owner and device identities:
-	for id in [ p1obase, p1base ]:
-		for p in [ pd, p1, p2 ]:
-			send "start-server services $services" to p
+    # Test discovery using owner and device identities:
+    for id in [ p1obase, p1base ]:
+        for p in [ pd, p1, p2 ]:
+            send "start-server services $services" to p
 
-		for p in [ p1, p2 ]:
-			with p:
-				send "peer-add ${pd.node.ip}"
-				expect:
-					/peer 1 addr ${pd.node.ip} 29665/
-					/peer 1 id Discovery/
-			expect from pd:
-					/peer [12] addr ${p.node.ip} 29665/
-					/peer [12] id .*/
+        for p in [ p1, p2 ]:
+            with p:
+                send "peer-add ${pd.node.ip}"
+                expect:
+                    /peer 1 addr ${pd.node.ip} 29665/
+                    /peer 1 id Discovery/
+            expect from pd:
+                    /peer [12] addr ${p.node.ip} 29665/
+                    /peer [12] id .*/
 
-		send "discovery-connect $id" to p2
+        send "discovery-connect $id" to p2
 
-		expect from p1:
-			/peer [0-9]+ addr ${p2.node.ip} 29665/
-			/peer [0-9]+ id Device2 Owner2/
-		expect from p2:
-			/peer [0-9]+ addr ${p1.node.ip} 29665/
-			/peer [0-9]+ id Device1 Owner1/
+        expect from p1:
+            /peer [0-9]+ addr ${p2.node.ip} 29665/
+            /peer [0-9]+ id Device2 Owner2/
+        expect from p2:
+            /peer [0-9]+ addr ${p1.node.ip} 29665/
+            /peer [0-9]+ id Device1 Owner1/
 
-		for p in [ pd, p1, p2 ]:
-			send "stop-server" to p
-		for p in [ pd, p1, p2 ]:
-			expect /stop-server-done/ from p
+        for p in [ pd, p1, p2 ]:
+            send "stop-server" to p
+        for p in [ pd, p1, p2 ]:
+            expect /stop-server-done/ from p
 
-	# Test delayed discovery with new peer
-	for id in [ p1obase ]:
-		for p in [ pd, p1, p2 ]:
-			send "start-server services $services" to p
+    # Test delayed discovery with new peer
+    for id in [ p1obase ]:
+        for p in [ pd, p1, p2 ]:
+            send "start-server services $services" to p
 
-		with p1:
-			send "peer-add ${pd.node.ip}"
-			expect:
-				/peer 1 addr ${pd.node.ip} 29665/
-				/peer 1 id Discovery/
-		expect from pd:
-				/peer [12] addr ${p1.node.ip} 29665/
-				/peer [12] id Device1 Owner1/
+        with p1:
+            send "peer-add ${pd.node.ip}"
+            expect:
+                /peer 1 addr ${pd.node.ip} 29665/
+                /peer 1 id Discovery/
+        expect from pd:
+                /peer [12] addr ${p1.node.ip} 29665/
+                /peer [12] id Device1 Owner1/
 
-		send "discovery-connect $id" to p2
+        send "discovery-connect $id" to p2
 
-		with p2:
-			send "peer-add ${pd.node.ip}"
-			expect:
-				/peer 1 addr ${pd.node.ip} 29665/
-				/peer 1 id Discovery/
-		expect from pd:
-				/peer [12] addr ${p2.node.ip} 29665/
-				/peer [12] id Device2 Owner2/
+        with p2:
+            send "peer-add ${pd.node.ip}"
+            expect:
+                /peer 1 addr ${pd.node.ip} 29665/
+                /peer 1 id Discovery/
+        expect from pd:
+                /peer [12] addr ${p2.node.ip} 29665/
+                /peer [12] id Device2 Owner2/
 
-		expect from p1:
-			/peer [0-9]+ addr ${p2.node.ip} 29665/
-			/peer [0-9]+ id Device2 Owner2/
-		expect from p2:
-			/peer [0-9]+ addr ${p1.node.ip} 29665/
-			/peer [0-9]+ id Device1 Owner1/
+        expect from p1:
+            /peer [0-9]+ addr ${p2.node.ip} 29665/
+            /peer [0-9]+ id Device2 Owner2/
+        expect from p2:
+            /peer [0-9]+ addr ${p1.node.ip} 29665/
+            /peer [0-9]+ id Device1 Owner1/
 
-		for p in [ pd, p1, p2 ]:
-			send "stop-server" to p
-		for p in [ pd, p1, p2 ]:
-			expect /stop-server-done/ from p
+        for p in [ pd, p1, p2 ]:
+            send "stop-server" to p
+        for p in [ pd, p1, p2 ]:
+            expect /stop-server-done/ from p
 
 
 test DiscoveryTunnel:
-	let services = "discovery:tunnel"
+    let services = "discovery:tunnel"
 
-	subnet sd
-	subnet s1
-	subnet s2
+    subnet sd
+    subnet s1
+    subnet s2
 
-	spawn as pd on sd
-	spawn as p1 on s1
-	spawn as p2 on s2
+    spawn as pd on sd
+    spawn as p1 on s1
+    spawn as p2 on s2
 
-	for n in [ p1.node, p2.node ]:
-		shell on n:
-			nft add table inet filter
-			nft add chain inet filter input '{ type filter hook input priority filter ; policy drop; }'
-			nft add rule inet filter input 'ct state { established, related } accept'
+    for n in [ p1.node, p2.node ]:
+        shell on n:
+            nft add table inet filter
+            nft add chain inet filter input '{ type filter hook input priority filter ; policy drop; }'
+            nft add rule inet filter input 'ct state { established, related } accept'
 
-	send "create-identity Discovery" to pd
-	send "create-identity Device1 Owner1" to p1
-	send "create-identity Device2 Owner2" to p2
+    send "create-identity Discovery" to pd
+    send "create-identity Device1 Owner1" to p1
+    send "create-identity Device2 Owner2" to p2
 
-	expect /create-identity-done ref ($refpat).*/ from p1 capture p1id
-	send "identity-info $p1id" to p1
-	expect /identity-info ref $p1id base ($refpat) owner ($refpat).*/ from p1 capture p1base, p1owner
-	send "identity-info $p1owner" to p1
-	expect /identity-info ref $p1owner base ($refpat).*/ from p1 capture p1obase
+    expect /create-identity-done ref ($refpat).*/ from p1 capture p1id
+    send "identity-info $p1id" to p1
+    expect /identity-info ref $p1id base ($refpat) owner ($refpat).*/ from p1 capture p1base, p1owner
+    send "identity-info $p1owner" to p1
+    expect /identity-info ref $p1owner base ($refpat).*/ from p1 capture p1obase
 
-	expect /create-identity-done ref $refpat.*/ from p2
-	expect /create-identity-done ref $refpat.*/ from pd
+    expect /create-identity-done ref $refpat.*/ from p2
+    expect /create-identity-done ref $refpat.*/ from pd
 
-	for id in [ p1obase ]:
-		for p in [ pd, p1, p2 ]:
-			send "start-server services $services test-log" to p
+    for id in [ p1obase ]:
+        for p in [ pd, p1, p2 ]:
+            send "start-server services $services test-log" to p
 
-		for p in [ p1, p2 ]:
-			with p:
-				send "peer-add ${pd.node.ip}"
-				expect:
-					/peer 1 addr ${pd.node.ip} 29665/
-					/peer 1 id Discovery/
-			expect from pd:
-					/peer [12] addr ${p.node.ip} 29665/
-					/peer [12] id .*/
+        for p in [ p1, p2 ]:
+            with p:
+                send "peer-add ${pd.node.ip}"
+                expect:
+                    /peer 1 addr ${pd.node.ip} 29665/
+                    /peer 1 id Discovery/
+            expect from pd:
+                    /peer [12] addr ${p.node.ip} 29665/
+                    /peer [12] id .*/
 
-		send "discovery-tunnel 1 $id" to p2
+        send "discovery-tunnel 1 $id" to p2
 
-		expect /net-ostream-open ${pd.node.ip} 29665 1 1/ from p2
-		expect /net-ostream-open ${p1.node.ip} 29665 1 1/ from pd
-		expect /net-ostream-open ${pd.node.ip} 29665 1 1/ from p1
-		expect /net-ostream-open ${p2.node.ip} 29665 1 1/ from pd
+        expect /net-ostream-open ${pd.node.ip} 29665 1 1/ from p2
+        expect /net-ostream-open ${p1.node.ip} 29665 1 1/ from pd
+        expect /net-ostream-open ${pd.node.ip} 29665 1 1/ from p1
+        expect /net-ostream-open ${p2.node.ip} 29665 1 1/ from pd
 
-		expect from p1:
-			/peer 2 addr tunnel@.*/
-			/peer 2 id Device2 Owner2/
-		expect from p2:
-			/peer 2 addr tunnel@.*/
-			/peer 2 id Device1 Owner1/
+        expect from p1:
+            /peer 2 addr tunnel@.*/
+            /peer 2 id Device2 Owner2/
+        expect from p2:
+            /peer 2 addr tunnel@.*/
+            /peer 2 id Device1 Owner1/
 
-		send "peer-drop 2" to p1
-		send "peer-drop 2" to p2
+        send "peer-drop 2" to p1
+        send "peer-drop 2" to p2
 
-		expect /net-ostream-close-ack ${pd.node.ip} 29665 1 0/ from p2
-		expect /net-ostream-close-ack ${p1.node.ip} 29665 1 0/ from pd
-		expect /net-ostream-close-ack ${pd.node.ip} 29665 1 0/ from p1
-		expect /net-ostream-close-ack ${p2.node.ip} 29665 1 0/ from pd
+        expect /net-ostream-close-ack ${pd.node.ip} 29665 1 0/ from p2
+        expect /net-ostream-close-ack ${p1.node.ip} 29665 1 0/ from pd
+        expect /net-ostream-close-ack ${pd.node.ip} 29665 1 0/ from p1
+        expect /net-ostream-close-ack ${p2.node.ip} 29665 1 0/ from pd
 
-		for p in [ pd, p1, p2 ]:
-			send "stop-server" to p
-		for p in [ pd, p1, p2 ]:
-			expect /stop-server-done/ from p
+        for p in [ pd, p1, p2 ]:
+            send "stop-server" to p
+        for p in [ pd, p1, p2 ]:
+            expect /stop-server-done/ from p
 
 
 test DiscoveryTunnelWithChangedAddresses:
-	let services = "discovery:tunnel"
+    let services = "discovery:tunnel"
 
-	subnet sd
-	subnet s1
-	subnet s2
+    subnet sd
+    subnet s1
+    subnet s2
 
-	spawn as pd on sd
-	spawn as p1 on s1
-	spawn as p2 on s2
+    spawn as pd on sd
+    spawn as p1 on s1
+    spawn as p2 on s2
 
-	for n in [ p1.node, p2.node ]:
-		shell on n:
-			nft add table inet filter
-			nft add chain inet filter input '{ type filter hook input priority filter ; policy drop; }'
-			nft add rule inet filter input 'ct state { established, related } accept'
+    for n in [ p1.node, p2.node ]:
+        shell on n:
+            nft add table inet filter
+            nft add chain inet filter input '{ type filter hook input priority filter ; policy drop; }'
+            nft add rule inet filter input 'ct state { established, related } accept'
 
-	send "create-identity Discovery" to pd
-	send "create-identity Device1 Owner1" to p1
-	send "create-identity Device2 Owner2" to p2
+    send "create-identity Discovery" to pd
+    send "create-identity Device1 Owner1" to p1
+    send "create-identity Device2 Owner2" to p2
 
-	expect /create-identity-done ref ($refpat).*/ from p1 capture p1id
-	send "identity-info $p1id" to p1
-	expect /identity-info ref $p1id base ($refpat) owner ($refpat).*/ from p1 capture p1base, p1owner
-	send "identity-info $p1owner" to p1
-	expect /identity-info ref $p1owner base ($refpat).*/ from p1 capture p1obase
+    expect /create-identity-done ref ($refpat).*/ from p1 capture p1id
+    send "identity-info $p1id" to p1
+    expect /identity-info ref $p1id base ($refpat) owner ($refpat).*/ from p1 capture p1base, p1owner
+    send "identity-info $p1owner" to p1
+    expect /identity-info ref $p1owner base ($refpat).*/ from p1 capture p1obase
 
-	expect /create-identity-done ref $refpat.*/ from p2
-	expect /create-identity-done ref $refpat.*/ from pd
+    expect /create-identity-done ref $refpat.*/ from p2
+    expect /create-identity-done ref $refpat.*/ from pd
 
-	for id in [ p1obase ]:
-		send "start-server services $services test-log" to pd
+    for id in [ p1obase ]:
+        send "start-server services $services test-log" to pd
 
-		for p in [ p1, p2 ]:
-			send "start-server services $services test-log" to p
+        for p in [ p1, p2 ]:
+            send "start-server services $services test-log" to p
 
-		for p in [ p1, p2 ]:
-			with p:
-				send "peer-add ${pd.node.ip}"
-				expect:
-					/peer 1 addr ${pd.node.ip} 29665/
-					/peer 1 id Discovery/
-			expect from pd:
-					/peer [12] addr ${p.node.ip} 29665/
-					/peer [12] id .*/
+        for p in [ p1, p2 ]:
+            with p:
+                send "peer-add ${pd.node.ip}"
+                expect:
+                    /peer 1 addr ${pd.node.ip} 29665/
+                    /peer 1 id Discovery/
+            expect from pd:
+                    /peer [12] addr ${p.node.ip} 29665/
+                    /peer [12] id .*/
 
-		send "peer-drop 1" to pd
-		send "peer-drop 2" to pd
-		for p in [ p1, p2 ]:
-			send "stop-server" to p
-		for p in [ p1, p2 ]:
-			shell on p.node as get_default:
-				ip route | grep ^default
-			expect /.* via ([0-9.]+).*/ from get_default capture default_route
-			shell on p.node:
-				ip addr del dev veth0 ${p.node.ip}/24
-				ip addr add dev veth0 ${p.node.ip}0/24
-				ip route add default via ${default_route} dev veth0 src ${p.node.ip}0
-		for p in [ p1, p2 ]:
-			expect /stop-server-done/ from p
-		for p in [ p1, p2 ]:
-			send "start-server services $services test-log" to p
+        send "peer-drop 1" to pd
+        send "peer-drop 2" to pd
+        for p in [ p1, p2 ]:
+            send "stop-server" to p
+        for p in [ p1, p2 ]:
+            shell on p.node as get_default:
+                ip route | grep ^default
+            expect /.* via ([0-9.]+).*/ from get_default capture default_route
+            shell on p.node:
+                ip addr del dev veth0 ${p.node.ip}/24
+                ip addr add dev veth0 ${p.node.ip}0/24
+                ip route add default via ${default_route} dev veth0 src ${p.node.ip}0
+        for p in [ p1, p2 ]:
+            expect /stop-server-done/ from p
+        for p in [ p1, p2 ]:
+            send "start-server services $services test-log" to p
 
-		for p in [ p1, p2 ]:
-			with p:
-				send "peer-add ${pd.node.ip}"
-				expect:
-					/peer 1 addr ${pd.node.ip} 29665/
-					/peer 1 id Discovery/
-			expect from pd:
-					/peer [0-9]+ addr ${p.node.ip}0 29665/
-					/peer [0-9]+ id .*/
+        for p in [ p1, p2 ]:
+            with p:
+                send "peer-add ${pd.node.ip}"
+                expect:
+                    /peer 1 addr ${pd.node.ip} 29665/
+                    /peer 1 id Discovery/
+            expect from pd:
+                    /peer [0-9]+ addr ${p.node.ip}0 29665/
+                    /peer [0-9]+ id .*/
 
-		send "discovery-tunnel 1 $id" to p2
+        send "discovery-tunnel 1 $id" to p2
 
-		expect /net-ostream-open ${pd.node.ip} 29665 1 1/ from p2
-		expect /net-ostream-open ${p1.node.ip}0 29665 1 1/ from pd
-		expect /net-ostream-open ${pd.node.ip} 29665 1 1/ from p1
-		expect /net-ostream-open ${p2.node.ip}0 29665 1 1/ from pd
+        expect /net-ostream-open ${pd.node.ip} 29665 1 1/ from p2
+        expect /net-ostream-open ${p1.node.ip}0 29665 1 1/ from pd
+        expect /net-ostream-open ${pd.node.ip} 29665 1 1/ from p1
+        expect /net-ostream-open ${p2.node.ip}0 29665 1 1/ from pd
 
-		for p in [ pd, p1, p2 ]:
-			send "stop-server" to p
-		for p in [ pd, p1, p2 ]:
-			expect /stop-server-done/ from p
+        for p in [ pd, p1, p2 ]:
+            send "stop-server" to p
+        for p in [ pd, p1, p2 ]:
+            expect /stop-server-done/ from p
 
 
 test DiscoveryTunnelRefused:
-	let services = "discovery"
+    let services = "discovery"
 
-	subnet sd
-	subnet s1
-	subnet s2
+    subnet sd
+    subnet s1
+    subnet s2
 
-	spawn as pd on sd
-	spawn as p1 on s1
-	spawn as p2 on s2
+    spawn as pd on sd
+    spawn as p1 on s1
+    spawn as p2 on s2
 
-	for n in [ p1.node, p2.node ]:
-		shell on n:
-			nft add table inet filter
-			nft add chain inet filter input '{ type filter hook input priority filter ; policy drop; }'
-			nft add rule inet filter input 'ct state { established, related } accept'
+    for n in [ p1.node, p2.node ]:
+        shell on n:
+            nft add table inet filter
+            nft add chain inet filter input '{ type filter hook input priority filter ; policy drop; }'
+            nft add rule inet filter input 'ct state { established, related } accept'
 
-	send "create-identity Discovery" to pd
-	send "create-identity Device1 Owner1" to p1
-	send "create-identity Device2 Owner2" to p2
+    send "create-identity Discovery" to pd
+    send "create-identity Device1 Owner1" to p1
+    send "create-identity Device2 Owner2" to p2
 
-	expect /create-identity-done ref ($refpat).*/ from p1 capture p1id
-	send "identity-info $p1id" to p1
-	expect /identity-info ref $p1id base ($refpat) owner ($refpat).*/ from p1 capture p1base, p1owner
-	send "identity-info $p1owner" to p1
-	expect /identity-info ref $p1owner base ($refpat).*/ from p1 capture p1obase
+    expect /create-identity-done ref ($refpat).*/ from p1 capture p1id
+    send "identity-info $p1id" to p1
+    expect /identity-info ref $p1id base ($refpat) owner ($refpat).*/ from p1 capture p1base, p1owner
+    send "identity-info $p1owner" to p1
+    expect /identity-info ref $p1owner base ($refpat).*/ from p1 capture p1obase
 
-	expect /create-identity-done ref $refpat.*/ from p2
-	expect /create-identity-done ref $refpat.*/ from pd
+    expect /create-identity-done ref $refpat.*/ from p2
+    expect /create-identity-done ref $refpat.*/ from pd
 
-	for id in [ p1obase ]:
-		for p in [ pd, p1, p2 ]:
-			send "start-server services $services test-log" to p
+    for id in [ p1obase ]:
+        for p in [ pd, p1, p2 ]:
+            send "start-server services $services test-log" to p
 
-		for p in [ p1, p2 ]:
-			with p:
-				send "peer-add ${pd.node.ip}"
-				expect:
-					/peer 1 addr ${pd.node.ip} 29665/
-					/peer 1 id Discovery/
-			expect from pd:
-					/peer [12] addr ${p.node.ip} 29665/
-					/peer [12] id .*/
+        for p in [ p1, p2 ]:
+            with p:
+                send "peer-add ${pd.node.ip}"
+                expect:
+                    /peer 1 addr ${pd.node.ip} 29665/
+                    /peer 1 id Discovery/
+            expect from pd:
+                    /peer [12] addr ${p.node.ip} 29665/
+                    /peer [12] id .*/
 
-		send "discovery-tunnel 1 $id" to p2
-		expect /net-ostream-open ${pd.node.ip} 29665 1 1/ from p2
-		expect /net-ostream-close-ack ${pd.node.ip} 29665 1 0/ from p2
+        send "discovery-tunnel 1 $id" to p2
+        expect /net-ostream-open ${pd.node.ip} 29665 1 1/ from p2
+        expect /net-ostream-close-ack ${pd.node.ip} 29665 1 0/ from p2
 
-		for p in [ pd, p1, p2 ]:
-			send "stop-server" to p
-		for p in [ pd, p1, p2 ]:
-			expect /stop-server-done/ from p
+        for p in [ pd, p1, p2 ]:
+            send "stop-server" to p
+        for p in [ pd, p1, p2 ]:
+            expect /stop-server-done/ from p
