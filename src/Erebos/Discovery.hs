@@ -26,6 +26,8 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Word
 
+import System.Clock
+
 import Text.Read
 
 #ifdef ENABLE_ICE_SUPPORT
@@ -209,7 +211,8 @@ emptyPeer = DiscoveryPeer
     }
 
 data DiscoveryPeerState = DiscoveryPeerState
-    { dpsOurTunnelRequests :: [ ( RefDigest, StreamWriter ) ]
+    { dpsWeAskedFor :: Map RefDigest SearchStatus
+    , dpsOurTunnelRequests :: [ ( RefDigest, StreamWriter ) ]
     -- ( original target, our write stream )
     , dpsRelayedTunnelRequests :: [ ( RefDigest, ( StreamReader, StreamWriter )) ]
     -- ( original source, ( from source, to target ))
@@ -223,6 +226,9 @@ data DiscoveryGlobalState = DiscoveryGlobalState
     , dgsSearchingFor :: Set RefDigest
     }
 
+data SearchStatus
+    = SearchingSince TimeSpec
+
 instance Service DiscoveryService where
     serviceID _ = mkServiceID "dd59c89c-69cc-4703-b75b-4ddcd4b3c23c"
 
@@ -231,7 +237,8 @@ instance Service DiscoveryService where
 
     type ServiceState DiscoveryService = DiscoveryPeerState
     emptyServiceState _ = DiscoveryPeerState
-        { dpsOurTunnelRequests = []
+        { dpsWeAskedFor = M.empty
+        , dpsOurTunnelRequests = []
         , dpsRelayedTunnelRequests = []
         , dpsStunServer = Nothing
         , dpsTurnServer = Nothing
@@ -311,18 +318,29 @@ instance Service DiscoveryService where
                 " for " <> show (either refDigest id edgst) <>
                 " result [" <> T.unpack (T.intercalate "," $ map toText results) <> "]"
 
-        DiscoveryResult _ [] -> do
-            -- not found
-            return ()
-
         DiscoveryResult edgst addrs -> do
             let dgst = either refDigest id edgst
-            -- TODO: check if we really requested that
             server <- asks svcServer
             st <- getStorage
             self <- svcSelf
             discoveryPeer <- asks svcPeer
-            let runAsService = runPeerService @DiscoveryService discoveryPeer
+            pid <- asks svcPeerIdentity
+
+            weAskedFor <- dpsWeAskedFor <$> svcGet
+            let askedFor = M.member dgst weAskedFor
+            debugLog $
+                "result from " <> show (refDigest $ storedRef $ idData pid) <>
+                " for " <> show dgst <> ": [" <> T.unpack (T.intercalate "," $ map toText addrs) <> "]" <>
+                (if askedFor then "" else " (not asked for)")
+
+            when askedFor $ do
+                let weAskedFor' = M.delete dgst weAskedFor
+                svcModify $ \s -> s { dpsWeAskedFor = weAskedFor' }
+                debugLog $
+                    "remains asked " <> show (refDigest $ storedRef $ idData pid) <>
+                    " for " <> show (M.keys weAskedFor')
+
+            let runAsService = runPeerService @DiscoveryService @IO discoveryPeer
 
             let tryAddresses = \case
                     DiscoveryIP ipaddr port : _ -> do
@@ -367,12 +385,13 @@ instance Service DiscoveryService where
                         discoverySetupTunnelResponse dgst
 
                     addr : rest -> do
-                        svcPrint $ "Discovery: unsupported address in result: " ++ T.unpack (toText addr)
+                        debugLog $ "unsupported address in result: " ++ T.unpack (toText addr)
                         tryAddresses rest
 
-                    [] -> svcPrint $ "Discovery: no (supported) address received for " <> show dgst
+                    [] -> debugLog $ "no (supported) address received for " <> show dgst
 
-            tryAddresses addrs
+            when askedFor $ do
+                tryAddresses addrs
 
         DiscoveryConnectionRequest conn -> do
             self <- svcSelf
@@ -550,8 +569,17 @@ instance Service DiscoveryService where
 
         when (not $ null addrs) $ do
             sendToPeer peer $ DiscoverySelf addrs Nothing
-        forM_ searchingFor $ \dgst -> do
-            sendToPeer peer $ DiscoverySearch (Right dgst)
+
+        when (not $ null searchingFor) $ do
+            forM_ searchingFor $ \dgst -> do
+                sendToPeer peer $ DiscoverySearch (Right dgst)
+
+            now <- liftIO $ getTime Monotonic
+            let weAskedFor' = M.fromAscList $ map (, SearchingSince now) $ S.toAscList searchingFor
+            svcModify $ \s -> s { dpsWeAskedFor = weAskedFor' }
+            debugLog $
+                "we asked new peer " <> show (refDigest $ storedRef $ idData pid) <>
+                " for " <> show (M.keys weAskedFor')
 
     serviceUpdatedPeer = do
         pid <- asks svcPeerIdentity
@@ -622,16 +650,20 @@ discoverySearch server dgst = do
                     return $ dgst `elem` identityDigests pid
                 _ -> return False
         when (not $ or match) $ do
-            alreadySearching <- modifyServiceGlobalState server (Proxy @DiscoveryService) $ \s ->
-                let alreadySearching = S.member dgst $ dgsSearchingFor s
-                 in ( if alreadySearching then s else s
-                         { dgsSearchingFor =  S.insert dgst $ dgsSearchingFor s
-                         }
-                    , alreadySearching
-                    )
-            when (not alreadySearching) $ do
-                forM_ peers $ \peer -> do
-                    sendToPeer peer $ DiscoverySearch $ Right dgst
+            _ <- modifyServiceGlobalState server (Proxy @DiscoveryService) $ \s ->
+                ( s { dgsSearchingFor =  S.insert dgst $ dgsSearchingFor s }, () )
+            now <- liftIO $ getTime Monotonic
+            forM_ peers $ \peer -> do
+                runPeerService peer $ do
+                    weAskedFor <- dpsWeAskedFor <$> svcGet
+                    when (not $ M.member dgst weAskedFor) $ do
+                        let weAskedFor' = M.insert dgst (SearchingSince now) weAskedFor
+                        svcModify $ \s -> s { dpsWeAskedFor = weAskedFor' }
+                        pid <- asks svcPeerIdentity
+                        debugLog $
+                            "we asked " <> show (refDigest $ storedRef $ idData pid) <>
+                            " for " <> show dgst <> " " <> show (M.keys weAskedFor')
+                        replyPacket $ DiscoverySearch $ Right dgst
 
 
 data TunnelAddress = TunnelAddress
