@@ -212,6 +212,7 @@ emptyPeer = DiscoveryPeer
 
 data DiscoveryPeerState = DiscoveryPeerState
     { dpsWeAskedFor :: Map RefDigest SearchStatus
+    , dpsPeerSearchingFor :: Map RefDigest SearchStatus
     , dpsOurTunnelRequests :: [ ( RefDigest, StreamWriter ) ]
     -- ( original target, our write stream )
     , dpsRelayedTunnelRequests :: [ ( RefDigest, ( StreamReader, StreamWriter )) ]
@@ -238,6 +239,7 @@ instance Service DiscoveryService where
     type ServiceState DiscoveryService = DiscoveryPeerState
     emptyServiceState _ = DiscoveryPeerState
         { dpsWeAskedFor = M.empty
+        , dpsPeerSearchingFor = M.empty
         , dpsOurTunnelRequests = []
         , dpsRelayedTunnelRequests = []
         , dpsStunServer = Nothing
@@ -288,6 +290,36 @@ instance Service DiscoveryService where
                 (discoveryTurnServer attrs)
                 (discoveryTurnPort attrs)
 
+            server <- asks svcServer
+            afterCommit $ void $ forkIO $ do
+                peers <- getCurrentPeerList server
+                let dgsts = identityDigests pid
+                forM_ peers $ \sp -> do
+                    runPeerService @DiscoveryService sp $ do
+                        peerSearchingFor <- dpsPeerSearchingFor <$> svcGet
+                        when (any (`M.member` peerSearchingFor) dgsts) $ do
+                            let peerSearchingFor' = foldl' (flip M.delete) peerSearchingFor dgsts
+                            svcModify $ \s -> s { dpsPeerSearchingFor = peerSearchingFor' }
+                            spid <- asks svcPeerIdentity
+                            spaddr <- asks svcPeerAddress
+                            st <- getStorage
+                            forM_ dgsts $ \dgst -> do
+                                when (dgst `M.member` peerSearchingFor) $ do
+                                    let offerTunnel
+                                            | discoveryProvideTunnel attrs sp spaddr = (++ [ DiscoveryTunnel ])
+                                            | otherwise                              = id
+                                    let results = offerTunnel matchedAddrs
+                                    debugLog $
+                                        "found for " <> show (refDigest $ storedRef $ idData spid) <>
+                                        " dgst " <> show dgst <>
+                                        " result [" <> T.unpack (T.intercalate "," $ map toText results) <> "]"
+                                    -- Try to promote weak ref to normal one for older peers:
+                                    edgst <- maybe (Right dgst) Left <$> liftIO (refFromDigest st dgst)
+                                    replyPacket $ DiscoveryResult edgst results
+                            debugLog $
+                                "remains asked by " <> show (refDigest $ storedRef $ idData spid) <>
+                                ": " <> show (M.keys peerSearchingFor')
+
         DiscoveryAcknowledged _ stunServer stunPort turnServer turnPort -> do
             paddr <- asks svcPeerAddress >>= return . \case
                 (DatagramAddress saddr) -> T.pack . show . fst <$> inetFromSockAddr saddr
@@ -304,19 +336,32 @@ instance Service DiscoveryService where
                 }
 
         DiscoverySearch edgst -> do
+            let dgst = either refDigest id edgst
             pid <- asks svcPeerIdentity
-            dpeer <- M.lookup (either refDigest id edgst) . dgsPeers <$> svcGetGlobal
-            peer <- asks svcPeer
-            paddr <- asks svcPeerAddress
-            attrs <- asks svcAttributes
-            let offerTunnel
-                    | discoveryProvideTunnel attrs peer paddr = (++ [ DiscoveryTunnel ])
-                    | otherwise                               = id
-            let results = maybe [] (offerTunnel . dpAddress) dpeer
-            replyPacket $ DiscoveryResult edgst results
-            debugLog $ "search by " <> show (refDigest $ storedRef $ idData pid) <>
-                " for " <> show (either refDigest id edgst) <>
-                " result [" <> T.unpack (T.intercalate "," $ map toText results) <> "]"
+            (M.lookup dgst . dgsPeers <$> svcGetGlobal) >>= \case
+                Just dpeer -> do
+                    peer <- asks svcPeer
+                    paddr <- asks svcPeerAddress
+                    attrs <- asks svcAttributes
+                    let offerTunnel
+                            | discoveryProvideTunnel attrs peer paddr = (++ [ DiscoveryTunnel ])
+                            | otherwise                               = id
+                    let results = offerTunnel $ dpAddress dpeer
+                    replyPacket $ DiscoveryResult edgst results
+                    debugLog $ "search by " <> show (refDigest $ storedRef $ idData pid) <>
+                        " for " <> show (either refDigest id edgst) <>
+                        " result [" <> T.unpack (T.intercalate "," $ map toText results) <> "]"
+
+                Nothing -> do
+                    now <- liftIO $ getTime Monotonic
+                    searchingFor <- dpsPeerSearchingFor <$> svcGet
+                    let seachingFor' = M.insert dgst (SearchingSince now) searchingFor
+                    svcModify $ \s -> s { dpsPeerSearchingFor = seachingFor' }
+                    debugLog $ "search by " <> show (refDigest $ storedRef $ idData pid) <>
+                        " for " <> show (either refDigest id edgst) <>
+                        " not found"
+                    debugLog $ "peer " <> show (refDigest $ storedRef $ idData pid) <>
+                        " searching for " <> show (M.keys seachingFor')
 
         DiscoveryResult edgst addrs -> do
             let dgst = either refDigest id edgst
