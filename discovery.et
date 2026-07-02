@@ -141,8 +141,6 @@ test DiscoveryJoinedAfter:
                     /peer [12] addr ${p.node.ip} 29665/
                     /peer [12] id Device. Owner./
 
-        send "discovery-connect $id" to p2
-
         expect from p1:
             /peer [0-9]+ addr ${p2.node.ip} 29665/
             /peer [0-9]+ id Device2 Owner2/
