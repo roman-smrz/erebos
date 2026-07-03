@@ -301,13 +301,12 @@ instance Service DiscoveryService where
                             let peerSearchingFor' = foldl' (flip M.delete) peerSearchingFor dgsts
                             svcModify $ \s -> s { dpsPeerSearchingFor = peerSearchingFor' }
                             spid <- asks svcPeerIdentity
-                            spaddr <- asks svcPeerAddress
                             st <- getStorage
                             forM_ dgsts $ \dgst -> do
                                 when (dgst `M.member` peerSearchingFor) $ do
-                                    let offerTunnel
-                                            | discoveryProvideTunnel attrs sp spaddr = (++ [ DiscoveryTunnel ])
-                                            | otherwise                              = id
+                                    offerTunnel <- offerTunnelBetween attrs peer sp >>= return . \case
+                                        True  -> (++ [ DiscoveryTunnel ])
+                                        False -> id
                                     let results = offerTunnel matchedAddrs
                                     debugLog $
                                         "found for " <> show (refDigest $ storedRef $ idData spid) <>
@@ -339,14 +338,15 @@ instance Service DiscoveryService where
             let dgst = either refDigest id edgst
             pid <- asks svcPeerIdentity
             (M.lookup dgst . dgsPeers <$> svcGetGlobal) >>= \case
-                Just dpeer -> do
+                Just dp -> do
                     peer <- asks svcPeer
-                    paddr <- asks svcPeerAddress
                     attrs <- asks svcAttributes
-                    let offerTunnel
-                            | discoveryProvideTunnel attrs peer paddr = (++ [ DiscoveryTunnel ])
-                            | otherwise                               = id
-                    let results = offerTunnel $ dpAddress dpeer
+                    offerTunnel <- case dpPeer dp of
+                        Just dpeer -> offerTunnelBetween attrs peer dpeer >>= return . \case
+                            True  -> (++ [ DiscoveryTunnel ])
+                            False -> id
+                        Nothing -> return id
+                    let results = offerTunnel $ dpAddress dp
                     replyPacket $ DiscoveryResult edgst results
                     debugLog $ "search by " <> show (refDigest $ storedRef $ idData pid) <>
                         " for " <> show (either refDigest id edgst) <>
@@ -487,17 +487,16 @@ instance Service DiscoveryService where
               else do
                 -- request to some of our peers, relay
                 peer <- asks svcPeer
-                paddr <- asks svcPeerAddress
                 mbdp <- M.lookup (either refDigest id $ dconnTarget conn) . dgsPeers <$> svcGetGlobal
                 streams <- receivedStreams
                 case mbdp of
                         Nothing -> replyPacket $ DiscoveryConnectionResponse rconn
                         Just dp
                             | Just dpeer <- dpPeer dp -> if
-                                | dconnTunnel conn -> if
-                                    | not (discoveryProvideTunnel attrs peer paddr) -> do
+                                | dconnTunnel conn -> offerTunnelBetween attrs peer dpeer >>= \case
+                                    False -> do
                                         replyPacket $ DiscoveryConnectionResponse rconn
-                                    | fromSource : _ <- streams -> do
+                                    True | fromSource : _ <- streams -> do
                                         void $ liftIO $ forkIO $ runPeerService @DiscoveryService dpeer $ do
                                             debugLog $ "setting up tunnel from " <> show (either refDigest id $ dconnSource conn) <>
                                                 " to " <> show (either refDigest id $ dconnTarget conn)
@@ -505,7 +504,7 @@ instance Service DiscoveryService where
                                             svcModify $ \s -> s { dpsRelayedTunnelRequests =
                                                 ( either refDigest id $ dconnSource conn, ( fromSource, toTarget )) : dpsRelayedTunnelRequests s }
                                             replyPacket $ DiscoveryConnectionRequest conn
-                                    | otherwise -> do
+                                    _ | otherwise -> do
                                         svcPrint $ "Discovery: missing stream on tunnel request (relay)"
                                 | otherwise -> do
                                     sendToPeer dpeer $ DiscoveryConnectionRequest conn
@@ -742,6 +741,16 @@ instance PeerAddressType TunnelAddress where
 
     connectionToAddressClosed TunnelAddress {..} = do
         closeStream tunnelWriter
+
+offerTunnelBetween :: MonadIO m => DiscoveryAttributes -> Peer -> Peer -> m Bool
+offerTunnelBetween attrs p1 p2 =
+    offerTunnelFor p1 >>= \case
+        True -> return True
+        False -> offerTunnelFor p2
+  where
+    offerTunnelFor peer = do
+        addrs <- getPeerAddresses peer
+        return $ any (discoveryProvideTunnel attrs peer) addrs
 
 relayStream :: StreamReader -> StreamWriter -> IO ()
 relayStream r w = do
