@@ -39,6 +39,7 @@ import Erebos.Network.Address
 import Erebos.Object
 import Erebos.Service
 import Erebos.Service.Stream
+import Erebos.State
 import Erebos.Storable
 
 
@@ -75,6 +76,7 @@ data DiscoveryAttributes = DiscoveryAttributes
     , discoveryTurnServer :: Maybe Text
     , discoveryProvideTunnel :: Peer -> PeerAddress -> Bool
     , discoveryDebugLog :: Bool
+    , discoverySearchForOwner :: Bool
     }
 
 defaultDiscoveryAttributes :: DiscoveryAttributes
@@ -85,6 +87,7 @@ defaultDiscoveryAttributes = DiscoveryAttributes
     , discoveryTurnServer = Nothing
     , discoveryProvideTunnel = \_ _ -> False
     , discoveryDebugLog = False
+    , discoverySearchForOwner = True
     }
 
 data DiscoveryConnection = DiscoveryConnection
@@ -662,15 +665,25 @@ instance Service DiscoveryService where
         let searchingFor = foldl' (flip S.delete) (dgsSearchingFor gs) (identityDigests pid)
         svcModifyGlobal $ \s -> s { dgsSearchingFor = searchingFor }
 
+        searchForOwner <- asks (discoverySearchForOwner . svcAttributes) >>= \case
+            True -> do
+                (lookupSharedValue . lsShared . fromStored <$> getLocalHead) >>= \case
+                    Just (self :: ComposedIdentity) -> do
+                        return $ S.fromList $ map (refDigest . storedRef) $ idDataF self
+                    Nothing -> do
+                        return S.empty
+            False -> return S.empty
+        let searchingFor' = searchingFor `S.union` searchForOwner
+
         when (not $ null addrs) $ do
             sendToPeer peer $ DiscoverySelf addrs Nothing
 
-        when (not $ null searchingFor) $ do
-            forM_ searchingFor $ \dgst -> do
+        when (not $ null searchingFor') $ do
+            forM_ searchingFor' $ \dgst -> do
                 sendToPeer peer $ DiscoverySearch (Right dgst)
 
             now <- liftIO $ getTime Monotonic
-            let weAskedFor' = M.fromAscList $ map (, SearchingSince now) $ S.toAscList searchingFor
+            let weAskedFor' = M.fromAscList $ map (, SearchingSince now) $ S.toAscList searchingFor'
             svcModify $ \s -> s { dpsWeAskedFor = weAskedFor' }
             debugLog $
                 "we asked new peer " <> show (refDigest $ storedRef $ idData pid) <>
