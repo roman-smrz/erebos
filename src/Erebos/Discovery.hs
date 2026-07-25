@@ -53,7 +53,7 @@ data DiscoveryService
     = DiscoverySelf [ DiscoveryAddress ] (Maybe Int)
     | DiscoveryAcknowledged [ DiscoveryAddress ] (Maybe Text) (Maybe Word16) (Maybe Text) (Maybe Word16)
     | DiscoverySearch (Either Ref RefDigest)
-    | DiscoveryResult (Either Ref RefDigest) [ DiscoveryAddress ]
+    | DiscoveryResult (Either Ref RefDigest) [ DiscoveryAddress ] [ DiscoveryVia ]
     | DiscoveryConnectionRequest DiscoveryConnection
     | DiscoveryConnectionResponse DiscoveryConnection
 
@@ -62,6 +62,11 @@ data DiscoveryAddress
     | DiscoveryICE
     | DiscoveryTunnel
     | DiscoveryOther Text
+
+data DiscoveryVia = DiscoveryVia
+    { viaIdentity :: RefDigest
+    , viaAddress :: [ DiscoveryAddress ]
+    }
 
 data DiscoveryAttributes = DiscoveryAttributes
     { discoveryStunPort :: Maybe Word16
@@ -111,9 +116,10 @@ instance Storable DiscoveryService where
                 storeMbText "turn-server" turnServer
                 storeMbInt "turn-port" turnPort
             DiscoverySearch edgst -> either (storeRawRef "search") (storeRawWeak "search") edgst
-            DiscoveryResult edgst addr -> do
+            DiscoveryResult edgst addr via -> do
                 either (storeRawRef "result") (storeRawWeak "result") edgst
                 mapM_ (storeText "address") addr
+                mapM_ (storeRef "via") via
             DiscoveryConnectionRequest conn -> storeConnection "request" conn
             DiscoveryConnectionResponse conn -> storeConnection "response" conn
 
@@ -152,6 +158,7 @@ instance Storable DiscoveryService where
                     , Right <$> loadRawWeak "result"
                     ]
                 <*> loadTexts "address"
+                <*> loadRefs "via"
             , loadConnection "request" DiscoveryConnectionRequest
             , loadConnection "response" DiscoveryConnectionResponse
             ]
@@ -194,6 +201,15 @@ instance StorableText DiscoveryAddress where
         | otherwise
         -> DiscoveryOther str
 
+instance Storable DiscoveryVia where
+    store' DiscoveryVia {..} = storeRec $ do
+        storeRawWeak "id" viaIdentity
+        mapM_ (storeText "address") viaAddress
+    load' = loadRec $ do
+        viaIdentity <- loadRawWeak "id"
+        viaAddress <- loadTexts "address"
+        return DiscoveryVia {..}
+
 
 data DiscoveryPeer = DiscoveryPeer
     { dpPriority :: Int
@@ -210,6 +226,21 @@ emptyPeer = DiscoveryPeer
     , dpIceSession = Nothing
     }
 
+viaFromPeer :: DiscoveryPeer -> IO (Maybe DiscoveryVia)
+viaFromPeer DiscoveryPeer {..}
+    | Just peer <- dpPeer
+    , viaAddress@(_ : _) <- dpAddress
+    = do
+        getPeerIdentity peer >>= \case
+            PeerIdentityFull pid -> do
+                let viaIdentity = refDigest $ storedRef $ idData pid
+                return $ Just DiscoveryVia {..}
+            _ -> return Nothing
+    | otherwise
+    = return Nothing
+
+
+
 data DiscoveryPeerState = DiscoveryPeerState
     { dpsWeAskedFor :: Map RefDigest SearchStatus
     , dpsPeerSearchingFor :: Map RefDigest SearchStatus
@@ -223,9 +254,27 @@ data DiscoveryPeerState = DiscoveryPeerState
     }
 
 data DiscoveryGlobalState = DiscoveryGlobalState
-    { dgsPeers :: Map RefDigest DiscoveryPeer
+    { dgsPeers :: Map RefDigest ResultValue
     , dgsSearchingFor :: Set RefDigest
     }
+
+data ResultValue = ResultValue
+    { rvDirect :: Maybe DiscoveryPeer
+    , rvVia :: [ DiscoveryPeer ]
+    }
+
+instance Semigroup ResultValue where
+    new <> old = ResultValue
+        { rvDirect = if (dpPriority <$> rvDirect new) > (dpPriority <$> rvDirect old)
+                       then rvDirect new else rvDirect old
+        , rvVia = rvVia new ++ rvVia old
+        }
+
+instance Monoid ResultValue where
+    mempty = ResultValue
+        { rvDirect = Nothing
+        , rvVia = []
+        }
 
 data SearchStatus
     = SearchingSince TimeSpec
@@ -266,9 +315,6 @@ instance Service DiscoveryService where
                 , show paddrs
                 ]
 
-            let insertHelper new old | dpPriority new > dpPriority old = new
-                                     | otherwise                       = old
-
             let matchedAddrs = flip filter addrs $ \case
                     DiscoveryICE -> True
                     DiscoveryIP ipaddr port ->
@@ -282,7 +328,11 @@ instance Service DiscoveryService where
                         , dpAddress = matchedAddrs
                         , dpIceSession = Nothing
                         }
-                svcModifyGlobal $ \s -> s { dgsPeers = M.insertWith insertHelper (refDigest $ storedRef sdata) dp $ dgsPeers s }
+                    rv = ResultValue
+                        { rvDirect = Just dp
+                        , rvVia = [ dp ]
+                        }
+                svcModifyGlobal $ \s -> s { dgsPeers = M.insertWith (<>) (refDigest $ storedRef sdata) rv $ dgsPeers s }
             attrs <- asks svcAttributes
             replyPacket $ DiscoveryAcknowledged matchedAddrs
                 (discoveryStunServer attrs)
@@ -314,7 +364,7 @@ instance Service DiscoveryService where
                                         " result [" <> T.unpack (T.intercalate "," $ map toText results) <> "]"
                                     -- Try to promote weak ref to normal one for older peers:
                                     edgst <- maybe (Right dgst) Left <$> liftIO (refFromDigest st dgst)
-                                    replyPacket $ DiscoveryResult edgst results
+                                    replyPacket $ DiscoveryResult edgst results []
                             debugLog $
                                 "remains asked by " <> show (refDigest $ storedRef $ idData spid) <>
                                 ": " <> show (M.keys peerSearchingFor')
@@ -338,16 +388,17 @@ instance Service DiscoveryService where
             let dgst = either refDigest id edgst
             pid <- asks svcPeerIdentity
             (M.lookup dgst . dgsPeers <$> svcGetGlobal) >>= \case
-                Just dp -> do
+                Just rv -> do
                     peer <- asks svcPeer
                     attrs <- asks svcAttributes
-                    offerTunnel <- case dpPeer dp of
+                    offerTunnel <- case dpPeer =<< rvDirect rv of
                         Just dpeer -> offerTunnelBetween attrs peer dpeer >>= return . \case
                             True  -> (++ [ DiscoveryTunnel ])
                             False -> id
                         Nothing -> return id
-                    let results = offerTunnel $ dpAddress dp
-                    replyPacket $ DiscoveryResult edgst results
+                    let results = offerTunnel $ maybe [] dpAddress $ rvDirect rv
+                    via <- liftIO $ fmap catMaybes $ mapM viaFromPeer $ rvVia rv
+                    replyPacket $ DiscoveryResult edgst results via
                     debugLog $ "search by " <> show (refDigest $ storedRef $ idData pid) <>
                         " for " <> show (either refDigest id edgst) <>
                         " result [" <> T.unpack (T.intercalate "," $ map toText results) <> "]"
@@ -363,7 +414,7 @@ instance Service DiscoveryService where
                     debugLog $ "peer " <> show (refDigest $ storedRef $ idData pid) <>
                         " searching for " <> show (M.keys seachingFor')
 
-        DiscoveryResult edgst addrs -> do
+        DiscoveryResult edgst addrs _ -> do
             let dgst = either refDigest id edgst
             server <- asks svcServer
             st <- getStorage
@@ -393,8 +444,8 @@ instance Service DiscoveryService where
                             let saddr = inetToSockAddr ( ipaddr, port )
                             peer <- serverPeer server saddr
                             runAsService $ do
-                                let upd dp = dp { dpPeer = Just peer }
-                                svcModifyGlobal $ \s -> s { dgsPeers = M.alter (Just . upd . fromMaybe emptyPeer) dgst $ dgsPeers s }
+                                let upd rv = rv { rvDirect = Just $ (fromMaybe emptyPeer $ rvDirect rv) { dpPeer = Just peer } }
+                                svcModifyGlobal $ \s -> s { dgsPeers = M.alter (Just . upd . fromMaybe mempty) dgst $ dgsPeers s }
 
                     DiscoveryICE : rest -> do
 #ifdef ENABLE_ICE_SUPPORT
@@ -419,8 +470,8 @@ instance Service DiscoveryService where
                                             Left err -> printOp $ "Discovery: failed to send connection request: " ++ err
 
                                     runAsService $ do
-                                        let upd dp = dp { dpIceSession = Just ice }
-                                        svcModifyGlobal $ \s -> s { dgsPeers = M.alter (Just . upd . fromMaybe emptyPeer) dgst $ dgsPeers s }
+                                        let upd rv = rv { rvDirect = Just $ (fromMaybe emptyPeer $ rvDirect rv) { dpIceSession = Just ice } }
+                                        svcModifyGlobal $ \s -> s { dgsPeers = M.alter (Just . upd . fromMaybe mempty) dgst $ dgsPeers s }
 
                             Nothing -> do
 #endif
@@ -487,9 +538,9 @@ instance Service DiscoveryService where
               else do
                 -- request to some of our peers, relay
                 peer <- asks svcPeer
-                mbdp <- M.lookup (either refDigest id $ dconnTarget conn) . dgsPeers <$> svcGetGlobal
+                mbrv <- M.lookup (either refDigest id $ dconnTarget conn) . dgsPeers <$> svcGetGlobal
                 streams <- receivedStreams
-                case mbdp of
+                case rvDirect =<< mbrv of
                         Nothing -> replyPacket $ DiscoveryConnectionResponse rconn
                         Just dp
                             | Just dpeer <- dpPeer dp -> if
@@ -527,9 +578,9 @@ instance Service DiscoveryService where
                         -> do
                             let saddr = inetToSockAddr ( ipaddr, port )
                             peer <- liftIO $ serverPeer server saddr
-                            let upd dp = dp { dpPeer = Just peer }
+                            let upd rv = rv { rvDirect = Just $ (fromMaybe emptyPeer $ rvDirect rv) { dpPeer = Just peer } }
                             svcModifyGlobal $ \s -> s
-                                { dgsPeers = M.alter (Just . upd . fromMaybe emptyPeer) (either refDigest id $ dconnTarget conn) $ dgsPeers s }
+                                { dgsPeers = M.alter (Just . upd . fromMaybe mempty) (either refDigest id $ dconnTarget conn) $ dgsPeers s }
 
                         | dconnTunnel conn
                         , Just tunnelWriter <- lookup (either refDigest id (dconnTarget conn)) (dpsOurTunnelRequests dps)
@@ -553,8 +604,8 @@ instance Service DiscoveryService where
                             liftIO $ closeStream tunnelWriter
 
 #ifdef ENABLE_ICE_SUPPORT
-                        | Just dp <- M.lookup (either refDigest id $ dconnTarget conn) dpeers
-                        , Just ice <- dpIceSession dp
+                        | Just rv <- M.lookup (either refDigest id $ dconnTarget conn) dpeers
+                        , Just ice <- dpIceSession =<< rvDirect rv
                         , Just rinfo <- dconnIceInfo conn -> do
                             liftIO $ iceConnect ice rinfo $ void $ serverPeerIce server ice
 #endif
@@ -567,7 +618,7 @@ instance Service DiscoveryService where
                     filter ((either refDigest id (dconnSource conn) /=) . fst) (dpsRelayedTunnelRequests s) }
 
                 case M.lookup (either refDigest id $ dconnSource conn) dpeers of
-                    Just dp | Just dpeer <- dpPeer dp -> if
+                    Just ResultValue { rvDirect = Just dp } | Just dpeer <- dpPeer dp -> if
                         -- successful tunnel request
                         | dconnTunnel conn
                         , Just ( fromSource, toTarget ) <- lookup (either refDigest id (dconnSource conn)) (dpsRelayedTunnelRequests dps)
@@ -631,7 +682,14 @@ instance Service DiscoveryService where
         isPeerDropped peer >>= \case
             True -> do
                 peers <- dgsPeers <$> svcGetGlobal
-                let peers' = M.filter ((Just peer /=) . dpPeer) peers
+                let peers' = M.mapMaybe removePeer peers
+                    removePeer rv =
+                        let rv' = rv { rvDirect = if (dpPeer =<< rvDirect rv) == Just peer then Nothing else rvDirect rv
+                                     , rvVia = filter ((Just peer /=) . dpPeer) $ rvVia rv
+                                     }
+                         in if isJust (rvDirect rv') || not (null (rvVia rv'))
+                              then Just rv'
+                              else Nothing
                 svcModifyGlobal $ \s -> s { dgsPeers = peers' }
                 debugLog $ "dropped peer " <> show [ refDigest $ storedRef $ idData pid, refDigest $ storedRef $ idExtData pid ] <>
                     ", map size " <> show (M.size peers) <> " -> " <> show (M.size peers')
