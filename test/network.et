@@ -1,516 +1,516 @@
 module network
 
 test Discovery:
-	spawn as p1
-	spawn as p2
-	send "create-identity Device1 Owner" to p1
-	send "create-identity Device2" to p2
-	send "start-server" to p1
-	send "start-server" to p2
-	expect from p1:
-		/peer 1 addr ${p2.node.ip} 29665/
-		/peer 1 id Device2/
-	expect from p2:
-		/peer 1 addr ${p1.node.ip} 29665/
-		/peer 1 id Device1 Owner/
+    spawn as p1
+    spawn as p2
+    send "create-identity Device1 Owner" to p1
+    send "create-identity Device2" to p2
+    send "start-server" to p1
+    send "start-server" to p2
+    expect from p1:
+        /peer 1 addr ${p2.node.ip} 29665/
+        /peer 1 id Device2/
+    expect from p2:
+        /peer 1 addr ${p1.node.ip} 29665/
+        /peer 1 id Device1 Owner/
 
-	send "update-local-identity Device1A" to p1
-	expect /peer 1 id Device1A Owner/ from p2
+    send "update-local-identity Device1A" to p1
+    expect /peer 1 id Device1A Owner/ from p2
 
-	send "update-shared-identity OwnerA" to p1
-	expect /peer 1 id Device1A OwnerA/ from p2
+    send "update-shared-identity OwnerA" to p1
+    expect /peer 1 id Device1A OwnerA/ from p2
 
-	send "update-local-identity Device1B" to p1
-	expect /peer 1 id Device1B OwnerA/ from p2
+    send "update-local-identity Device1B" to p1
+    expect /peer 1 id Device1B OwnerA/ from p2
 
-	send "update-shared-identity OwnerB" to p1
-	expect /peer 1 id Device1B OwnerB/ from p2
+    send "update-shared-identity OwnerB" to p1
+    expect /peer 1 id Device1B OwnerB/ from p2
 
-	with p2:
-		send "stop-server"
-		expect /stop-server-done/
+    with p2:
+        send "stop-server"
+        expect /stop-server-done/
 
-	send "update-shared-identity OwnerC" to p1
+    send "update-shared-identity OwnerC" to p1
 
-	with p1:
-		send "stop-server"
-		expect /stop-server-done/
+    with p1:
+        send "stop-server"
+        expect /stop-server-done/
 
-	spawn as p3
-	spawn as p4
-	spawn as p5
-	spawn as p6
-	send "create-identity Device3" to p3
-	send "create-identity Device4" to p4
-	send "create-identity Device5" to p5
-	send "create-identity Device6" to p6
+    spawn as p3
+    spawn as p4
+    spawn as p5
+    spawn as p6
+    send "create-identity Device3" to p3
+    send "create-identity Device4" to p4
+    send "create-identity Device5" to p5
+    send "create-identity Device6" to p6
 
-	for p in [ p1, p2, p3, p4, p5, p6 ]:
-		send "start-server" to p
+    for p in [ p1, p2, p3, p4, p5, p6 ]:
+        send "start-server" to p
 
-	expect from p1:
-		/peer ([0-9]+) addr ${p2.node.ip} 29665/ capture peer1_2
-		/peer $peer1_2 id Device2/
-		/peer ([0-9]+) addr ${p3.node.ip} 29665/ capture peer1_3
-		/peer $peer1_3 id Device3/
-		/peer ([0-9]+) addr ${p4.node.ip} 29665/ capture peer1_4
-		/peer $peer1_4 id Device4/
-		/peer ([0-9]+) addr ${p5.node.ip} 29665/ capture peer1_5
-		/peer $peer1_5 id Device5/
-		/peer ([0-9]+) addr ${p6.node.ip} 29665/ capture peer1_6
-		/peer $peer1_6 id Device6/
+    expect from p1:
+        /peer ([0-9]+) addr ${p2.node.ip} 29665/ capture peer1_2
+        /peer $peer1_2 id Device2/
+        /peer ([0-9]+) addr ${p3.node.ip} 29665/ capture peer1_3
+        /peer $peer1_3 id Device3/
+        /peer ([0-9]+) addr ${p4.node.ip} 29665/ capture peer1_4
+        /peer $peer1_4 id Device4/
+        /peer ([0-9]+) addr ${p5.node.ip} 29665/ capture peer1_5
+        /peer $peer1_5 id Device5/
+        /peer ([0-9]+) addr ${p6.node.ip} 29665/ capture peer1_6
+        /peer $peer1_6 id Device6/
 
-	expect from p2:
-		/peer ([0-9]+) addr ${p1.node.ip} 29665/ capture peer2_1
-		/peer $peer2_1 id Device1B OwnerC/
-		/peer ([0-9]+) addr ${p3.node.ip} 29665/ capture peer2_3
-		/peer $peer2_3 id Device3/
-		/peer ([0-9]+) addr ${p4.node.ip} 29665/ capture peer2_4
-		/peer $peer2_4 id Device4/
-		/peer ([0-9]+) addr ${p5.node.ip} 29665/ capture peer2_5
-		/peer $peer2_5 id Device5/
-		/peer ([0-9]+) addr ${p6.node.ip} 29665/ capture peer2_6
-		/peer $peer2_6 id Device6/
+    expect from p2:
+        /peer ([0-9]+) addr ${p1.node.ip} 29665/ capture peer2_1
+        /peer $peer2_1 id Device1B OwnerC/
+        /peer ([0-9]+) addr ${p3.node.ip} 29665/ capture peer2_3
+        /peer $peer2_3 id Device3/
+        /peer ([0-9]+) addr ${p4.node.ip} 29665/ capture peer2_4
+        /peer $peer2_4 id Device4/
+        /peer ([0-9]+) addr ${p5.node.ip} 29665/ capture peer2_5
+        /peer $peer2_5 id Device5/
+        /peer ([0-9]+) addr ${p6.node.ip} 29665/ capture peer2_6
+        /peer $peer2_6 id Device6/
 
-	expect from p3:
-		/peer ([0-9]+) addr ${p1.node.ip} 29665/ capture peer3_1
-		/peer $peer3_1 id Device1B OwnerC/
-		/peer ([0-9]+) addr ${p2.node.ip} 29665/ capture peer3_2
-		/peer $peer3_2 id Device2/
-		/peer ([0-9]+) addr ${p4.node.ip} 29665/ capture peer3_4
-		/peer $peer3_4 id Device4/
-		/peer ([0-9]+) addr ${p5.node.ip} 29665/ capture peer3_5
-		/peer $peer3_5 id Device5/
-		/peer ([0-9]+) addr ${p6.node.ip} 29665/ capture peer3_6
-		/peer $peer3_6 id Device6/
+    expect from p3:
+        /peer ([0-9]+) addr ${p1.node.ip} 29665/ capture peer3_1
+        /peer $peer3_1 id Device1B OwnerC/
+        /peer ([0-9]+) addr ${p2.node.ip} 29665/ capture peer3_2
+        /peer $peer3_2 id Device2/
+        /peer ([0-9]+) addr ${p4.node.ip} 29665/ capture peer3_4
+        /peer $peer3_4 id Device4/
+        /peer ([0-9]+) addr ${p5.node.ip} 29665/ capture peer3_5
+        /peer $peer3_5 id Device5/
+        /peer ([0-9]+) addr ${p6.node.ip} 29665/ capture peer3_6
+        /peer $peer3_6 id Device6/
 
-	expect from p4:
-		/peer ([0-9]+) addr ${p1.node.ip} 29665/ capture peer4_1
-		/peer $peer4_1 id Device1B OwnerC/
-		/peer ([0-9]+) addr ${p2.node.ip} 29665/ capture peer4_2
-		/peer $peer4_2 id Device2/
-		/peer ([0-9]+) addr ${p3.node.ip} 29665/ capture peer4_3
-		/peer $peer4_3 id Device3/
-		/peer ([0-9]+) addr ${p5.node.ip} 29665/ capture peer4_5
-		/peer $peer4_5 id Device5/
-		/peer ([0-9]+) addr ${p6.node.ip} 29665/ capture peer4_6
-		/peer $peer4_6 id Device6/
+    expect from p4:
+        /peer ([0-9]+) addr ${p1.node.ip} 29665/ capture peer4_1
+        /peer $peer4_1 id Device1B OwnerC/
+        /peer ([0-9]+) addr ${p2.node.ip} 29665/ capture peer4_2
+        /peer $peer4_2 id Device2/
+        /peer ([0-9]+) addr ${p3.node.ip} 29665/ capture peer4_3
+        /peer $peer4_3 id Device3/
+        /peer ([0-9]+) addr ${p5.node.ip} 29665/ capture peer4_5
+        /peer $peer4_5 id Device5/
+        /peer ([0-9]+) addr ${p6.node.ip} 29665/ capture peer4_6
+        /peer $peer4_6 id Device6/
 
-	expect from p5:
-		/peer ([0-9]+) addr ${p1.node.ip} 29665/ capture peer5_1
-		/peer $peer5_1 id Device1B OwnerC/
-		/peer ([0-9]+) addr ${p2.node.ip} 29665/ capture peer5_2
-		/peer $peer5_2 id Device2/
-		/peer ([0-9]+) addr ${p3.node.ip} 29665/ capture peer5_3
-		/peer $peer5_3 id Device3/
-		/peer ([0-9]+) addr ${p4.node.ip} 29665/ capture peer5_4
-		/peer $peer5_4 id Device4/
-		/peer ([0-9]+) addr ${p6.node.ip} 29665/ capture peer5_6
-		/peer $peer5_6 id Device6/
+    expect from p5:
+        /peer ([0-9]+) addr ${p1.node.ip} 29665/ capture peer5_1
+        /peer $peer5_1 id Device1B OwnerC/
+        /peer ([0-9]+) addr ${p2.node.ip} 29665/ capture peer5_2
+        /peer $peer5_2 id Device2/
+        /peer ([0-9]+) addr ${p3.node.ip} 29665/ capture peer5_3
+        /peer $peer5_3 id Device3/
+        /peer ([0-9]+) addr ${p4.node.ip} 29665/ capture peer5_4
+        /peer $peer5_4 id Device4/
+        /peer ([0-9]+) addr ${p6.node.ip} 29665/ capture peer5_6
+        /peer $peer5_6 id Device6/
 
-	expect from p6:
-		/peer ([0-9]+) addr ${p1.node.ip} 29665/ capture peer6_1
-		/peer $peer6_1 id Device1B OwnerC/
-		/peer ([0-9]+) addr ${p2.node.ip} 29665/ capture peer6_2
-		/peer $peer6_2 id Device2/
-		/peer ([0-9]+) addr ${p3.node.ip} 29665/ capture peer6_3
-		/peer $peer6_3 id Device3/
-		/peer ([0-9]+) addr ${p4.node.ip} 29665/ capture peer6_4
-		/peer $peer6_4 id Device4/
-		/peer ([0-9]+) addr ${p5.node.ip} 29665/ capture peer6_5
-		/peer $peer6_5 id Device5/
+    expect from p6:
+        /peer ([0-9]+) addr ${p1.node.ip} 29665/ capture peer6_1
+        /peer $peer6_1 id Device1B OwnerC/
+        /peer ([0-9]+) addr ${p2.node.ip} 29665/ capture peer6_2
+        /peer $peer6_2 id Device2/
+        /peer ([0-9]+) addr ${p3.node.ip} 29665/ capture peer6_3
+        /peer $peer6_3 id Device3/
+        /peer ([0-9]+) addr ${p4.node.ip} 29665/ capture peer6_4
+        /peer $peer6_4 id Device4/
+        /peer ([0-9]+) addr ${p5.node.ip} 29665/ capture peer6_5
+        /peer $peer6_5 id Device5/
 
 
 test LargeData:
-	let services = "test"
+    let services = "test"
 
-	spawn as p1
-	spawn as p2
-	send "create-identity Device1" to p1
-	send "create-identity Device2" to p2
-	send "start-server services $services" to p1
-	send "start-server services $services" to p2
-	expect from p1:
-		/peer 1 addr ${p2.node.ip} 29665/
-		/peer 1 id Device2/
-	expect from p2:
-		/peer 1 addr ${p1.node.ip} 29665/
-		/peer 1 id Device1/
+    spawn as p1
+    spawn as p2
+    send "create-identity Device1" to p1
+    send "create-identity Device2" to p2
+    send "start-server services $services" to p1
+    send "start-server services $services" to p2
+    expect from p1:
+        /peer 1 addr ${p2.node.ip} 29665/
+        /peer 1 id Device2/
+    expect from p2:
+        /peer 1 addr ${p1.node.ip} 29665/
+        /peer 1 id Device1/
 
-	for i in [0..10]:
-		with p1:
-			# Create blob with (i * 1000) bytes
-			send "store blob"
-			for j in [1 .. i * 10]:
-				# 100 bytes each line
-				send "123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789"
-			send ""
-			expect /store-done (blake2#[0-9a-f]*)/ capture ref
+    for i in [0..10]:
+        with p1:
+            # Create blob with (i * 1000) bytes
+            send "store blob"
+            for j in [1 .. i * 10]:
+                # 100 bytes each line
+                send "123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789"
+            send ""
+            expect /store-done (blake2#[0-9a-f]*)/ capture ref
 
-			send "test-message-send 1 $ref"
-			expect /test-message-send done/
-			expect /test-message-received blob ${i*1000} $ref/ from p2
+            send "test-message-send 1 $ref"
+            expect /test-message-send done/
+            expect /test-message-received blob ${i*1000} $ref/ from p2
 
 
 test ManyStreams:
-	let services = "test"
+    let services = "test"
 
-	spawn as p1
-	spawn as p2
-	send "create-identity Device1" to p1
-	send "create-identity Device2" to p2
-	send "start-server services $services" to p1
-	send "start-server services $services" to p2
-	expect from p1:
-		/peer 1 addr ${p2.node.ip} 29665/
-		/peer 1 id Device2/
-	expect from p2:
-		/peer 1 addr ${p1.node.ip} 29665/
-		/peer 1 id Device1/
+    spawn as p1
+    spawn as p2
+    send "create-identity Device1" to p1
+    send "create-identity Device2" to p2
+    send "start-server services $services" to p1
+    send "start-server services $services" to p2
+    expect from p1:
+        /peer 1 addr ${p2.node.ip} 29665/
+        /peer 1 id Device2/
+    expect from p2:
+        /peer 1 addr ${p1.node.ip} 29665/
+        /peer 1 id Device1/
 
-	for i in [0..100]:
-		with p1:
-			# Create blob with 1000 bytes + decimal i
-			send "store blob"
-			for j in [1 .. 10]:
-				# 100 bytes each line
-				send "123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789"
-			send "$i"
-			send ""
-			expect /store-done (blake2#[0-9a-f]*)/ capture ref
+    for i in [0..100]:
+        with p1:
+            # Create blob with 1000 bytes + decimal i
+            send "store blob"
+            for j in [1 .. 10]:
+                # 100 bytes each line
+                send "123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789"
+            send "$i"
+            send ""
+            expect /store-done (blake2#[0-9a-f]*)/ capture ref
 
-			send "test-message-send 1 $ref"
-			expect /test-message-send done/
-			expect /test-message-received blob 100[2-4] $ref/ from p2
+            send "test-message-send 1 $ref"
+            expect /test-message-send done/
+            expect /test-message-received blob 100[2-4] $ref/ from p2
 
 
 test ServiceStreams:
-	let services = "test"
+    let services = "test"
 
-	spawn as p1
-	spawn as p2
-	send "create-identity Device1" to p1
-	send "create-identity Device2" to p2
-	send "start-server services $services test-log" to p1
-	send "start-server services $services test-log" to p2
-	expect from p1:
-		/peer 1 addr ${p2.node.ip} 29665/
-		/peer 1 id Device2/
-	expect from p2:
-		/peer 1 addr ${p1.node.ip} 29665/
-		/peer 1 id Device1/
+    spawn as p1
+    spawn as p2
+    send "create-identity Device1" to p1
+    send "create-identity Device2" to p2
+    send "start-server services $services test-log" to p1
+    send "start-server services $services test-log" to p2
+    expect from p1:
+        /peer 1 addr ${p2.node.ip} 29665/
+        /peer 1 id Device2/
+    expect from p2:
+        /peer 1 addr ${p1.node.ip} 29665/
+        /peer 1 id Device1/
 
-	send "test-stream-open 1" to p1
-	expect /test-stream-open-done 1 ([0-9]+)/ from p1 capture stream1
-	expect /test-stream-open-from 1 $stream1/ from p2
+    send "test-stream-open 1" to p1
+    expect /test-stream-open-done 1 ([0-9]+)/ from p1 capture stream1
+    expect /test-stream-open-from 1 $stream1/ from p2
 
-	expect /net-ostream-open ${p2.node.ip} 29665 1 1/ from p1
+    expect /net-ostream-open ${p2.node.ip} 29665 1 1/ from p1
 
-	send "test-stream-send 1 $stream1 hello" to p1
-	expect /test-stream-send-done 1 $stream1/ from p1
-	expect /test-stream-received 1 $stream1 0 hello/ from p2
+    send "test-stream-send 1 $stream1 hello" to p1
+    expect /test-stream-send-done 1 $stream1/ from p1
+    expect /test-stream-received 1 $stream1 0 hello/ from p2
 
-	send "test-stream-close 1 $stream1" to p1
-	expect /test-stream-close-done 1 $stream1/ from p1
-	expect /test-stream-closed-from 1 $stream1 1/ from p2
+    send "test-stream-close 1 $stream1" to p1
+    expect /test-stream-close-done 1 $stream1/ from p1
+    expect /test-stream-closed-from 1 $stream1 1/ from p2
 
-	expect /net-ostream-close-send ${p2.node.ip} 29665 1/ from p1
-	expect /net-ostream-close-ack ${p2.node.ip} 29665 1 0/ from p1
+    expect /net-ostream-close-send ${p2.node.ip} 29665 1/ from p1
+    expect /net-ostream-close-ack ${p2.node.ip} 29665 1 0/ from p1
 
-	send "test-stream-open 1 8" to p2
-	expect /test-stream-open-done 1 ([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+)/ from p2 capture stream2_1, stream2_2, stream2_3, stream2_4, stream2_5, stream2_6, stream2_7, stream2_8
-	expect /test-stream-open-from 1 $stream2_1 $stream2_2 $stream2_3 $stream2_4 $stream2_5 $stream2_6 $stream2_7 $stream2_8/ from p1
+    send "test-stream-open 1 8" to p2
+    expect /test-stream-open-done 1 ([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+)/ from p2 capture stream2_1, stream2_2, stream2_3, stream2_4, stream2_5, stream2_6, stream2_7, stream2_8
+    expect /test-stream-open-from 1 $stream2_1 $stream2_2 $stream2_3 $stream2_4 $stream2_5 $stream2_6 $stream2_7 $stream2_8/ from p1
 
-	let streams2 = [ stream2_1, stream2_2, stream2_3, stream2_4, stream2_5, stream2_6, stream2_7, stream2_8 ]
-	with p2:
-		expect /net-ostream-open ${p1.node.ip} 29665 . 8/
-		flush matching /net-ostream-open ${p1.node.ip} 29665.*/
+    let streams2 = [ stream2_1, stream2_2, stream2_3, stream2_4, stream2_5, stream2_6, stream2_7, stream2_8 ]
+    with p2:
+        expect /net-ostream-open ${p1.node.ip} 29665 . 8/
+        flush matching /net-ostream-open ${p1.node.ip} 29665.*/
 
-		for i in [ 1..20 ]:
-			for s in streams2:
-				send "test-stream-send 1 $s hello$i"
-		for i in [ 1..20 ]:
-			for s in streams2:
-				expect /test-stream-send-done 1 $s/
-		for s in streams2:
-			send "test-stream-close 1 $s"
-		for s in streams2:
-			expect /test-stream-close-done 1 $s/
+        for i in [ 1..20 ]:
+            for s in streams2:
+                send "test-stream-send 1 $s hello$i"
+        for i in [ 1..20 ]:
+            for s in streams2:
+                expect /test-stream-send-done 1 $s/
+        for s in streams2:
+            send "test-stream-close 1 $s"
+        for s in streams2:
+            expect /test-stream-close-done 1 $s/
 
-		expect /net-ostream-close-ack ${p1.node.ip} 29665 . 0/
-		flush matching /net-ostream-close-[a-z]* ${p1.node.ip} 29665.*/
-	with p1:
-		for i in [ 1..20 ]:
-			for s in streams2:
-				expect /test-stream-received 1 $s ${i-1} hello$i/
-		for s in streams2:
-			expect /test-stream-closed-from 1 $s 20/
+        expect /net-ostream-close-ack ${p1.node.ip} 29665 . 0/
+        flush matching /net-ostream-close-[a-z]* ${p1.node.ip} 29665.*/
+    with p1:
+        for i in [ 1..20 ]:
+            for s in streams2:
+                expect /test-stream-received 1 $s ${i-1} hello$i/
+        for s in streams2:
+            expect /test-stream-closed-from 1 $s 20/
 
 
 test MultipleServiceRefs:
-	let services = "test"
+    let services = "test"
 
-	spawn as p1
-	spawn as p2
-	send "create-identity Device1" to p1
-	send "create-identity Device2" to p2
-	send "start-server services $services" to p1
-	send "start-server services $services" to p2
-	expect from p1:
-		/peer 1 addr ${p2.node.ip} 29665/
-		/peer 1 id Device2/
-	expect from p2:
-		/peer 1 addr ${p1.node.ip} 29665/
-		/peer 1 id Device1/
+    spawn as p1
+    spawn as p2
+    send "create-identity Device1" to p1
+    send "create-identity Device2" to p2
+    send "start-server services $services" to p1
+    send "start-server services $services" to p2
+    expect from p1:
+        /peer 1 addr ${p2.node.ip} 29665/
+        /peer 1 id Device2/
+    expect from p2:
+        /peer 1 addr ${p1.node.ip} 29665/
+        /peer 1 id Device1/
 
-	let kbytes = 2
+    let kbytes = 2
 
-	with p1:
-		send "store blob"
-		send "A"
-		send ""
-		expect /store-done (blake2#[0-9a-f]*)/ capture ref_a
+    with p1:
+        send "store blob"
+        send "A"
+        send ""
+        expect /store-done (blake2#[0-9a-f]*)/ capture ref_a
 
-		# Create blobs with (kbytes * 1000) bytes each
+        # Create blobs with (kbytes * 1000) bytes each
 
-		send "store blob"
-		send "B"
-		for j in [1 .. kbytes * 10]:
-			# 100 bytes each line
-			send "123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789"
-		send ""
-		expect /store-done (blake2#[0-9a-f]*)/ capture ref_b
+        send "store blob"
+        send "B"
+        for j in [1 .. kbytes * 10]:
+            # 100 bytes each line
+            send "123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789"
+        send ""
+        expect /store-done (blake2#[0-9a-f]*)/ capture ref_b
 
-		send "store blob"
-		send "C"
-		for j in [1 .. kbytes * 10]:
-			# 100 bytes each line
-			send "123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789"
-		send ""
-		expect /store-done (blake2#[0-9a-f]*)/ capture ref_c
+        send "store blob"
+        send "C"
+        for j in [1 .. kbytes * 10]:
+            # 100 bytes each line
+            send "123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789"
+        send ""
+        expect /store-done (blake2#[0-9a-f]*)/ capture ref_c
 
-		send "store blob"
-		send "D"
-		for j in [1 .. kbytes * 10]:
-			# 100 bytes each line
-			send "123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789"
-		send ""
-		expect /store-done (blake2#[0-9a-f]*)/ capture ref_d
+        send "store blob"
+        send "D"
+        for j in [1 .. kbytes * 10]:
+            # 100 bytes each line
+            send "123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789 123456789"
+        send ""
+        expect /store-done (blake2#[0-9a-f]*)/ capture ref_d
 
-		send "test-message-send 1 $ref_a $ref_b $ref_c $ref_d"
-		expect /test-message-send done/
-		expect /test-message-received blob [0-9]+ $ref_a/ from p2
-		expect /test-message-received blob [0-9]+ $ref_b/ from p2
-		expect /test-message-received blob [0-9]+ $ref_c/ from p2
-		expect /test-message-received blob [0-9]+ $ref_d/ from p2
+        send "test-message-send 1 $ref_a $ref_b $ref_c $ref_d"
+        expect /test-message-send done/
+        expect /test-message-received blob [0-9]+ $ref_a/ from p2
+        expect /test-message-received blob [0-9]+ $ref_b/ from p2
+        expect /test-message-received blob [0-9]+ $ref_c/ from p2
+        expect /test-message-received blob [0-9]+ $ref_d/ from p2
 
 
 test Reconnection:
-	let services = "test"
+    let services = "test"
 
-	spawn as p1
-	with p1:
-		send "create-identity Device1"
-		send "start-server services $services"
+    spawn as p1
+    with p1:
+        send "create-identity Device1"
+        send "start-server services $services"
 
-	node n
-	local:
-		spawn as p2 on n
-		send "create-identity Device2" to p2
-		send "start-server services $services" to p2
+    node n
+    local:
+        spawn as p2 on n
+        send "create-identity Device2" to p2
+        send "start-server services $services" to p2
 
-		expect from p1:
-			/peer 1 addr ${p2.node.ip} 29665/
-			/peer 1 id Device2/
-		expect from p2:
-			/peer 1 addr ${p1.node.ip} 29665/
-			/peer 1 id Device1/
+        expect from p1:
+            /peer 1 addr ${p2.node.ip} 29665/
+            /peer 1 id Device2/
+        expect from p2:
+            /peer 1 addr ${p1.node.ip} 29665/
+            /peer 1 id Device1/
 
-		with p1:
-			send "store blob"
-			send "message1"
-			send ""
-			expect /store-done (blake2#[0-9a-f]*)/ capture message
+        with p1:
+            send "store blob"
+            send "message1"
+            send ""
+            expect /store-done (blake2#[0-9a-f]*)/ capture message
 
-			send "test-message-send 1 $message"
-			expect /test-message-send done/
-			expect /test-message-received blob [0-9]+ $message/ from p2
+            send "test-message-send 1 $message"
+            expect /test-message-send done/
+            expect /test-message-received blob [0-9]+ $message/ from p2
 
-			send "peer-list"
-			expect /peer-list-item 1 addr ${p2.node.ip} 29665 id Device2/
-			local:
-				expect /peer-list-(.*)/ capture done
-				guard (done == "done")
+            send "peer-list"
+            expect /peer-list-item 1 addr ${p2.node.ip} 29665 id Device2/
+            local:
+                expect /peer-list-(.*)/ capture done
+                guard (done == "done")
 
-	# Restart process on node 'n'
-	local:
-		spawn as p2 on n
-		send "start-server services $services" to p2
-		send "peer-add ${p1.node.ip}" to p2
+    # Restart process on node 'n'
+    local:
+        spawn as p2 on n
+        send "start-server services $services" to p2
+        send "peer-add ${p1.node.ip}" to p2
 
-		expect from p2:
-			/peer 1 addr ${p1.node.ip} 29665/
-			/peer 1 id Device1/
+        expect from p2:
+            /peer 1 addr ${p1.node.ip} 29665/
+            /peer 1 id Device1/
 
-		with p1:
-			send "store blob"
-			send "message2"
-			send ""
-			expect /store-done (blake2#[0-9a-f]*)/ capture message
+        with p1:
+            send "store blob"
+            send "message2"
+            send ""
+            expect /store-done (blake2#[0-9a-f]*)/ capture message
 
-			send "test-message-send 1 $message"
-			expect /test-message-send done/
-			expect /test-message-received blob [0-9]+ $message/ from p2
+            send "test-message-send 1 $message"
+            expect /test-message-send done/
+            expect /test-message-received blob [0-9]+ $message/ from p2
 
-		# Drop and re-add peer p2:
-		with p1:
-			send "peer-list"
-			expect /peer-list-item 1 addr ${p2.node.ip} 29665 id Device2/
-			local:
-				expect /peer-list-(.*)/ capture done
-				guard (done == "done")
+        # Drop and re-add peer p2:
+        with p1:
+            send "peer-list"
+            expect /peer-list-item 1 addr ${p2.node.ip} 29665 id Device2/
+            local:
+                expect /peer-list-(.*)/ capture done
+                guard (done == "done")
 
-			send "peer-drop 1"
-			send "peer-list"
-			local:
-				expect /peer-list-(.*)/ capture done
-				guard (done == "done")
+            send "peer-drop 1"
+            send "peer-list"
+            local:
+                expect /peer-list-(.*)/ capture done
+                guard (done == "done")
 
-			send "peer-add ${p2.node.ip}"
-			expect /peer 2 addr ${p2.node.ip} 29665/
-			expect /peer 2 id Device2/
+            send "peer-add ${p2.node.ip}"
+            expect /peer 2 addr ${p2.node.ip} 29665/
+            expect /peer 2 id Device2/
 
-			send "peer-list"
-			expect /peer-list-item 2 addr ${p2.node.ip} 29665 id Device2/
-			local:
-				expect /peer-list-(.*)/ capture done
-				guard (done == "done")
+            send "peer-list"
+            expect /peer-list-item 2 addr ${p2.node.ip} 29665 id Device2/
+            local:
+                expect /peer-list-(.*)/ capture done
+                guard (done == "done")
 
-			send "store blob"
-			send "message3"
-			send ""
-			expect /store-done (blake2#[0-9a-f]*)/ capture message
+            send "store blob"
+            send "message3"
+            send ""
+            expect /store-done (blake2#[0-9a-f]*)/ capture message
 
-			send "test-message-send 2 $message"
-			expect /test-message-send done/
-			expect /test-message-received blob [0-9]+ $message/ from p2
+            send "test-message-send 2 $message"
+            expect /test-message-send done/
+            expect /test-message-received blob [0-9]+ $message/ from p2
 
-		# Drop on both sides and re-add:
-		with p2:
-			send "peer-list"
-			expect /peer-list-item 1 addr ${p1.node.ip} 29665 id Device1/
-			local:
-				expect /peer-list-(.*)/ capture done
-				guard (done == "done")
+        # Drop on both sides and re-add:
+        with p2:
+            send "peer-list"
+            expect /peer-list-item 1 addr ${p1.node.ip} 29665 id Device1/
+            local:
+                expect /peer-list-(.*)/ capture done
+                guard (done == "done")
 
-			send "peer-drop 1"
-			send "peer-list"
-			local:
-				expect /peer-list-(.*)/ capture done
-				guard (done == "done")
+            send "peer-drop 1"
+            send "peer-list"
+            local:
+                expect /peer-list-(.*)/ capture done
+                guard (done == "done")
 
-		with p1:
-			send "peer-list"
-			expect /peer-list-item 2 addr ${p2.node.ip} 29665 id Device2/
-			local:
-				expect /peer-list-(.*)/ capture done
-				guard (done == "done")
+        with p1:
+            send "peer-list"
+            expect /peer-list-item 2 addr ${p2.node.ip} 29665 id Device2/
+            local:
+                expect /peer-list-(.*)/ capture done
+                guard (done == "done")
 
-			send "peer-drop 2"
-			send "peer-list"
-			local:
-				expect /peer-list-(.*)/ capture done
-				guard (done == "done")
+            send "peer-drop 2"
+            send "peer-list"
+            local:
+                expect /peer-list-(.*)/ capture done
+                guard (done == "done")
 
-		send "peer-add ${p1.node.ip}" to p2
+        send "peer-add ${p1.node.ip}" to p2
 
-		with p2:
-			expect /peer 2 addr ${p1.node.ip} 29665/ from p2
-			expect /peer 2 id Device1/ from p2
+        with p2:
+            expect /peer 2 addr ${p1.node.ip} 29665/ from p2
+            expect /peer 2 id Device1/ from p2
 
-			send "peer-list"
-			expect /peer-list-item 2 addr ${p1.node.ip} 29665 id Device1/
-			local:
-				expect /peer-list-(.*)/ capture done
-				guard (done == "done")
+            send "peer-list"
+            expect /peer-list-item 2 addr ${p1.node.ip} 29665 id Device1/
+            local:
+                expect /peer-list-(.*)/ capture done
+                guard (done == "done")
 
-			send "store blob"
-			send "message4"
-			send ""
-			expect /store-done (blake2#[0-9a-f]*)/ capture message
+            send "store blob"
+            send "message4"
+            send ""
+            expect /store-done (blake2#[0-9a-f]*)/ capture message
 
-			send "test-message-send 2 $message"
-			expect /test-message-send done/
+            send "test-message-send 2 $message"
+            expect /test-message-send done/
 
-			with p1:
-				expect /peer 3 addr ${p2.node.ip} 29665/
-				expect /peer 3 id Device2/
+            with p1:
+                expect /peer 3 addr ${p2.node.ip} 29665/
+                expect /peer 3 id Device2/
 
-				send "peer-list"
-				expect /peer-list-item 3 addr ${p2.node.ip} 29665 id Device2/
-				local:
-					expect /peer-list-(.*)/ capture done
-					guard (done == "done")
+                send "peer-list"
+                expect /peer-list-item 3 addr ${p2.node.ip} 29665 id Device2/
+                local:
+                    expect /peer-list-(.*)/ capture done
+                    guard (done == "done")
 
-				expect /test-message-received blob [0-9]+ $message/
+                expect /test-message-received blob [0-9]+ $message/
 
 
 test SendUnknownObjectType:
-	let services = "test"
-	let refpat = /blake2#[0-9a-f]*/
+    let services = "test"
+    let refpat = /blake2#[0-9a-f]*/
 
-	spawn as p1
-	spawn as p2
+    spawn as p1
+    spawn as p2
 
-	with p1:
-		send "create-identity Device1"
-		send "start-server services $services"
-	with p2:
-		send "create-identity Device2"
-		send "start-server services $services"
+    with p1:
+        send "create-identity Device1"
+        send "start-server services $services"
+    with p2:
+        send "create-identity Device2"
+        send "start-server services $services"
 
-	expect from p1:
-		/peer 1 addr ${p2.node.ip} 29665/
-		/peer 1 id Device2/
-	expect from p2:
-		/peer 1 addr ${p1.node.ip} 29665/
-		/peer 1 id Device1/
+    expect from p1:
+        /peer 1 addr ${p2.node.ip} 29665/
+        /peer 1 id Device2/
+    expect from p2:
+        /peer 1 addr ${p1.node.ip} 29665/
+        /peer 1 id Device1/
 
-	with p1:
-		send:
-			"store test-unknown"
-			"TEST"
-			""
-		expect /store-done ($refpat)/ capture r1
+    with p1:
+        send:
+            "store test-unknown"
+            "TEST"
+            ""
+        expect /store-done ($refpat)/ capture r1
 
-		send:
-			"store rec"
-			"test:unknown TEST"
-			""
-		expect /store-done ($refpat)/ capture r2
+        send:
+            "store rec"
+            "test:unknown TEST"
+            ""
+        expect /store-done ($refpat)/ capture r2
 
-		send "test-message-send 1 $r1"
-		expect /test-message-send done/
+        send "test-message-send 1 $r1"
+        expect /test-message-send done/
 
-		with p2:
-			expect /test-message-received test-unknown [0-9]+ $r1/
+        with p2:
+            expect /test-message-received test-unknown [0-9]+ $r1/
 
-			send "load $r1"
-			expect /load-type test-unknown 5/
-			expect /load-line TEST/
-			local:
-				expect /load-(.*)/ capture done
-				guard (done == "done")
+            send "load $r1"
+            expect /load-type test-unknown 5/
+            expect /load-line TEST/
+            local:
+                expect /load-(.*)/ capture done
+                guard (done == "done")
 
-		send "test-message-send 1 $r2"
-		expect /test-message-send done/
+        send "test-message-send 1 $r2"
+        expect /test-message-send done/
 
-		with p2:
-			expect /test-message-received rec [0-9]+ $r2/
+        with p2:
+            expect /test-message-received rec [0-9]+ $r2/
 
-			send "load $r2"
-			expect /load-type rec [0-9]+/
-			expect /load-line test:unknown TEST/
-			local:
-				expect /load-(.*)/ capture done
-				guard (done == "done")
+            send "load $r2"
+            expect /load-type rec [0-9]+/
+            expect /load-line test:unknown TEST/
+            local:
+                expect /load-(.*)/ capture done
+                guard (done == "done")
