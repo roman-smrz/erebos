@@ -514,3 +514,26 @@ test SendUnknownObjectType:
             local:
                 expect /load-(.*)/ capture done
                 guard (done == "done")
+
+
+test ConnectToSelf:
+    subnet s1
+    subnet s2
+
+    spawn on s1 as p1
+    spawn on s2 as p2
+
+    send "create-identity Device1" to p1
+    send "create-identity Device2" to p2
+
+    for p in [ p1, p2 ]:
+        with p:
+            expect /create-identity-done .*/
+            send "start-server"
+
+            # no peer should be added:
+            send "peer-add ${p.node.ip}"
+
+    send "peer-add ${p2.node.ip}" to p1
+    expect /peer 1 addr ${p2.node.ip} 29665/ from p1
+    expect /peer 1 addr ${p1.node.ip} 29665/ from p2
