@@ -738,18 +738,20 @@ processPacket gs@GlobalState {..} econn secure packet@(TransportPacket (Transpor
             _ -> return Nothing
 
     -- Initiation packet
-    | _:_ <- mapMaybe (\case Initiation x -> Just x; _ -> Nothing) header
+    | _ : _ <- mapMaybe (\case Initiation x -> Just x; _ -> Nothing) header
+    , pids <- mapMaybe (\case AnnounceSelf x -> Just x; _ -> Nothing) header
     , Just ver <- version
     -> do
         cookie <- createCookie gs addr
         atomically $ do
             identity <- fst <$> readTVar gIdentity
-            let reply = BL.toStrict $ serializeObject $ transportToObject gStorage $ TransportHeader
-                    [ CookieSet cookie
-                    , AnnounceSelf $ refDigest $ storedRef $ idData identity
-                    , ProtocolVersion ver
-                    ]
-            writeFlow gDataFlow (addr, reply)
+            when ((refDigest $ storedRef $ idData identity) `notElem` pids) $ do
+                let reply = BL.toStrict $ serializeObject $ transportToObject gStorage $ TransportHeader
+                        [ CookieSet cookie
+                        , AnnounceSelf $ refDigest $ storedRef $ idData identity
+                        , ProtocolVersion ver
+                        ]
+                writeFlow gDataFlow (addr, reply)
         return Nothing
 
     -- Announce packet outside any connection
