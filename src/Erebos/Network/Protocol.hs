@@ -17,6 +17,7 @@ module Erebos.Network.Protocol (
     ControlMessage(..),
     erebosNetworkProtocol,
 
+    ProtocolAddressType(..),
     Connection,
     connAddress,
     connData,
@@ -210,6 +211,9 @@ transportFromObject (Rec items) = case catMaybes $ map single items of
 transportFromObject _ = Nothing
 
 
+class ProtocolAddressType addr where
+    addrIsReliableTransport :: addr -> Bool
+
 data GlobalState addr = (Eq addr, Show addr) => GlobalState
     { gIdentity :: TVar (UnifiedIdentity, [UnifiedIdentity])
     , gConnections :: TVar [Connection addr]
@@ -246,6 +250,7 @@ data Connection addr = Connection
     , cNextKeepAlive :: TVar (Maybe TimeSpec)
     , cInStreams :: TVar [(Word8, Stream)]
     , cOutStreams :: TVar [(Word8, Stream)]
+    , cIsReliable :: Bool
     }
 
 instance Eq (Connection addr) where
@@ -517,7 +522,7 @@ data ControlMessage addr = NewConnection (Connection addr) (Maybe RefDigest)
                          | ReceivedAnnounce addr RefDigest
 
 
-erebosNetworkProtocol :: (Eq addr, Ord addr, Show addr)
+erebosNetworkProtocol :: (Eq addr, Ord addr, Show addr, ProtocolAddressType addr)
                       => UnifiedIdentity
                       -> (String -> STM ())
                       -> (String -> STM ())
@@ -562,7 +567,7 @@ erebosNetworkProtocol initialIdentity gLog gTestLog gDataFlow gControlFlow = do
         catch io $ \(e :: SomeException) -> atomically $ gLog $ "exception during network protocol handling: " <> show e
 
 
-getConnection :: GlobalState addr -> addr -> STM (Connection addr)
+getConnection :: ProtocolAddressType addr => GlobalState addr -> addr -> STM (Connection addr)
 getConnection gs addr = do
     maybe (newConnection gs addr) return =<< findConnection gs addr
 
@@ -570,11 +575,12 @@ findConnection :: GlobalState addr -> addr -> STM (Maybe (Connection addr))
 findConnection GlobalState {..} addr = do
     find ((addr==) . cAddress) <$> readTVar gConnections
 
-newConnection :: GlobalState addr -> addr -> STM (Connection addr)
+newConnection :: ProtocolAddressType addr => GlobalState addr -> addr -> STM (Connection addr)
 newConnection cGlobalState@GlobalState {..} addr = do
     conns <- readTVar gConnections
 
     let cAddress = addr
+        cIsReliable = addrIsReliableTransport addr
     (cDataUp, cDataInternal) <- newFlow
     cChannel <- newTVar ChannelNone
     cCookie <- newTVar Nothing
@@ -598,7 +604,7 @@ passUpIncoming GlobalState {..} = do
     writeFlow cDataInternal (Just up)
     return $ return ()
 
-processIncoming :: GlobalState addr -> STM (IO ())
+processIncoming :: ProtocolAddressType addr => GlobalState addr -> STM (IO ())
 processIncoming gs@GlobalState {..} = do
     guard =<< isEmptyTMVar gNextUp
     guard =<< canWriteFlow gControlFlow
@@ -697,7 +703,7 @@ processIncoming gs@GlobalState {..} = do
             Left err -> do
                 atomically $ gLog $ show addr <> ": failed to parse packet: " <> showErebosError err
 
-processPacket :: GlobalState addr -> Either addr (Connection addr) -> Bool -> TransportPacket a -> IO (Maybe (Connection addr, Maybe (TransportPacket a)))
+processPacket :: ProtocolAddressType addr => GlobalState addr -> Either addr (Connection addr) -> Bool -> TransportPacket a -> IO (Maybe (Connection addr, Maybe (TransportPacket a)))
 processPacket gs@GlobalState {..} econn secure packet@(TransportPacket (TransportHeader header) _) = if
     -- Established secure communication
     | Right conn <- econn, secure
@@ -875,7 +881,7 @@ updateKeepAlive Connection {..} now = do
     writeTVar cNextKeepAlive $ Just next
 
 
-processOutgoing :: forall addr. GlobalState addr -> STM (IO ())
+processOutgoing :: forall addr. ProtocolAddressType addr => GlobalState addr -> STM (IO ())
 processOutgoing gs@GlobalState {..} = do
 
     let sendNextPacket :: Connection addr -> STM (IO ())
@@ -1026,7 +1032,7 @@ processOutgoing gs@GlobalState {..} = do
 
     conns <- readTVar gConnections
     msum $ concat $
-        [ map retransmitPacket conns
+        [ map retransmitPacket $ filter (not . cIsReliable) conns
         , map sendNextPacket conns
         , [ handleControlRequests ]
         , map sendKeepAlive conns

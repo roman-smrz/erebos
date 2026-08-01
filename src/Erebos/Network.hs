@@ -180,6 +180,8 @@ instance Eq Peer where
 class (Eq addr, Ord addr, Show addr, Typeable addr) => PeerAddressType addr where
     sendBytesToAddress :: addr -> ByteString -> IO ()
     connectionToAddressClosed :: addr -> IO ()
+    isReliableTransport :: proxy addr -> Bool
+    isReliableTransport _ = False
 
 data PeerAddress
     = forall addr. PeerAddressType addr => CustomPeerAddress addr
@@ -207,6 +209,11 @@ instance Ord PeerAddress where
     compare _                        (CustomPeerAddress _    ) = GT
 
     compare (DatagramAddress addr) (DatagramAddress addr') = compare addr addr'
+
+instance ProtocolAddressType PeerAddress where
+    addrIsReliableTransport = \case
+        CustomPeerAddress (_ :: a) -> isReliableTransport (Proxy @a)
+        DatagramAddress _ -> False
 
 
 data PeerIdentity
