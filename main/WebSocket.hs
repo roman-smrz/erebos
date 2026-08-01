@@ -39,6 +39,8 @@ instance PeerAddressType WebSocketAddress where
             | Just WS.ConnectionClosed <- fromException e -> return ()
             | otherwise -> throwIO e
 
+    isReliableTransport _ = True
+
 
 data WebSocketOptions = WebSocketOptions
     { wsAddress :: String
