@@ -109,7 +109,9 @@ someServiceEmptyGlobalState (SomeService p _) = SomeServiceGlobalState p (emptyS
 
 data SomeStorageWatcher s
     = forall a. Eq a => SomeStorageWatcher (Stored LocalState -> a) (a -> ServiceHandler s ())
+    | forall a. Eq a => SomeStorageWatcherHC (Stored LocalState -> HeadCacheType LocalState -> a) (a -> ServiceHandler s ())
     | forall a. Eq a => GlobalStorageWatcher (Stored LocalState -> a) (Server -> a -> ExceptT ErebosError IO ())
+    | forall a. Eq a => GlobalStorageWatcherH (Head LocalState -> a) (Server -> a -> ExceptT ErebosError IO ())
 
 
 mkServiceID :: String -> ServiceID

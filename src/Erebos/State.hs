@@ -11,7 +11,7 @@ module Erebos.State (
 
     updateLocalState, updateLocalState_,
     updateSharedState, updateSharedState_,
-    lookupSharedValueH, lookupSharedValueM,
+    lookupSharedValueH, lookupSharedValueHC, lookupSharedValueM,
     lookupSharedValue, makeSharedStateUpdate,
 
     localIdentity,
@@ -233,6 +233,9 @@ lookupSharedValueC = mergeSorted . filterAncestors . map wrappedLoad . concatMap
 
 lookupSharedValueH :: forall a. SharedType a => Head LocalState -> a
 lookupSharedValueH = lookupSharedValueC . headCache
+
+lookupSharedValueHC :: forall a. SharedType a => Stored LocalState -> HeadCacheType LocalState -> a
+lookupSharedValueHC _ = lookupSharedValueC
 
 lookupSharedValueM :: forall a m. (SharedType a, MonadHead LocalState m) => m a
 lookupSharedValueM = lookupSharedValueC <$> getLocalHeadCache @LocalState Proxy

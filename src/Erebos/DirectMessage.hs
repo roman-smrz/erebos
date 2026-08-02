@@ -152,8 +152,8 @@ instance Service DirectMessage where
         updateDirectMessagePeer . finalOwner =<< asks svcPeerIdentity
 
     serviceStorageWatchers _ =
-        [ SomeStorageWatcher (lookupSharedValue . lsShared . fromStored) syncDirectMessageToPeer
-        , GlobalStorageWatcher (lookupSharedValue . lsShared . fromStored) findMissingPeers
+        [ SomeStorageWatcherHC lookupSharedValueHC syncDirectMessageToPeer
+        , GlobalStorageWatcherH lookupSharedValueH findMissingPeers
         ]
 
 

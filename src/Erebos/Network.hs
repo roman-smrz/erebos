@@ -75,6 +75,7 @@ import Erebos.Service
 import Erebos.State
 import Erebos.Storable.Internal
 import Erebos.Storage
+import Erebos.Storage.Head
 import Erebos.Storage.Key
 import Erebos.Storage.Merge
 
@@ -346,8 +347,19 @@ startServer serverOptions serverOrigHead logd' serverServices = do
                                     PeerIdentityFull _ -> writeTQueue serverIOActions $ do
                                         runPeerService peer $ act . sel =<< svcGetLocal
                                     _ -> return ()
+                    SomeStorageWatcherHC sel act -> do
+                        watchHeadWith serverOrigHead (\h -> sel (headStoredObject h) (headCache h)) $ \_ -> do
+                            withMVar serverPeers $ mapM_ $ \peer -> atomically $ do
+                                readTVar (peerIdentityVar peer) >>= \case
+                                    PeerIdentityFull _ -> writeTQueue serverIOActions $ do
+                                        runPeerService peer $ act =<< (sel <$> getLocalHead <*> getLocalHeadCache @LocalState Proxy)
+                                    _ -> return ()
                     GlobalStorageWatcher sel act -> do
                         watchHeadWith serverOrigHead (sel . headStoredObject) $ \x -> do
+                            atomically $ writeTQueue serverIOActions $ do
+                                act server x
+                    GlobalStorageWatcherH sel act -> do
+                        watchHeadWith serverOrigHead sel $ \x -> do
                             atomically $ writeTQueue serverIOActions $ do
                                 act server x
 
