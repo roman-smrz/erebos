@@ -9,7 +9,9 @@ module Erebos.Storage.Head (
     -- * Head type and accessors
     Head, HeadType(..),
     HeadID, HeadTypeID, mkHeadTypeID,
-    headId, headStorage, headRef, headObject, headStoredObject,
+    headId, headStorage,
+    headRef, headObject, headStoredObject,
+    headCache,
 
     -- * Loading and storing heads
     loadHeads, loadHead, reloadHead,
@@ -27,6 +29,7 @@ import Control.Monad
 import Control.Monad.Reader
 
 import Data.Bifunctor
+import Data.Kind
 import Data.Typeable
 
 import Erebos.Object.Internal
@@ -42,8 +45,15 @@ import Erebos.UUID qualified as U
 -- Each possible head type has associated unique ID, represented as
 -- `HeadTypeID'. For each type, there can be multiple individual heads in given
 -- storage, each also identified by unique ID (`HeadID').
-data Head a = Head HeadID (Stored a)
-    deriving (Eq, Show)
+data Head a = Head HeadID (Stored a) !(HeadCacheType a)
+
+instance Eq (Head a) where
+    h == h'  =  headId h == headId h' &&
+        headStorage h == headStorage h' &&
+        headStoredObject h == headStoredObject h'
+
+instance Show (Head a) where
+    show h = "Head " <> show (headId h) <> " " <> show (storedRef $ headStoredObject h)
 
 -- | Instances of this class can be used as objects pointed to by heads in
 -- Erebos storage. Each such type must be `Storable' and have a unique ID.
@@ -57,13 +67,28 @@ class Storable a => HeadType a where
     headTypeID :: proxy a -> HeadTypeID
     -- ^ Get the ID of the given head type; must be unique for each `HeadType' instance.
 
+    type HeadCacheType a :: Type
+    type HeadCacheType a = ()
+
+    headCacheInit :: Stored a -> HeadCacheType a
+    default headCacheInit :: HeadCacheType a ~ () => Stored a -> HeadCacheType a
+    headCacheInit _ = ()
+
+    headCacheUpdate :: Stored a -> HeadCacheType a -> HeadCacheType a
+    default headCacheUpdate :: HeadCacheType a ~ () => Stored a -> HeadCacheType a -> HeadCacheType a
+    headCacheUpdate _ _ = ()
+
 instance MonadIO m => MonadStorage (ReaderT (Head a) m) where
     getStorage = asks $ headStorage
 
 
+initHead :: HeadType a => HeadID -> Stored a -> Head a
+initHead hid obj = Head hid obj (headCacheInit obj)
+
+
 -- | Get `HeadID' associated with given `Head'.
 headId :: Head a -> HeadID
-headId (Head uuid _) = uuid
+headId (Head uuid _ _) = uuid
 
 -- | Get storage from which the `Head' was loaded.
 headStorage :: Head a -> Storage
@@ -71,15 +96,18 @@ headStorage = refStorage . headRef
 
 -- | Get `Ref' of the `Head'\'s associated object.
 headRef :: Head a -> Ref
-headRef (Head _ sx) = storedRef sx
+headRef (Head _ sx _) = storedRef sx
 
 -- | Get the object the `Head' pointed to when it was loaded.
 headObject :: Head a -> a
-headObject (Head _ sx) = fromStored sx
+headObject (Head _ sx _) = fromStored sx
 
 -- | Get the object the `Head' pointed to when it was loaded as a `Stored' value.
 headStoredObject :: Head a -> Stored a
-headStoredObject (Head _ sx) = sx
+headStoredObject (Head _ sx _) = sx
+
+headCache :: Head a -> HeadCacheType a
+headCache (Head _ _ cache) = cache
 
 -- | Create `HeadTypeID' from string representation of UUID.
 mkHeadTypeID :: String -> HeadTypeID
@@ -89,7 +117,7 @@ mkHeadTypeID = maybe (error "Invalid head type ID") HeadTypeID . U.fromString
 -- | Load all `Head's of type @a@ from storage.
 loadHeads :: forall a m. MonadIO m => HeadType a => Storage -> m [Head a]
 loadHeads st@Storage {..} =
-    map (uncurry Head . fmap (wrappedLoad . Ref st))
+    map (uncurry initHead . fmap (wrappedLoad . Ref st))
         <$> liftIO (backendLoadHeads stBackend (headTypeID @a Proxy))
 
 -- | Try to load a `Head' of type @a@ from storage.
@@ -98,7 +126,7 @@ loadHead
     => Storage  -- ^ Storage from which to load the head
     -> HeadID  -- ^ ID of the particular head
     -> m (Maybe (Head a))  -- ^ Head object, or `Nothing' if not found
-loadHead st hid = fmap (Head hid . wrappedLoad) <$> loadHeadRaw st (headTypeID @a Proxy) hid
+loadHead st hid = fmap (initHead hid . wrappedLoad) <$> loadHeadRaw st (headTypeID @a Proxy) hid
 
 -- | Try to load `Head' using a raw head and type IDs, getting `Ref' if found.
 loadHeadRaw
@@ -112,8 +140,15 @@ loadHeadRaw st@Storage {..} tid hid = do
 
 -- | Reload the given head from storage, returning `Head' with updated object,
 -- or `Nothing' if there is no longer head with the particular ID in storage.
-reloadHead :: (HeadType a, MonadIO m) => Head a -> m (Maybe (Head a))
-reloadHead (Head hid val) = loadHead (storedStorage val) hid
+reloadHead :: forall a m. (HeadType a, MonadIO m) => Head a -> m (Maybe (Head a))
+reloadHead orig@(Head hid val cache) = do
+    loadHeadRaw (storedStorage val) (headTypeID @a Proxy) hid >>= \case
+        Just ref
+            | ref == storedRef val -> return $ Just orig
+            | otherwise -> do
+                let obj = wrappedLoad ref
+                return $ Just $ Head hid obj (headCacheUpdate obj cache)
+        Nothing -> return Nothing
 
 -- | Store a new `Head' of type 'a' in the storage.
 storeHead :: forall a m. MonadIO m => HeadType a => Storage -> a -> m (Head a)
@@ -121,7 +156,7 @@ storeHead st obj = do
     let tid = headTypeID @a Proxy
     stored <- wrappedStore st obj
     hid <- storeHeadRaw st tid (storedRef stored)
-    return $ Head hid stored
+    return $ initHead hid stored
 
 -- | Store a new `Head' in the storage, using the raw `HeadTypeID' and `Ref',
 -- the function returns the assigned `HeadID' of the new head.
@@ -149,12 +184,18 @@ replaceHead
         --     Head value was updated in storage, the new head is @h@ (which is
         --     the same as first parameter with associated object replaced by
         --     the second parameter).
-replaceHead prev@(Head hid pobj) stored' = liftIO $ do
+replaceHead prev@(Head hid pobj cache) stored' = liftIO $ do
     let st = headStorage prev
         tid = headTypeID @a Proxy
     stored <- copyStored st stored'
-    bimap (fmap $ Head hid . wrappedLoad) (const $ Head hid stored) <$>
-        replaceHeadRaw st tid hid (storedRef pobj) (storedRef stored)
+    replaceHeadRaw st tid hid (storedRef pobj) (storedRef stored) >>= \case
+        Left Nothing -> do
+            return $ Left Nothing
+        Left (Just r) -> do
+            let obj = wrappedLoad r
+            return $ Left $ Just $ Head hid obj (headCacheUpdate obj cache)
+        Right _ -> do
+            return $ Right $ Head hid stored (headCacheUpdate stored cache)
 
 -- | Try to replace existing head using raw IDs and `Ref's.
 replaceHeadRaw
@@ -232,8 +273,27 @@ watchHeadWith
     -> (Head a -> b)  -- ^ Selector function
     -> (b -> IO ())  -- ^ Callback
     -> IO WatchedHead  -- ^ Watched head handle
-watchHeadWith (Head hid val) sel cb = do
-    watchHeadRaw (storedStorage val) (headTypeID @a Proxy) hid (sel . Head hid . wrappedLoad) cb
+watchHeadWith orig@(Head hid val _) sel cb = do
+    let st = storedStorage val
+
+    memo <- newEmptyMVar
+    let cb' dgst = do
+            let obj = wrappedLoad $ Ref st dgst
+            modifyMVar_ memo $ \( cache, prev ) -> do
+                let cache' = maybe (headCacheInit obj) (headCacheUpdate obj) cache
+                let x = sel $ Head hid obj cache'
+                when (Just x /= prev) $ cb x
+                return ( Just cache', Just x )
+    wid <- case storedStorage val of
+        Storage {..} -> backendWatchHead stBackend (headTypeID @a Proxy) hid cb'
+
+    h <- reloadHead orig
+    let cur = sel <$> h
+    maybe (return ()) cb cur
+    putMVar memo ( headCache <$> h, cur )
+
+    return $ WatchedHead st wid memo
+
 
 -- | Watch the given head using raw IDs and a selector from `Ref'.
 watchHeadRaw :: forall b. Eq b => Storage -> HeadTypeID -> HeadID -> (Ref -> b) -> (b -> IO ()) -> IO WatchedHead
