@@ -5,7 +5,7 @@ module Erebos.Storable.Internal (
     Stored(..),
     fromStored, storedRef,
     storedStorage,
-    wrappedStore, wrappedLoad,
+    wrappedStore, wrappedLoad, loadFromObject,
     copyStored,
     unsafeMapStored,
 
@@ -60,6 +60,9 @@ wrappedStore st x = do ref <- liftIO $ store st x
 
 wrappedLoad :: Storable a => Ref -> Stored a
 wrappedLoad ref = Stored ref (load ref)
+
+loadFromObject :: Storable a => Stored Object -> Stored a
+loadFromObject (Stored ref obj) = Stored ref (evalLoadWithObject load' ref obj)
 
 copyStored :: forall m a. MonadIO m => Storage -> Stored a -> m (Stored a)
 copyStored st (Stored ref' x) = liftIO $ returnLoadResult . fmap (\r -> Stored r x) <$> copyRef' st ref'

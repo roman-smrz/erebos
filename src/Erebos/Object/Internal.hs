@@ -30,7 +30,7 @@ module Erebos.Object.Internal (
     storeRecItems,
 
     Load, LoadRec,
-    evalLoad,
+    evalLoad, evalLoadWithObject,
     loadCurrentRef, loadCurrentObject,
     loadRecCurrentRef, loadRecItems,
 
@@ -454,8 +454,11 @@ newtype Load a = Load (ReaderT (Ref, Object) (Except ErebosError) a)
     deriving (Functor, Applicative, Alternative, Monad, MonadPlus, MonadError ErebosError)
 
 evalLoad :: Load a -> Ref -> a
-evalLoad (Load f) ref = either (error {- TODO throw -} . ((BC.unpack (showRef ref) ++ ": ") ++) . showErebosError) id $
-    runExcept $ runReaderT f (ref, lazyLoadObject ref)
+evalLoad act ref = evalLoadWithObject act ref (lazyLoadObject ref)
+
+evalLoadWithObject :: Load a -> Ref -> Object -> a
+evalLoadWithObject (Load f) ref obj = either (error {- TODO throw -} . ((BC.unpack (showRef ref) ++ ": ") ++) . showErebosError) id $
+    runExcept $ runReaderT f ( ref, obj )
 
 loadCurrentRef :: Load Ref
 loadCurrentRef = Load $ asks fst
