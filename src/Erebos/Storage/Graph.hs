@@ -4,6 +4,7 @@ module Erebos.Storage.Graph (
     compareGeneration, generationMax,
     storedGeneration,
 
+    StoredTips,
     generations, generationsBy,
     ancestors,
     precedes,

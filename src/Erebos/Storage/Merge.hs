@@ -7,6 +7,7 @@ module Erebos.Storage.Merge (
     compareGeneration, generationMax,
     storedGeneration,
 
+    StoredTips,
     generations, generationsBy,
     ancestors,
     precedes,

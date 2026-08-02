@@ -25,6 +25,9 @@ import Control.Monad.Reader
 import Data.Bifunctor
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as BC
+import Data.Foldable
+import Data.Map.Strict qualified as MS
+import Data.Maybe
 import Data.Typeable
 
 import Erebos.Identity
@@ -35,11 +38,12 @@ import Erebos.Storage.Head
 import Erebos.Storage.Merge
 import Erebos.UUID (UUID)
 import Erebos.UUID qualified as U
+import Erebos.Util
 
 data LocalState = LocalState
     { lsPrev :: Maybe RefDigest
     , lsIdentity :: Stored (Signed ExtendedIdentityData)
-    , lsShared :: [Stored SharedState]
+    , lsShared :: [ Stored SharedState ]
     , lsOther :: [ ( ByteString, RecItem ) ]
     }
 
@@ -74,6 +78,21 @@ instance Storable LocalState where
 
 instance HeadType LocalState where
     headTypeID _ = mkHeadTypeID "1d7491a9-7bcb-4eaa-8f13-c8c4c4087e4e"
+    type HeadCacheType LocalState = LocalStateCache
+    headCacheInit sls =
+        let LocalState {..} = fromStored sls
+            sharedCache = MS.fromAscList $ map (\sid -> ( sid, lookupSharedValueObjects sid [] lsShared )) $ collectSharedTypeIDs [] lsShared
+         in LocalStateCache lsShared sharedCache
+    headCacheUpdate sls prev =
+        let LocalState {..} = fromStored sls
+            sids = collectSharedTypeIDs (lscSharedTips prev) lsShared
+            upd cache sid = MS.insertWith (\ss ss' -> filterAncestors (ss ++ ss')) sid (lookupSharedValueObjects sid (lscSharedTips prev) lsShared) cache
+         in LocalStateCache lsShared (foldl' upd (lscSharedCache prev) sids)
+
+data LocalStateCache = LocalStateCache
+    { lscSharedTips :: [ Stored SharedState ]
+    , lscSharedCache :: MS.Map SharedTypeID (StoredTips SharedState)
+    }
 
 instance Storable SharedState where
     store' st = storeRec $ do
@@ -166,11 +185,26 @@ updateSharedState f = \ls -> do
                 else do shared' <- makeSharedStateUpdate val' shared
                         mstore (fromStored ls) { lsShared = [shared'] }
 
-lookupSharedValue :: forall a. SharedType a => [Stored SharedState] -> a
-lookupSharedValue = mergeSorted . filterAncestors . map wrappedLoad . concatMap (ssValue . fromStored) . filterAncestors . helper
-    where helper (x:xs) | Just sid <- ssType (fromStored x), sid == sharedTypeID @a Proxy = x : helper xs
-                        | otherwise = helper $ ssPrev (fromStored x) ++ xs
-          helper [] = []
+
+collectSharedTypeIDs :: [ Stored SharedState ] -> [ Stored SharedState ] -> [ SharedTypeID ]
+collectSharedTypeIDs since (x : xs)
+    | any (x `precedesOrEquals`) since
+    = collectSharedTypeIDs since xs
+    | otherwise
+    = maybeToList (ssType (fromStored x)) `mergeUniq` collectSharedTypeIDs since (ssPrev (fromStored x) ++ xs)
+collectSharedTypeIDs _ [] = []
+
+lookupSharedValueObjects :: SharedTypeID -> [ Stored SharedState ] -> [ Stored SharedState ] -> StoredTips SharedState
+lookupSharedValueObjects sid since = filterAncestors . helper
+  where
+    helper (x : xs)
+        | any (x `precedesOrEquals`) since = helper xs
+        | ssType (fromStored x) == Just sid = x : helper xs
+        | otherwise = helper $ ssPrev (fromStored x) ++ xs
+    helper [] = []
+
+lookupSharedValue :: forall a. SharedType a => [ Stored SharedState ] -> a
+lookupSharedValue = mergeSorted . filterAncestors . map wrappedLoad . concatMap (ssValue . fromStored) . lookupSharedValueObjects (sharedTypeID @a Proxy) []
 
 makeSharedStateUpdate :: forall a m. (SharedType a, MonadStorage m) => a -> [ Stored SharedState ] -> m (Stored SharedState)
 makeSharedStateUpdate val prev = mstore SharedState
