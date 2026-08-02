@@ -15,7 +15,7 @@ module Erebos.Storage.Head (
 
     -- * Loading and storing heads
     loadHeads, loadHead, reloadHead,
-    storeHead, replaceHead, updateHead, updateHead_,
+    storeHead, replaceHead, updateHead, updateHead', updateHead_,
     loadHeadRaw, storeHeadRaw, replaceHeadRaw,
 
     -- * Watching heads
@@ -233,12 +233,28 @@ updateHead
         -- ^ First element contains either the new head as @`Just' h@, or
         -- `Nothing' in case the head no longer exists in storage. Second
         -- element is the value from last call to the update function.
-updateHead h f = do
-    (o, x) <- f $ headStoredObject h
+updateHead h f = updateHead' h (f . headStoredObject)
+
+-- | Update existing existing `Head' of type @a@ in the storage, using a given
+-- function. The update function may be called multiple times in case the head
+-- content changes concurrently during evaluation.
+updateHead'
+    :: (HeadType a, MonadIO m)
+    => Head a  -- ^ Existing head to be updated
+    -> (Head a -> m ( Stored a, b ))
+        -- ^ Function that gets current value of the head and returns updated
+        -- value, along with a custom extra value to be returned from
+        -- `updateHead' call. The function may be called multiple times.
+    -> m ( Maybe (Head a), b )
+        -- ^ First element contains either the new head as @`Just' h@, or
+        -- `Nothing' in case the head no longer exists in storage. Second
+        -- element is the value from last call to the update function.
+updateHead' h f = do
+    (o, x) <- f h
     replaceHead h o >>= \case
         Right h' -> return (Just h', x)
         Left Nothing -> return (Nothing, x)
-        Left (Just h') -> updateHead h' f
+        Left (Just h') -> updateHead' h' f
 
 -- | Update existing existing `Head' of type @a@ in the storage, using a given
 -- function. The update function may be called multiple times in case the head

@@ -120,7 +120,7 @@ updateLocalHead_ f = updateLocalHead (fmap (,()) . f)
 instance (HeadType a, MonadIO m) => MonadHead a (ReaderT (Head a) m) where
     updateLocalHead f = do
         h <- ask
-        snd <$> updateHead h f
+        snd <$> updateHead' h (\h' -> local (const h') (f $ headStoredObject h'))
 
 
 newtype LocalHeadT h m a = LocalHeadT { runLocalHeadT :: Storage -> Stored h -> m ( a, Stored h ) }

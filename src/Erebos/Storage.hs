@@ -14,7 +14,7 @@ module Erebos.Storage (
     HeadID, HeadTypeID,
     headId, headStorage, headRef, headObject, headStoredObject,
     loadHeads, loadHead, reloadHead,
-    storeHead, replaceHead, updateHead, updateHead_,
+    storeHead, replaceHead, updateHead, updateHead', updateHead_,
 
     WatchedHead,
     watchHead, watchHeadWith, unwatchHead,

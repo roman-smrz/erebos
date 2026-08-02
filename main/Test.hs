@@ -282,8 +282,10 @@ instance MonadStorage CommandM where
 
 instance MonadHead LocalState CommandM where
     updateLocalHead f = do
-        Just h <- gets tsHead
-        (Just h', x) <- maybe (fail "failed to reload head") (flip updateHead f) =<< reloadHead h
+        h <- maybe (fail "failed to reload head") return =<< reloadHead =<< getOrLoadHead
+        ( Just h', x ) <- updateHead' h $ \h' -> do
+            modify $ \s -> s { tsHead = Just h' }
+            f (headStoredObject h')
         modify $ \s -> s { tsHead = Just h' }
         return x
 
