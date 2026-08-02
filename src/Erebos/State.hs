@@ -10,6 +10,7 @@ module Erebos.State (
 
     updateLocalState, updateLocalState_,
     updateSharedState, updateSharedState_,
+    lookupSharedValueH, lookupSharedValueM,
     lookupSharedValue, makeSharedStateUpdate,
 
     localIdentity,
@@ -109,10 +110,12 @@ instance SharedType (Maybe ComposedIdentity) where
     sharedTypeID _ = mkSharedTypeID "0c6c1fe0-f2d7-4891-926b-c332449f7871"
 
 
-class (MonadIO m, MonadStorage m) => MonadHead a m where
+class (MonadIO m, MonadStorage m, HeadType a) => MonadHead a m where
     updateLocalHead :: (Stored a -> m (Stored a, b)) -> m b
     getLocalHead :: m (Stored a)
     getLocalHead = updateLocalHead $ \x -> return (x, x)
+    getLocalHeadCache :: proxy a -> m (HeadCacheType a)
+    getLocalHeadCache _ = headCacheInit @a <$> getLocalHead
 
 updateLocalHead_ :: MonadHead a m => (Stored a -> m (Stored a)) -> m ()
 updateLocalHead_ f = updateLocalHead (fmap (,()) . f)
@@ -121,6 +124,7 @@ instance (HeadType a, MonadIO m) => MonadHead a (ReaderT (Head a) m) where
     updateLocalHead f = do
         h <- ask
         snd <$> updateHead' h (\h' -> local (const h') (f $ headStoredObject h'))
+    getLocalHeadCache _ = asks headCache
 
 
 newtype LocalHeadT h m a = LocalHeadT { runLocalHeadT :: Storage -> Stored h -> m ( a, Stored h ) }
@@ -178,7 +182,7 @@ updateSharedState_ f = fmap fst <$> updateSharedState (fmap (,()) . f)
 updateSharedState :: forall a b m. (SharedType a, MonadHead LocalState m) => (a -> m (a, b)) -> Stored LocalState -> m (Stored LocalState, b)
 updateSharedState f = \ls -> do
     let shared = lsShared $ fromStored ls
-        val = lookupSharedValue shared
+    val <- lookupSharedValueM
     (val', x) <- f val
     (,x) <$> if toComponents val' == toComponents val
                 then return ls
@@ -202,6 +206,16 @@ lookupSharedValueObjects sid since = filterAncestors . helper
         | ssType (fromStored x) == Just sid = x : helper xs
         | otherwise = helper $ ssPrev (fromStored x) ++ xs
     helper [] = []
+
+lookupSharedValueC :: forall a. SharedType a => HeadCacheType LocalState -> a
+lookupSharedValueC = mergeSorted . filterAncestors . map wrappedLoad . concatMap (ssValue . fromStored) .
+    fromMaybe [] . MS.lookup (sharedTypeID @a Proxy) . lscSharedCache
+
+lookupSharedValueH :: forall a. SharedType a => Head LocalState -> a
+lookupSharedValueH = lookupSharedValueC . headCache
+
+lookupSharedValueM :: forall a m. (SharedType a, MonadHead LocalState m) => m a
+lookupSharedValueM = lookupSharedValueC <$> getLocalHeadCache @LocalState Proxy
 
 lookupSharedValue :: forall a. SharedType a => [ Stored SharedState ] -> a
 lookupSharedValue = mergeSorted . filterAncestors . map wrappedLoad . concatMap (ssValue . fromStored) . lookupSharedValueObjects (sharedTypeID @a Proxy) []

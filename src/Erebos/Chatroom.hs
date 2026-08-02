@@ -371,12 +371,11 @@ updateChatroomByStateData lookupData newName newDesc = findAndUpdateChatroomStat
 
 listChatrooms :: MonadHead LocalState m => m [ChatroomState]
 listChatrooms = filter (not . roomStateDeleted) .
-    fromSetBy (comparing $ roomName <=< roomStateRoom) .
-    lookupSharedValue . lsShared . fromStored <$> getLocalHead
+    fromSetBy (comparing $ roomName <=< roomStateRoom) <$> lookupSharedValueM
 
 findChatroom :: MonadHead LocalState m => (ChatroomState -> Bool) -> m (Maybe ChatroomState)
 findChatroom p = do
-    list <- map snd . chatroomSetToList . lookupSharedValue . lsShared . fromStored <$> getLocalHead
+    list <- map snd . chatroomSetToList <$> lookupSharedValueM
     return $ find p list
 
 findChatroomByRoomData :: MonadHead LocalState m => Stored (Signed ChatroomData) -> m (Maybe ChatroomState)
@@ -453,7 +452,7 @@ data ChatroomSetChange = AddedChatroom ChatroomState
 watchChatrooms :: MonadIO m => Head LocalState -> (Set ChatroomState -> Maybe [ChatroomSetChange] -> IO ()) -> m WatchedHead
 watchChatrooms h f = liftIO $ do
     lastVar <- newIORef Nothing
-    watchHeadWith h (lookupSharedValue . lsShared . headObject) $ \cur -> do
+    watchHeadWith h lookupSharedValueH $ \cur -> do
         let curList = chatroomSetToList cur
         mbLast <- readIORef lastVar
         writeIORef lastVar $ Just curList
@@ -537,7 +536,7 @@ instance Service ChatroomService where
         svcModify $ \s -> s { psSendRoomUpdates = True }
 
         when (not previouslyUpdated) $ do
-            syncChatroomsToPeer . lookupSharedValue . lsShared . fromStored =<< getLocalHead
+            syncChatroomsToPeer =<< lookupSharedValueM
 
         when chatRoomQuery $ do
             rooms <- listChatrooms

@@ -120,8 +120,8 @@ instance Service DirectMessage where
         let msg = fromStored smsg
         powner <- asks $ finalOwner . svcPeerIdentity
         erb <- svcGetLocal
-        let DirectMessageThreads prev _ = lookupSharedValue $ lsShared $ fromStored erb
-            sent = concat $ propertyValue $ findMsgProperty powner msSent prev
+        DirectMessageThreads prev _ <- lookupSharedValueM
+        let sent = concat $ propertyValue $ findMsgProperty powner msSent prev
             received = concat $ propertyValue $ findMsgProperty powner msReceived prev
             received' = filterAncestors $ smsg : received
         if powner `sameIdentity` msgFrom msg ||
@@ -146,7 +146,7 @@ instance Service DirectMessage where
            else join $ asks $ dmOwnerMismatch . svcAttributes
 
     serviceNewPeer = do
-        syncDirectMessageToPeer . lookupSharedValue . lsShared . fromStored =<< svcGetLocal
+        syncDirectMessageToPeer =<< lookupSharedValueM
 
     serviceUpdatedPeer = do
         updateDirectMessagePeer . finalOwner =<< asks svcPeerIdentity
@@ -424,7 +424,7 @@ messageThreadFor pthread mss =
 watchDirectMessageThreads :: Head LocalState -> (DirectMessageThread -> DirectMessageThread -> IO ()) -> IO WatchedHead
 watchDirectMessageThreads h callback = do
     prevVar <- newMVar Nothing
-    watchHeadWith h (lookupSharedValue . lsShared . headObject) $ \(DirectMessageThreads sms _) -> do
+    watchHeadWith h lookupSharedValueH $ \(DirectMessageThreads sms _) -> do
         modifyMVar_ prevVar $ \case
             Just ( prev, prevPeers ) -> do
                 let addPeer (p : ps) p'

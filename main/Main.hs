@@ -467,7 +467,7 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
     chatroomSetVar <- liftIO $ newEmptyMVar
 
     let autoSubscribe = optChatroomAutoSubscribe opts
-        chatroomList = fromSetBy (comparing roomStateData) . lookupSharedValue . lsShared . headObject $ erebosHead
+        chatroomList = fromSetBy (comparing roomStateData) . lookupSharedValueH $ erebosHead
     watched <- if isJust autoSubscribe || any roomStateSubscribe chatroomList
       then do
         fmap Just $ liftIO $ watchChatroomsForCli tui extPrintLn erebosHead
@@ -1042,7 +1042,7 @@ cmdContacts :: Command
 cmdContacts = do
     args <- words <$> asks ciLine
     ehead <- gets csHead
-    let contacts = fromSetBy (comparing contactName) $ lookupSharedValue $ lsShared $ headObject ehead
+    let contacts = fromSetBy (comparing contactName) $ lookupSharedValueH ehead
         verbose = "-v" `elem` args
     set <- asks ciSetContextOptions
     set WatchContacts $ map SelectedContact contacts
@@ -1075,7 +1075,7 @@ cmdInviteContact = do
         _ -> liftIO $ do
             setPrompt term "Name: "
             getInputLine term $ KeepPrompt . maybe T.empty T.pack
-    (lookupSharedValue . lsShared . fromStored <$> getLocalHead) >>= \case
+    lookupSharedValueM >>= \case
         Just (self :: ComposedIdentity) -> do
             invite <- createSingleContactInvite name
             dgst : _ <- return $ refDigest . storedRef <$> idDataF self
@@ -1163,7 +1163,7 @@ cmdDetails = do
         NoContext -> cmdPutStrLn "nothing selected"
   where
     printContactOrIdentityDetails cid = do
-        contacts <- fromSetBy (comparing contactName) . lookupSharedValue . lsShared . fromStored <$> getLocalHead
+        contacts <- fromSetBy (comparing contactName) <$> lookupSharedValueM
         case find (maybe False (sameIdentity cid) . contactIdentity) contacts of
             Just contact -> printContactDetails contact
             Nothing -> printIdentityDetails cid

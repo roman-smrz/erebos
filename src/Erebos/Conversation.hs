@@ -115,7 +115,7 @@ isSameConversation _ _ = False
 directMessageConversation :: MonadHead LocalState m => ComposedIdentity -> m Conversation
 directMessageConversation peer = do
     createOrUpdateDirectMessagePeer peer
-    (find (sameIdentity peer . msgPeer) . dmThreadList . lookupSharedValue . lsShared . fromStored <$> getLocalHead) >>= \case
+    (find (sameIdentity peer . msgPeer) . dmThreadList <$> lookupSharedValueM) >>= \case
         Just thread -> return $ DirectMessageConversation thread
         Nothing -> return $ DirectMessageConversation $ dmEmptyThread peer
 
@@ -135,7 +135,7 @@ reloadConversation cur@(ChatroomConversation rstate) =
     fromMaybe cur <$> chatroomConversation rstate
 
 lookupConversations :: MonadHead LocalState m => m [ Conversation ]
-lookupConversations = map DirectMessageConversation . dmThreadList . lookupSharedValue . lsShared . fromStored <$> getLocalHead
+lookupConversations = map DirectMessageConversation . dmThreadList <$> lookupSharedValueM
 
 lookupConversationByRef :: MonadHead LocalState m => RefDigest -> m (Maybe Conversation)
 lookupConversationByRef dgst = find ((dgst ==) . conversationReference) <$> lookupConversations

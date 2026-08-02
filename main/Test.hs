@@ -849,7 +849,7 @@ cmdWatchSharedIdentity = do
     Nothing <- gets tsWatchedSharedIdentity
 
     out <- asks tiOutput
-    w <- liftIO $ watchHeadWith h (lookupSharedValue . lsShared . headObject) $ \case
+    w <- liftIO $ watchHeadWith h lookupSharedValueH $ \case
         Just (idt :: ComposedIdentity) -> do
             outLine out $ unwords $ "shared-identity" : map (maybe "<unnamed>" T.unpack . idName) (unfoldOwners idt)
         Nothing -> do
@@ -919,7 +919,7 @@ cmdContactReject = do
 cmdContactList :: Command
 cmdContactList = do
     h <- getHead
-    let contacts = fromSetBy (comparing contactName) . lookupSharedValue . lsShared . headObject $ h
+    let contacts = fromSetBy (comparing contactName) . lookupSharedValueH $ h
     forM_ contacts $ \c -> do
         r:_ <- return $ filterAncestors $ concatMap storedRoots $ toComponents c
         cmdOut $ concat
@@ -934,7 +934,7 @@ cmdContactList = do
 getContact :: Text -> CommandM Contact
 getContact cid = do
     h <- getHead
-    let contacts = fromSetBy (comparing contactName) . lookupSharedValue . lsShared . headObject $ h
+    let contacts = fromSetBy (comparing contactName) . lookupSharedValueH $ h
     [contact] <- flip filterM contacts $ \c -> do
         r:_ <- return $ filterAncestors $ concatMap storedRoots $ toComponents c
         return $ T.pack (show $ refDigest $ storedRef r) == cid
@@ -975,7 +975,7 @@ cmdDmSendIdentity = do
 
 dmList :: Foldable f => Identity f -> Command
 dmList peer = do
-    threads <- dmThreadList . lookupSharedValue . lsShared . headObject <$> getHead
+    threads <- dmThreadList . lookupSharedValueH <$> getHead
     case find (sameIdentity peer . msgPeer) threads of
         Just thread -> do
             forM_ (reverse $ dmThreadToListUnread thread) $ \( DirectMessage {..}, new ) -> cmdOut $ "dm-list-item"

@@ -667,7 +667,7 @@ instance Service DiscoveryService where
 
         searchForOwner <- asks (discoverySearchForOwner . svcAttributes) >>= \case
             True -> do
-                (lookupSharedValue . lsShared . fromStored <$> getLocalHead) >>= \case
+                lookupSharedValueM >>= \case
                     Just (self :: ComposedIdentity) -> do
                         return $ S.fromList $ map (refDigest . storedRef) $ idDataF self
                     Nothing -> do

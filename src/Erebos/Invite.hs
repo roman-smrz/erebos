@@ -190,8 +190,7 @@ acceptInvite
     -> m ()
 acceptInvite from token = do
     prev <- find ((Just token ==) . acceptedInviteToken)
-        . fromSetBy (comparing acceptedInviteToken) . lookupSharedValue . lsShared . fromStored
-        <$> getLocalHead
+        . fromSetBy (comparing acceptedInviteToken) <$> lookupSharedValueM
     accepted <- mergeSorted @AcceptedInvite . (: []) <$> mstore AcceptedInviteData
         { aidPrev = maybe [] acceptedInviteData prev
         , aidToken = Just token
@@ -261,7 +260,7 @@ instance Service InviteService where
 
     serviceHandler = fromStored >>> \case
         AcceptInvite token -> do
-            invites <- fromSetBy (comparing inviteToken) . lookupSharedValue . lsShared . fromStored <$> getLocalHead
+            invites <- fromSetBy (comparing inviteToken) <$> lookupSharedValueM
             case find ((Just token ==) . inviteToken) invites of
                 Just invite
                     | Just name <- inviteContact invite
@@ -296,7 +295,7 @@ instance Service InviteService where
             asks (inviteHookReplyInvalid . svcAttributes) >>= ($ token)
             svcModify $ filter (/= token)
 
-            accepted <- fromSetBy (comparing acceptedInviteToken) . lookupSharedValue . lsShared . fromStored <$> getLocalHead
+            accepted <- fromSetBy (comparing acceptedInviteToken) <$> lookupSharedValueM
             case find ((Just token ==) . acceptedInviteToken) accepted of
                 Just invite -> do
                     aidata <- mstore AcceptedInviteData
@@ -316,7 +315,7 @@ instance Service InviteService where
               then do
                 svcSet $ filter (/= token) waitingTokens
 
-                accepted <- fromSetBy (comparing acceptedInviteToken) . lookupSharedValue . lsShared . fromStored <$> getLocalHead
+                accepted <- fromSetBy (comparing acceptedInviteToken) <$> lookupSharedValueM
                 case find ((Just token ==) . acceptedInviteToken) accepted of
                     Just invite -> do
                         aidata <- mstore AcceptedInviteData
@@ -343,7 +342,7 @@ instance Service InviteService where
             svcPrint $ "Received unknown invite packet"
 
     serviceNewPeer = do
-        invites <- fromSetBy (comparing acceptedInviteToken) . lookupSharedValue . lsShared . fromStored <$> getLocalHead
+        invites <- fromSetBy (comparing acceptedInviteToken) <$> lookupSharedValueM
         peerDigests <- asks $ identityOwnerDigests . svcPeerIdentity
         forM_ invites $ \case
             AcceptedInvite
