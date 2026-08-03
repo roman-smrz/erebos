@@ -6,7 +6,8 @@ module Erebos.State (
     MonadStorage(..),
     MonadHead(..),
     updateLocalHead_,
-    LocalHeadT(..),
+    LocalHeadT, runLocalHeadT, runLocalHeadT',
+    LocalHead, runLocalHead, runLocalHead',
 
     updateLocalState, updateLocalState_,
     updateSharedState, updateSharedState_,
@@ -21,6 +22,7 @@ module Erebos.State (
 
 import Control.Monad
 import Control.Monad.Except
+import Control.Monad.Identity qualified as CMI
 import Control.Monad.Reader
 
 import Data.Bifunctor
@@ -127,7 +129,22 @@ instance (HeadType a, MonadIO m) => MonadHead a (ReaderT (Head a) m) where
     getLocalHeadCache _ = asks headCache
 
 
-newtype LocalHeadT h m a = LocalHeadT { runLocalHeadT :: Storage -> Stored h -> m ( a, Stored h ) }
+newtype LocalHeadT h m a = LocalHeadT { runLocalHeadT_ :: Storage -> ( Stored h, HeadCacheType h ) -> m ( a, ( Stored h, HeadCacheType h ) ) }
+
+runLocalHeadT :: forall h m a. (HeadType h, Monad m) => LocalHeadT h m a -> Storage -> Stored h -> m ( a, Stored h )
+runLocalHeadT act st h = fmap fst <$> runLocalHeadT_ act st ( h, headCacheInit h )
+
+runLocalHeadT' :: forall h m a. (HeadType h, Monad m) => LocalHeadT h m a -> Head h -> m ( a, Stored h )
+runLocalHeadT' act h = fmap fst <$> runLocalHeadT_ act (headStorage h) ( headStoredObject h, headCache h )
+
+type LocalHead h a = LocalHeadT h CMI.Identity a
+
+runLocalHead :: forall h a. HeadType h => LocalHead h a -> Storage -> Stored h -> ( a, Stored h )
+runLocalHead act st h = CMI.runIdentity $ runLocalHeadT act st h
+
+runLocalHead' :: forall h a. HeadType h => LocalHead h a -> Head h -> ( a, Stored h )
+runLocalHead' act h = CMI.runIdentity $ runLocalHeadT' act h
+
 
 instance Functor m => Functor (LocalHeadT h m) where
     fmap f (LocalHeadT act) = LocalHeadT $ \st h -> first f <$> act st h
@@ -150,10 +167,13 @@ instance MonadIO m => MonadStorage (LocalHeadT h m) where
     getStorage = LocalHeadT $ \st h -> return ( st, h )
 
 instance (HeadType h, MonadIO m) => MonadHead h (LocalHeadT h m) where
-    updateLocalHead f = LocalHeadT $ \st h -> do
+    updateLocalHead f = LocalHeadT $ \st ( h, c ) -> do
         let LocalHeadT act = f h
-        ( ( h', x ), _ ) <- act st h
-        return ( x, h' )
+        ( ( h'', x ), ( _, c' ) ) <- act st ( h, c )
+        let c'' = headCacheUpdate h'' c'
+        return ( x, ( h'', c'' ) )
+
+    getLocalHeadCache _ = LocalHeadT $ \_ hc@( _, c ) -> return ( c, hc )
 
 
 localIdentity :: LocalState -> UnifiedIdentity
