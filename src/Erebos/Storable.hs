@@ -36,7 +36,7 @@ module Erebos.Storable (
     copyStored,
     unsafeMapStored,
 
-    Storage, MonadStorage(..),
+    Storage, MonadStorage(..), mloadKey,
 
     module Erebos.Error,
 ) where
@@ -44,3 +44,4 @@ module Erebos.Storable (
 import Erebos.Error
 import Erebos.Object.Internal
 import Erebos.Storable.Internal
+import Erebos.Storage.Monad

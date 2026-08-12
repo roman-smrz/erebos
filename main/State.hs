@@ -89,7 +89,7 @@ createLocalStateHead ( ownerName : names ) = do
     createSingleIdentity owner name = createIdentity name (Just owner)
 
 
-updateSharedIdentity :: (MonadHead LocalState m, MonadError e m, FromErebosError e) => Terminal -> m ()
+updateSharedIdentity :: (MonadHead LocalState m, MonadIO m, MonadError e m, FromErebosError e) => Terminal -> m ()
 updateSharedIdentity term = updateLocalState_ $ updateSharedState_ $ \case
     Just identity -> do
         Just . toComposedIdentity <$> interactiveIdentityUpdate term identity

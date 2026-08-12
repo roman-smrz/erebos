@@ -213,7 +213,7 @@ findMsgPropertyUpdate :: Property MessageState [ a ] -> [ Stored MessageState ] 
 findMsgPropertyUpdate prev mss = findPropertyUpdate prev mss
 
 
-sendDirectMessage :: (Foldable f, Applicative f, MonadHead LocalState m)
+sendDirectMessage :: (Foldable f, Applicative f, MonadHead LocalState m, MonadIO m)
                   => Identity f -> Text -> m ()
 sendDirectMessage pid text = updateLocalState_ $ \ls -> do
     let self = localIdentity $ fromStored ls

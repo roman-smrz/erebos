@@ -112,7 +112,7 @@ instance SharedType (Maybe ComposedIdentity) where
     sharedTypeID _ = mkSharedTypeID "0c6c1fe0-f2d7-4891-926b-c332449f7871"
 
 
-class (MonadIO m, MonadStorage m, HeadType a) => MonadHead a m where
+class (MonadStorage m, HeadType a) => MonadHead a m where
     updateLocalHead :: (Stored a -> m (Stored a, b)) -> m b
     getLocalHead :: m (Stored a)
     getLocalHead = updateLocalHead $ \x -> return (x, x)

@@ -33,6 +33,7 @@ module Erebos.Conversation (
 ) where
 
 import Control.Monad.Except
+import Control.Monad.IO.Class
 
 import Data.List
 import Data.Maybe
@@ -159,7 +160,7 @@ conversationHistoryChange :: Conversation -> Conversation -> ( Int, [ Message ] 
 conversationHistoryChange = withConversations $ \since -> fmap (map (uncurry Message)) . convMessageListSince since
 
 
-sendMessage :: (MonadHead LocalState m, MonadError e m, FromErebosError e) => Conversation -> Text -> m ()
+sendMessage :: (MonadHead LocalState m, MonadIO m, MonadError e m, FromErebosError e) => Conversation -> Text -> m ()
 sendMessage (DirectMessageConversation thread) text = sendDirectMessage (msgPeer thread) text
 sendMessage (ChatroomConversation rstate) text = sendChatroomMessage rstate text
 

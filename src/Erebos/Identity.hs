@@ -325,7 +325,7 @@ lookupProperty sel topHeads = findResult propHeads
     findResult [] = Nothing
     findResult xs = sel $ fromSigned $ minimum xs
 
-mergeIdentity :: (MonadStorage m, MonadError e m, FromErebosError e, MonadIO m) => Identity f -> m UnifiedIdentity
+mergeIdentity :: (MonadStorage m, MonadError e m, FromErebosError e) => Identity f -> m UnifiedIdentity
 mergeIdentity idt | Just idt' <- toUnifiedIdentity idt = return idt'
 mergeIdentity idt@Identity {..} = do
     (owner, ownerData) <- case idOwner_ of
@@ -335,7 +335,7 @@ mergeIdentity idt@Identity {..} = do
                                       return (Just owner, Just $ idData owner)
 
     let public = idKeyIdentity idt
-    secret <- loadKey public
+    secret <- mloadKey public
 
     unifiedBaseData <-
         case toList $ idDataF idt of

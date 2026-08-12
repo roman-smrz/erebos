@@ -10,8 +10,6 @@ module Erebos.Storable.Internal (
     unsafeMapStored,
 
     collectObjects, collectStoredObjects,
-
-    MonadStorage(..),
 ) where
 
 import Control.Monad.Reader
@@ -20,9 +18,8 @@ import Data.Function
 import Data.Set (Set)
 import Data.Set qualified as S
 
-import Erebos.Storage.Internal
-
 import Erebos.Object.Internal
+import Erebos.Storage.Internal
 
 
 data Stored a = Stored
@@ -88,16 +85,3 @@ collectOtherStored seen (Rec items) = foldr helper ( [], seen ) $ map snd items
                  in ((o : xs') ++ xs, s')
           helper _ ( xs, s ) = ( xs, s )
 collectOtherStored seen _ = ( [], seen )
-
-
-class Monad m => MonadStorage m where
-    getStorage :: m Storage
-    mstore :: Storable a => a -> m (Stored a)
-
-    default mstore :: MonadIO m => Storable a => a -> m (Stored a)
-    mstore x = do
-        st <- getStorage
-        wrappedStore st x
-
-instance MonadIO m => MonadStorage (ReaderT Storage m) where
-    getStorage = ask

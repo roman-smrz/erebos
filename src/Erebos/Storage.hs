@@ -20,11 +20,11 @@ module Erebos.Storage (
     watchHead, watchHeadWith, unwatchHead,
     watchHeadRaw,
 
-    MonadStorage(..),
+    MonadStorage(..), mloadKey,
 ) where
 
 import Erebos.Object.Internal
-import Erebos.Storable.Internal
 import Erebos.Storage.Disk
 import Erebos.Storage.Head
 import Erebos.Storage.Memory
+import Erebos.Storage.Monad

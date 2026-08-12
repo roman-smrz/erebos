@@ -165,7 +165,7 @@ instance SharedType (Set AcceptedInvite) where
     sharedTypeID _ = mkSharedTypeID "b1ebf228-4892-476b-ba04-0c26320139b1"
 
 
-createSingleContactInvite :: MonadHead LocalState m => Text -> m Invite
+createSingleContactInvite :: (MonadHead LocalState m, MonadIO m) => Text -> m Invite
 createSingleContactInvite name = do
     time <- liftIO getZonedTime
     token <- liftIO $ getRandomBytes 32
