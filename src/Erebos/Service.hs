@@ -134,6 +134,7 @@ data ServiceHandlerState s = ServiceHandlerState
     { svcValue :: ServiceState s
     , svcGlobal :: ServiceGlobalState s
     , svcLocal :: Stored LocalState
+    , svcLocalCache :: HeadCacheType LocalState
     }
 
 newtype ServiceHandler s a = ServiceHandler (ReaderT (ServiceInput s) (WriterT [ServiceReply s] (StateT (ServiceHandlerState s) (ExceptT ErebosError IO))) a)
@@ -144,13 +145,17 @@ instance MonadStorage (ServiceHandler s) where
 
 instance MonadHead LocalState (ServiceHandler s) where
     updateLocalHead f = do
-        (ls, x) <- f =<< gets svcLocal
-        modify $ \s -> s { svcLocal = ls }
+        ls <- gets svcLocal
+        c <- gets svcLocalCache
+        ( ls', x ) <- f ls
+        let c' = headCacheUpdate ls' c
+        modify $ \s -> s { svcLocal = ls', svcLocalCache = c' }
         return x
+    getLocalHeadCache _ = gets svcLocalCache
 
 runServiceHandler :: Service s => Head LocalState -> ServiceInput s -> ServiceState s -> ServiceGlobalState s -> ServiceHandler s () -> IO ([ServiceReply s], (ServiceState s, ServiceGlobalState s))
 runServiceHandler h input svc global shandler = do
-    let sstate = ServiceHandlerState { svcValue = svc, svcGlobal = global, svcLocal = headStoredObject h }
+    let sstate = ServiceHandlerState { svcValue = svc, svcGlobal = global, svcLocal = headStoredObject h, svcLocalCache = headCache h }
         ServiceHandler handler = shandler
     (runExceptT $ flip runStateT sstate $ execWriterT $ flip runReaderT input $ handler) >>= \case
         Left err -> do
