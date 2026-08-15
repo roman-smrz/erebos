@@ -289,6 +289,11 @@ instance MonadHead LocalState CommandM where
         modify $ \s -> s { tsHead = Just h' }
         return x
 
+    getLocalHeadCache _ = do
+        h <- maybe (fail "failed to reload head") return =<< reloadHead =<< getOrLoadHead
+        modify $ \s -> s { tsHead = Just h }
+        return $ headCache h
+
 type Command = CommandM ()
 
 commands :: [ ( Text, Command ) ]

@@ -51,6 +51,7 @@ import Erebos.Set
 import Erebos.State
 import Erebos.Storable
 import Erebos.Storage
+import Erebos.Storage.Head
 import Erebos.Storage.Merge
 import Erebos.Sync
 import Erebos.TextFormat
@@ -634,6 +635,11 @@ instance MonadHead LocalState CommandM where
             f (headStoredObject h')
         modify $ \s -> s { csHead = h' }
         return x
+
+    getLocalHeadCache _ = do
+        h <- maybe (fail "failed to reload head") return =<< reloadHead =<< gets csHead
+        modify $ \s -> s { csHead = h }
+        return $ headCache h
 
 type Command = CommandM ()
 
