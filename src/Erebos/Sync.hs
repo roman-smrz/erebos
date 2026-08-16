@@ -32,7 +32,7 @@ instance Service SyncService where
 
     serviceNewPeer = notifyPeer . lsShared . fromStored =<< svcGetLocal
     serviceUpdatedPeer = serviceNewPeer
-    serviceStorageWatchers _ = (:[]) $ SomeStorageWatcher (lsShared . fromStored) notifyPeer
+    serviceStorageWatchers _ = (:[]) $ someStorageWatcher (lsShared . fromStored) notifyPeer
 
 instance Storable SyncService where
     store' (SyncPacket smsg) = store' smsg

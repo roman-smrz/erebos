@@ -614,7 +614,7 @@ instance Service ChatroomService where
         replyPacket emptyPacket { chatRoomQuery = True }
 
     serviceStorageWatchers _ = (:[]) $
-        SomeStorageWatcher (lookupSharedValue . lsShared . fromStored) syncChatroomsToPeer
+        someStorageWatcher (lookupSharedValue . lsShared . fromStored) syncChatroomsToPeer
 
 syncChatroomsToPeer :: Set ChatroomState -> ServiceHandler ChatroomService ()
 syncChatroomsToPeer set = do

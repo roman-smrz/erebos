@@ -79,6 +79,8 @@ import Erebos.Storage.Head
 import Erebos.Storage.Key
 import Erebos.Storage.Merge
 
+import Service
+
 
 discoveryPort :: PortNumber
 discoveryPort = 29665

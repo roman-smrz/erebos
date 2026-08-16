@@ -133,6 +133,7 @@ library
         Erebos.TextFormat.Types
         Erebos.UUID
         Erebos.Util
+        Service
 
     c-sources:
         src/Erebos/Network/ifaddrs.c

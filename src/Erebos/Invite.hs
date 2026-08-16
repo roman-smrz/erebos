@@ -355,7 +355,7 @@ instance Service InviteService where
             _ -> return ()
 
     serviceStorageWatchers _ = (:[]) $
-        GlobalStorageWatcher (lookupSharedValue . lsShared . fromStored) sendAcceptedInvites
+        globalStorageWatcher (lookupSharedValue . lsShared . fromStored) sendAcceptedInvites
 
 
 sendAcceptedInvites :: Server -> Set AcceptedInvite -> ExceptT ErebosError IO ()
