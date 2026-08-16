@@ -1155,16 +1155,22 @@ joinMulticast sock =
 
 getServerAddresses :: Server -> IO [ SockAddr ]
 getServerAddresses Server {..} = do
-    alloca $ \pcount -> do
-        ptr <- cLocalAddresses pcount
-        if ptr == nullPtr
-          then do
-            return []
-          else do
-            count <- fromIntegral <$> peek pcount
-            res <- peekArray count ptr
-            cFree ptr
-            return $ map (inetToSockAddr . (, serverPort serverOptions )) res
+    tryReadMVar serverSocket >>= \case
+        Just sock -> do
+            getSocketName sock >>= \case
+                SockAddrInet6 port _ _ _ -> do
+                    alloca $ \pcount -> do
+                        ptr <- cLocalAddresses pcount
+                        if ptr == nullPtr
+                          then do
+                            return []
+                          else do
+                            count <- fromIntegral <$> peek pcount
+                            res <- peekArray count ptr
+                            cFree ptr
+                            return $ map (inetToSockAddr . (, port )) res
+                _ -> return []
+        Nothing -> return []
 
 getBroadcastAddresses :: PortNumber -> IO [SockAddr]
 getBroadcastAddresses port = do
