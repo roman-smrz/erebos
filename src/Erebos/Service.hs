@@ -155,19 +155,24 @@ instance MonadHead LocalState (ServiceHandler s) where
         return x
     getLocalHeadCache _ = gets svcLocalCache
 
-runServiceHandler :: Service s => Head LocalState -> ServiceInput s -> ServiceState s -> ServiceGlobalState s -> ServiceHandler s () -> IO ([ServiceReply s], (ServiceState s, ServiceGlobalState s))
+runServiceHandler
+    :: Service s
+    => Head LocalState -> ServiceInput s -> ServiceState s -> ServiceGlobalState s
+    -> ServiceHandler s ()
+    -> IO ( [ ServiceReply s], ( ServiceState s, ServiceGlobalState s, Head LocalState ) )
 runServiceHandler h input svc global shandler = do
     let sstate = ServiceHandlerState { svcValue = svc, svcGlobal = global, svcLocal = headStoredObject h, svcLocalCache = headCache h }
         ServiceHandler handler = shandler
     (runExceptT $ flip runStateT sstate $ execWriterT $ flip runReaderT input $ handler) >>= \case
         Left err -> do
             svcPrintOp input $ "service failed: " ++ showErebosError err
-            return ([], (svc, global))
+            return ( [], ( svc, global, h ) )
         Right (rsp, sstate')
-            | svcLocal sstate' == svcLocal sstate -> return (rsp, (svcValue sstate', svcGlobal sstate'))
+            | svcLocal sstate' == svcLocal sstate -> return ( rsp, ( svcValue sstate', svcGlobal sstate', h ))
             | otherwise -> replaceHead h (svcLocal sstate') >>= \case
                 Left (Just h') -> runServiceHandler h' input svc global shandler
-                _              -> return (rsp, (svcValue sstate', svcGlobal sstate'))
+                Left Nothing   -> return ( rsp, ( svcValue sstate', svcGlobal sstate', h ) )
+                Right h'       -> return ( rsp, ( svcValue sstate', svcGlobal sstate', h' ) )
 
 svcGet :: ServiceHandler s (ServiceState s)
 svcGet = gets svcValue

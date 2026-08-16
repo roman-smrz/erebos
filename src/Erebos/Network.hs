@@ -94,6 +94,7 @@ data Server = Server
     { serverStorage :: Storage
     , serverOptions :: ServerOptions
     , serverOrigHead :: Head LocalState
+    , serverCurrentHead :: MVar (Head LocalState)
     , serverIdentity_ :: MVar UnifiedIdentity
     , serverThreads :: MVar [ThreadId]
     , serverSocket :: MVar Socket
@@ -271,6 +272,7 @@ forkServerThread server label act = do
 startServer :: ServerOptions -> Head LocalState -> (String -> IO ()) -> [SomeService] -> IO Server
 startServer serverOptions serverOrigHead logd' serverServices = do
     let serverStorage = headStorage serverOrigHead
+    serverCurrentHead <- newMVar serverOrigHead
     serverIdentity_ <- newMVar $ headLocalIdentity serverOrigHead
     serverThreads <- newMVar []
     serverSocket <- newEmptyMVar
@@ -1077,19 +1079,22 @@ runPeerServiceOn mbservice newStreams paddr peer handler = liftIO $ do
                                     , svcPrintOp = atomically . logd
                                     , svcNewStreams = newStreams
                                     }
-                            reloadHead (serverOrigHead server) >>= \case
-                                Nothing -> atomically $ do
-                                    logd $ "current head deleted"
-                                    putTMVar (peerServiceState peer) svcs
-                                    putTMVar (serverServiceStates server) global
-                                Just h -> do
-                                    (rsp, (s', gs')) <- runServiceHandler h inp ps gs handler
-                                    moveKeys (peerStorage peer) (serverStorage server)
-                                    when (not (null rsp)) $ do
-                                        sendToPeerList peer rsp
-                                    atomically $ do
-                                        putTMVar (peerServiceState peer) $ M.insert svc (SomeServiceState proxy s') svcs
-                                        putTMVar (serverServiceStates server) $ M.insert svc (SomeServiceGlobalState proxy gs') global
+                            modifyMVar_ (serverCurrentHead server) $ \ph -> do
+                                reloadHead ph >>= \case
+                                    Nothing -> atomically $ do
+                                        logd $ "current head deleted"
+                                        putTMVar (peerServiceState peer) svcs
+                                        putTMVar (serverServiceStates server) global
+                                        return ph
+                                    Just h -> do
+                                        ( rsp, ( s', gs', h' ) ) <- runServiceHandler h inp ps gs handler
+                                        moveKeys (peerStorage peer) (serverStorage server)
+                                        when (not (null rsp)) $ do
+                                            sendToPeerList peer rsp
+                                        atomically $ do
+                                            putTMVar (peerServiceState peer) $ M.insert svc (SomeServiceState proxy s') svcs
+                                            putTMVar (serverServiceStates server) $ M.insert svc (SomeServiceGlobalState proxy gs') global
+                                        return h'
                 _ -> do
                     atomically $ logd $ "can't run service handler on peer with incomplete identity " ++ show paddr
 
