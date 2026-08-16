@@ -360,14 +360,23 @@ instance Service DiscoveryService where
                                     offerTunnel <- offerTunnelBetween attrs peer sp >>= return . \case
                                         True  -> (++ [ DiscoveryTunnel ])
                                         False -> id
-                                    let results = offerTunnel matchedAddrs
+                                    let discoveryAddrs = offerTunnel matchedAddrs
+                                    let ( results, via )
+                                            | dgst == (refDigest $ storedRef $ idData pid)
+                                            = ( discoveryAddrs, [] )
+                                            | otherwise
+                                            -- Results should be empty for this case (not searching exactly for the device id),
+                                            -- but keep compatibility for now.
+                                            = ( discoveryAddrs, [ DiscoveryVia (refDigest $ storedRef $ idData pid) discoveryAddrs ] )
+
                                     debugLog $
                                         "found for " <> show (refDigest $ storedRef $ idData spid) <>
                                         " dgst " <> show dgst <>
-                                        " result [" <> T.unpack (T.intercalate "," $ map toText results) <> "]"
+                                        " result [" <> T.unpack (T.intercalate "," $ map toText results) <> "]" <>
+                                        " via " <> show (map (\v -> ( viaIdentity v, map toText $ viaAddress v )) via)
                                     -- Try to promote weak ref to normal one for older peers:
                                     edgst <- maybe (Right dgst) Left <$> liftIO (refFromDigest st dgst)
-                                    replyPacket $ DiscoveryResult edgst results []
+                                    replyPacket $ DiscoveryResult edgst results via
                             debugLog $
                                 "remains asked by " <> show (refDigest $ storedRef $ idData spid) <>
                                 ": " <> show (M.keys peerSearchingFor')
@@ -404,7 +413,8 @@ instance Service DiscoveryService where
                     replyPacket $ DiscoveryResult edgst results via
                     debugLog $ "search by " <> show (refDigest $ storedRef $ idData pid) <>
                         " for " <> show (either refDigest id edgst) <>
-                        " result [" <> T.unpack (T.intercalate "," $ map toText results) <> "]"
+                        " result [" <> T.unpack (T.intercalate "," $ map toText results) <> "]" <>
+                        " via " <> show (map (\v -> ( viaIdentity v, map toText $ viaAddress v )) via)
 
                 Nothing -> do
                     now <- liftIO $ getTime Monotonic
@@ -417,7 +427,7 @@ instance Service DiscoveryService where
                     debugLog $ "peer " <> show (refDigest $ storedRef $ idData pid) <>
                         " searching for " <> show (M.keys seachingFor')
 
-        DiscoveryResult edgst addrs _ -> do
+        DiscoveryResult edgst addrs via -> do
             let dgst = either refDigest id edgst
             server <- asks svcServer
             st <- getStorage
@@ -430,6 +440,7 @@ instance Service DiscoveryService where
             debugLog $
                 "result from " <> show (refDigest $ storedRef $ idData pid) <>
                 " for " <> show dgst <> ": [" <> T.unpack (T.intercalate "," $ map toText addrs) <> "]" <>
+                " via " <> show (map (\v -> ( viaIdentity v, map toText $ viaAddress v )) via) <>
                 (if askedFor then "" else " (not asked for)")
 
             when askedFor $ do
@@ -490,7 +501,12 @@ instance Service DiscoveryService where
                     [] -> debugLog $ "no (supported) address received for " <> show dgst
 
             when askedFor $ do
-                tryAddresses addrs
+                tryAddresses $ concat
+                    -- ignore direct connections for self/owner
+                    [ if dgst `elem` identityDigests self then [] else addrs
+                    ] ++
+                    -- ignore connections via ourselves
+                    concat (map viaAddress $ filter ((refDigest (storedRef (idData self)) /=) . viaIdentity) via)
 
         DiscoveryConnectionRequest conn -> do
             self <- svcSelf
