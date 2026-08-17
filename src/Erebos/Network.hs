@@ -4,6 +4,7 @@ module Erebos.Network (
     stopServer,
     getCurrentPeerList,
     getNextPeerChange,
+    getNextPeerChangeChan,
     getServerAddresses,
     ServerOptions(..), serverIdentity, defaultServerOptions,
 
@@ -120,6 +121,9 @@ getCurrentPeerList = fmap M.elems . readMVar . serverPeers
 
 getNextPeerChange :: Server -> IO Peer
 getNextPeerChange = atomically . readTChan . serverChanPeer
+
+getNextPeerChangeChan :: Server -> IO (TChan Peer)
+getNextPeerChangeChan = atomically . dupTChan . serverChanPeer
 
 data ServerOptions = ServerOptions
     { serverPort :: PortNumber
