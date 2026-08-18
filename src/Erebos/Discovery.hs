@@ -349,7 +349,7 @@ instance Service DiscoveryService where
             afterCommit $ void $ forkIO $ do
                 peers <- getCurrentPeerList server
                 let dgsts = identityDigests pid
-                forM_ peers $ \sp -> do
+                forM_ (filter (peer /=) peers) $ \sp -> do
                     runPeerService @DiscoveryService sp $ do
                         peerSearchingFor <- dpsPeerSearchingFor <$> svcGet
                         when (any (`M.member` peerSearchingFor) dgsts) $ do
@@ -400,25 +400,33 @@ instance Service DiscoveryService where
 
         DiscoverySearch edgst -> do
             let dgst = either refDigest id edgst
+            peer <- asks svcPeer
             pid <- asks svcPeerIdentity
             (M.lookup dgst . dgsPeers <$> svcGetGlobal) >>= \case
-                Just rv -> do
-                    peer <- asks svcPeer
+                Just rv
+                  | direct <- (\p -> Just p <* guard (p /= peer)) =<< dpPeer =<< rvDirect rv
+                  -- Direct results should be empty unless searching exactly for the device id,
+                  -- but keep compatibility for now.
+                  , rvia <- filter ((Just peer /=) . dpPeer) $ rvVia rv
+                  , isJust direct || not (null rvia)
+                  -> do
                     attrs <- asks svcAttributes
-                    offerTunnel <- case dpPeer =<< rvDirect rv of
+                    offerTunnel <- case direct of
                         Just dpeer -> offerTunnelBetween attrs peer dpeer >>= return . \case
                             True  -> (++ [ DiscoveryTunnel ])
                             False -> id
                         Nothing -> return id
-                    let results = offerTunnel $ maybe [] dpAddress $ rvDirect rv
-                    via <- liftIO $ fmap catMaybes $ mapM (viaFromPeer attrs peer) $ rvVia rv
+                    let results
+                            | isJust direct = offerTunnel $ maybe [] dpAddress $ rvDirect rv
+                            | otherwise = []
+                    via <- liftIO $ fmap catMaybes $ mapM (viaFromPeer attrs peer) rvia
                     replyPacket $ DiscoveryResult edgst results via
                     debugLog $ "search by " <> show (refDigest $ storedRef $ idData pid) <>
                         " for " <> show (either refDigest id edgst) <>
                         " result [" <> T.unpack (T.intercalate "," $ map toText results) <> "]" <>
                         " via " <> show (map (\v -> ( viaIdentity v, map toText $ viaAddress v )) via)
 
-                Nothing -> do
+                _ -> do
                     now <- liftIO $ getTime Monotonic
                     searchingFor <- dpsPeerSearchingFor <$> svcGet
                     let seachingFor' = M.insert dgst (SearchingSince now) searchingFor
