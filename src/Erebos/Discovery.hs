@@ -229,13 +229,15 @@ emptyPeer = DiscoveryPeer
     , dpIceSession = Nothing
     }
 
-viaFromPeer :: DiscoveryPeer -> IO (Maybe DiscoveryVia)
-viaFromPeer DiscoveryPeer {..}
-    | Just peer <- dpPeer
-    , viaAddress@(_ : _) <- dpAddress
+viaFromPeer :: DiscoveryAttributes -> Peer -> DiscoveryPeer -> IO (Maybe DiscoveryVia)
+viaFromPeer attrs peer DiscoveryPeer {..}
+    | Just dpeer <- dpPeer
+    , _ : _ <- dpAddress
     = do
-        getPeerIdentity peer >>= \case
+        getPeerIdentity dpeer >>= \case
             PeerIdentityFull pid -> do
+                offerTunnel <- offerTunnelBetween attrs peer dpeer
+                let viaAddress = (if offerTunnel then (++ [ DiscoveryTunnel ]) else id) dpAddress
                 let viaIdentity = refDigest $ storedRef $ idData pid
                 return $ Just DiscoveryVia {..}
             _ -> return Nothing
@@ -409,7 +411,7 @@ instance Service DiscoveryService where
                             False -> id
                         Nothing -> return id
                     let results = offerTunnel $ maybe [] dpAddress $ rvDirect rv
-                    via <- liftIO $ fmap catMaybes $ mapM viaFromPeer $ rvVia rv
+                    via <- liftIO $ fmap catMaybes $ mapM (viaFromPeer attrs peer) $ rvVia rv
                     replyPacket $ DiscoveryResult edgst results via
                     debugLog $ "search by " <> show (refDigest $ storedRef $ idData pid) <>
                         " for " <> show (either refDigest id edgst) <>
