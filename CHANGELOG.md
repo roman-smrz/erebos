@@ -1,5 +1,13 @@
 # Revision history for erebos
 
+## 0.2.3 -- 2026-08-19
+
+* Discovery service handles situation when search target joins later.
+* Automatically search for other devices of the same owner when using the discovery service.
+* Added API to mark a custom underlying transport layer as reliable.
+* Fixed thread diff on first callback from `watchDirectMessageThreads` for given peer.
+* Fixed discovery when forced to bind not-selected ephemeral port.
+
 ## 0.2.2 -- 2026-06-25
 
 * Initial support for `chunked` and `dir` object types.
