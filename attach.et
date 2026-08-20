@@ -2,6 +2,26 @@ module attach
 
 import common
 
+
+export def perform_attach of dev to owner:
+    flush from owner matching // # TODO: forces (owner : Process), drop when not necessary
+
+    send "peer-get-by-addr ${owner.node.ip} 29665" to dev
+    send "peer-get-by-addr ${dev.node.ip} 29665" to owner
+    expect /peer-get-by-addr ([0-9]+)/ from dev capture owner_pidx
+    expect /peer-get-by-addr ([0-9]+)/ from owner capture dev_pidx
+
+    send "attach-to $owner_pidx" to dev
+    expect /attach-request $dev_pidx ([0-9]*)/ from owner capture code1
+    expect /attach-response $owner_pidx ([0-9]*)/ from dev capture code2
+    guard (code1 == code2)
+
+    send "attach-accept $dev_pidx" to owner
+    send "attach-accept $owner_pidx" to dev
+    expect /attach-request-done $dev_pidx/ from owner
+    expect /attach-response-done $owner_pidx/ from dev
+
+
 test Attach:
     let services = "attach,sync"
 
@@ -91,15 +111,7 @@ test SyncAfterAttach:
                 expect /peer ([0-9]+) addr ${p.node.ip} 29665/ from p1 capture pidx
                 expect /peer $pidx id Device./ from p1
 
-                send "attach-to 1"
-                expect /attach-request $pidx ([0-9]*)/ from p1 capture code1
-                expect /attach-response 1 ([0-9]*)/ capture code2
-                guard (code1 == code2)
-
-                send "attach-accept $pidx" to p1
-                send "attach-accept 1"
-                expect /attach-request-done $pidx/ from p1
-                expect /attach-response-done 1/
+                perform_attach of p to p1
 
     spawn as pd on nd
     spawn as p1 on n1
