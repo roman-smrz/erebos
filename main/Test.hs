@@ -320,6 +320,7 @@ commands =
     , ( "peer-add", cmdPeerAdd )
     , ( "peer-drop", cmdPeerDrop )
     , ( "peer-list", cmdPeerList )
+    , ( "peer-get-by-addr", cmdPeerGetByAddr )
     , ( "test-message-send", cmdTestMessageSend )
     , ( "test-stream-open", cmdTestStreamOpen )
     , ( "test-stream-close", cmdTestStreamClose )
@@ -747,6 +748,16 @@ cmdPeerList = do
                             _ -> []
             ]
     cmdOut "peer-list-done"
+
+cmdPeerGetByAddr :: Command
+cmdPeerGetByAddr = do
+    Just RunningServer {..} <- gets tsServer
+    addr <- T.unwords <$> asks tiParams
+    ( _, peers ) <- liftIO $ readMVar rsPeers
+    forM_ peers $ \tpeer -> do
+        paddr <- getPeerAddress $ tpPeer tpeer
+        when (T.pack (show paddr) == addr) $ do
+            cmdOut $ "peer-get-by-addr " <> show (tpIndex tpeer)
 
 
 cmdTestMessageSend :: Command
