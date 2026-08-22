@@ -856,7 +856,7 @@ cmdWatchLocalIdentity = do
 
     out <- asks tiOutput
     w <- liftIO $ watchHeadWith h headLocalIdentity $ \idt -> do
-        outLine out $ unwords $ "local-identity" : map (maybe "<unnamed>" T.unpack . idName) (unfoldOwners idt)
+        outLine out $ unwords $ "local-identity" : show (refDigest $ storedRef $ idExtData idt) : map (maybe "<unnamed>" T.unpack . idName) (unfoldOwners idt)
     modify $ \s -> s { tsWatchedLocalIdentity = Just w }
 
 cmdWatchSharedIdentity :: Command
