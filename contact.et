@@ -1,5 +1,7 @@
 module contact
 
+import common
+
 test Contact:
 	let services = "attach,contact,sync"
 	
@@ -93,7 +95,7 @@ test Contact:
 	# Attach peer 4 to Owner1
 
 	send "watch-local-identity" to p4
-	expect /local-identity Device4/ from p4
+	expect /local-identity $refpat Device4/ from p4
 
 	send "attach-to $peer4_1" to p4
 	local:
@@ -105,7 +107,7 @@ test Contact:
 	send "attach-accept $peer4_1" to p4
 	expect /attach-request-done $peer1_4/ from p1
 	expect /attach-response-done $peer4_1/ from p4
-	expect /local-identity Device4 Owner1/ from p4
+	expect /local-identity $refpat Device4 Owner1/ from p4
 	expect /peer $peer1_4 id Device4 Owner1/ from p1
 	expect /peer $peer2_4 id Device4 Owner1/ from p2
 	expect /peer $peer3_4 id Device4 Owner1/ from p3
