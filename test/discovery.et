@@ -1,5 +1,7 @@
 module discovery
 
+import attach
+
 def refpat = /blake2#[0-9a-f]*/
 
 test ManualDiscovery:
@@ -364,3 +366,114 @@ test DiscoveryTunnelRefused:
             send "stop-server" to p
         for p in [ pd, p1, p2 ]:
             expect /stop-server-done/ from p
+
+
+test CommonOwnerDiscovery:
+    let services = "discovery:trace"
+
+    subnet sd
+    subnet s1
+    subnet s2
+    subnet s3
+
+    node nd on sd
+    node n1 on s1
+    node n2 on s2
+    node n3 on s3
+
+    # TODO: move under the following "local" and capture values from inner block
+    spawn as p1_init on n1
+    spawn as p2_init on n2
+    spawn as p3_init on n3
+
+    send "create-identity Device1 Owner" to p1_init
+    expect /create-identity-done ref ($refpat).*/ from p1_init capture p1_id_ext
+    send "identity-info $p1_id_ext" to p1_init
+    expect /identity-info ref $p1_id_ext base ($refpat) owner ($refpat).*/ from p1_init capture p1_id, owner_ext
+    send "identity-info $owner_ext" to p1_init
+    expect /identity-info ref $owner_ext base ($refpat).*/ from p1_init capture owner
+
+    local:
+        spawn as pd on nd
+        let p1 = p1_init
+        let p2 = p2_init
+        let p3 = p3_init
+
+        send "create-identity Device2" to p2
+        send "create-identity Device3" to p3
+
+        expect /create-identity-done .*/ from p2
+        expect /create-identity-done .*/ from p3
+
+        send "create-identity Discovery" to pd
+
+        expect /create-identity-done .*/ from pd
+
+        for p in [ p1, p2, p3 ]:
+            send "start-server services attach" to p
+        for p in [ p2, p3 ]:
+            send "watch-local-identity" to p
+            send "peer-add ${p1.node.ip} 29665" to p
+            expect /peer [0-9]+ addr ${p1.node.ip} 29665/ from p
+            expect /peer [0-9]+ id .*/ from p
+            perform_attach of p to p1
+
+            expect /local-identity ($refpat) Device. .*/ from p capture p_id_ext
+            send "identity-info $p_id_ext" to p
+
+    for p in [ p1_init, p2_init, p3_init ]:
+        send "stop-server" to p
+        expect /stop-server-done/ from p
+    expect /identity-info ref $refpat base ($refpat).*/ from p2_init capture p2_id
+    expect /identity-info ref $refpat base ($refpat).*/ from p3_init capture p3_id
+
+    local:
+        spawn as pd on nd
+        spawn as p1 on n1
+        spawn as p2 on n2
+        spawn as p3 on n3
+
+        ignore from p1 matching /discovery-packet-result via $refpat addr ICE/
+        ignore from p2 matching /discovery-packet-result via $refpat addr ICE/
+        ignore from p3 matching /discovery-packet-result via $refpat addr ICE/
+
+        # TODO: direct result should be returned only for exact device id match, keep for now
+        ignore from p1 matching /discovery-packet-result result .*/
+        ignore from p2 matching /discovery-packet-result result .*/
+        ignore from p3 matching /discovery-packet-result result .*/
+
+        for p in [ pd, p1, p2, p3 ]:
+            send "start-server services $services" to p
+
+        send "peer-add ${pd.node.ip}" to p1
+        expect from pd /discovery-packet ${p1.node.ip} 29665 search $owner/
+
+        send "peer-add ${pd.node.ip}" to p2
+        expect from pd /discovery-packet ${p2.node.ip} 29665 search $owner/
+
+        expect from p1 /discovery-packet ${pd.node.ip} 29665 result $owner/
+        expect from p1 /discovery-packet-result via ${p2_id} addr ${p2.node.ip} 29665/
+        local:
+            expect from p1 /discovery-packet-result (.*)/ capture done
+            guard (done == done)
+
+        expect from p2 /discovery-packet ${pd.node.ip} 29665 result $owner/
+        expect from p2 /discovery-packet-result via ${p1_id} addr ${p1.node.ip} 29665/
+        local:
+            expect from p2 /discovery-packet-result (.*)/ capture done
+            guard (done == "done")
+
+
+        send "peer-add ${pd.node.ip}" to p3
+        expect from pd /discovery-packet ${p3.node.ip} 29665 search $owner/
+
+        expect from p3 /discovery-packet ${pd.node.ip} 29665 result $owner/
+        expect from p3 /discovery-packet-result via ${p1_id} addr ${p1.node.ip} 29665/
+        expect from p3 /discovery-packet-result via ${p2_id} addr ${p2.node.ip} 29665/
+        local:
+            expect from p3 /discovery-packet-result (.*)/ capture done
+            guard (done == done)
+
+        expect from p1:
+            /peer [0-9]+ addr ${p2.node.ip} 29665/
+            /peer [0-9]+ addr ${p3.node.ip} 29665/

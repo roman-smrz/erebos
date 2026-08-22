@@ -3,6 +3,7 @@
 
 module Erebos.Discovery (
     DiscoveryService(..),
+    DiscoveryAddress, DiscoveryVia(..),
     DiscoveryAttributes(..),
     DiscoveryConnection(..),
 

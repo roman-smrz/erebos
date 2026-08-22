@@ -238,6 +238,20 @@ discoveryAttributes = (defaultServiceAttributes Proxy)
     { discoveryProvideTunnel = \_ _ -> False
     }
 
+discoveryTracer :: Output -> Peer -> PeerAddress -> Stored DiscoveryService -> IO ()
+discoveryTracer out _ paddr spacket = case fromStored spacket of
+    DiscoverySearch dgst -> do
+        outLine out $ "discovery-packet " <> show paddr <> " search " <> show (either refDigest id dgst)
+    DiscoveryResult dgst results via -> do
+        outLine out $ "discovery-packet " <> show paddr <> " result " <> show (either refDigest id dgst)
+        forM_ results $ \addr -> do
+            outLine out $ "discovery-packet-result result " <> T.unpack (toText addr)
+        forM_ via $ \DiscoveryVia {..} -> do
+            forM_ viaAddress $ \addr -> do
+                outLine out $ "discovery-packet-result via " <> show viaIdentity <> " addr " <> T.unpack (toText addr)
+        outLine out $ "discovery-packet-result done"
+    _ -> return ()
+
 inviteAttributes :: Output -> InviteServiceAttributes
 inviteAttributes out = (defaultServiceAttributes Proxy)
     { inviteHookAccepted = \Invite {..} -> do
@@ -676,6 +690,7 @@ cmdStartServer = do
         ( sname, _ ) -> throwOtherError $ "unknown service `" <> T.unpack sname <> "'"
 
     serviceTracers <- forM (map fst $ filter (("trace" `elem`) . snd) serviceNames) $ \case
+        "discovery" -> return $ servicePacketTracer $ discoveryTracer out
         sname -> throwOtherError $ "tracer not implemented for ‘" <> T.unpack sname <> "’"
 
     let serverOptions' = serverOptions
