@@ -487,3 +487,84 @@ test CommonOwnerDiscovery:
         expect from p1:
             /peer [0-9]+ addr ${p2.node.ip} 29665/
             /peer [0-9]+ addr ${p3.node.ip} 29665/
+
+
+test DiscoveryOnLocalhost:
+    let services = "discovery"
+    node n
+
+    # TODO: some way to have node without any connection
+    shell on n:
+        ip link set dev ${n.ifname} down
+
+    spawn on n:
+        as pd
+        as ps # connection order to pd:
+        as p1 # search - p1 - ps
+        as p2 # search - ps - p2
+        as p3 # p3 - search - ps
+        as p4 # p4 - ps - search
+        as p5 # ps - p5 - search
+        as p6 # ps - search - p6
+
+    send "create-identity Discovery" to pd
+    send "create-identity Searching" to ps
+    send "create-identity Device1" to p1
+    send "create-identity Device2" to p2
+    send "create-identity Device3" to p3
+    send "create-identity Device4" to p4
+    send "create-identity Device5" to p5
+    send "create-identity Device6" to p6
+
+    expect /create-identity-done ref $refpat.*/ from pd
+    expect /create-identity-done ref ($refpat).*/ from ps capture ps_id
+    expect /create-identity-done ref ($refpat).*/ from p1 capture p1_id
+    expect /create-identity-done ref ($refpat).*/ from p2 capture p2_id
+    expect /create-identity-done ref ($refpat).*/ from p3 capture p3_id
+    expect /create-identity-done ref ($refpat).*/ from p4 capture p4_id
+    expect /create-identity-done ref ($refpat).*/ from p5 capture p5_id
+    expect /create-identity-done ref ($refpat).*/ from p6 capture p6_id
+
+    send "start-server services $services" to pd
+    # wait for the first server to start and claim the discovery port
+    expect /start-server-done/ from pd
+
+    for p in [ ps, p1, p2, p3, p4, p5, p6 ]:
+        send "start-server services $services" to p
+    for p in [ ps, p1, p2, p3, p4, p5, p6 ]:
+        expect /start-server-done/ from p
+
+    send "discovery-connect $p1_id" to ps
+    send "discovery-connect $p2_id" to ps
+
+    send "peer-add localhost" to p1
+    send "peer-add localhost" to p3
+    send "peer-add localhost" to p4
+    expect /peer [0-9]+ id Discovery/ from p1
+    expect /peer [0-9]+ id Discovery/ from p3
+    expect /peer [0-9]+ id Discovery/ from p4
+
+    send "discovery-connect $p3_id" to ps
+
+    send "peer-add localhost" to ps
+    expect /peer [0-9]+ id Discovery/ from ps
+
+    expect /peer [0-9]+ id Device1/ from ps
+    expect /peer [0-9]+ id Device3/ from ps
+
+    send "peer-add localhost" to p2
+    expect /peer [0-9]+ id Device2/ from ps
+
+    send "discovery-connect $p4_id" to ps
+    expect /peer [0-9]+ id Device4/ from ps
+
+    send "peer-add localhost" to p5
+    expect /peer [0-9]+ id Discovery/ from p5
+
+    send "discovery-connect $p5_id" to ps
+    send "discovery-connect $p6_id" to ps
+    expect /peer [0-9]+ id Device5/ from ps
+
+    send "peer-add localhost" to p6
+    expect /peer [0-9]+ id Discovery/ from p6
+    expect /peer [0-9]+ id Device6/ from ps
