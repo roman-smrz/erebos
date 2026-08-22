@@ -2,6 +2,8 @@ module Erebos.Network.Address (
     InetAddress(..),
     inetFromSockAddr,
     inetToSockAddr,
+    makeLocalhostAddress,
+    getLocalhostPort,
 
     SockAddr, PortNumber,
 ) where
@@ -63,3 +65,11 @@ inetFromSockAddr saddr = first InetAddress <$> IP.fromSockAddr saddr
 
 inetToSockAddr :: ( InetAddress, PortNumber ) -> SockAddr
 inetToSockAddr = IP.toSockAddr . first fromInetAddress
+
+
+makeLocalhostAddress :: PortNumber -> SockAddr
+makeLocalhostAddress port = SockAddrInet6 port 0 ( 0, 0, 0, 1 ) 0
+
+getLocalhostPort :: SockAddr -> Maybe PortNumber
+getLocalhostPort (SockAddrInet6 port _ ( 0, 0, 0, 1 ) _) = Just port
+getLocalhostPort _                                       = Nothing

@@ -60,7 +60,8 @@ data DiscoveryService
     | DiscoveryConnectionResponse DiscoveryConnection
 
 data DiscoveryAddress
-    = DiscoveryIP InetAddress PortNumber
+    = DiscoveryLocalhost PortNumber
+    | DiscoveryIP InetAddress PortNumber
     | DiscoveryICE
     | DiscoveryTunnel
     | DiscoveryOther Text
@@ -185,12 +186,18 @@ instance Storable DiscoveryService where
 
 instance StorableText DiscoveryAddress where
     toText = \case
+        DiscoveryLocalhost port -> T.unwords [ "localhost", T.pack $ show port ]
         DiscoveryIP addr port -> T.unwords [ T.pack $ show addr, T.pack $ show port ]
         DiscoveryICE -> "ICE"
         DiscoveryTunnel -> "tunnel"
         DiscoveryOther str -> str
 
     fromText str = return $ if
+        | [ addrStr, portStr ] <- T.words str
+        , addrStr == "localhost"
+        , Just port <- readMaybe $ T.unpack portStr
+        -> DiscoveryLocalhost port
+
         | [ addrStr, portStr ] <- T.words str
         , Just addr <- readMaybe $ T.unpack addrStr
         , Just port <- readMaybe $ T.unpack portStr
@@ -219,6 +226,7 @@ data DiscoveryPeer = DiscoveryPeer
     { dpPriority :: Int
     , dpPeer :: Maybe Peer
     , dpAddress :: [ DiscoveryAddress ]
+    , dpLocalhost :: Maybe PortNumber
     , dpIceSession :: Maybe IceSession
     }
 
@@ -227,6 +235,7 @@ emptyPeer = DiscoveryPeer
     { dpPriority = 0
     , dpPeer = Nothing
     , dpAddress = []
+    , dpLocalhost = Nothing
     , dpIceSession = Nothing
     }
 
@@ -314,24 +323,28 @@ instance Service DiscoveryService where
             peer <- asks svcPeer
             paddrs <- getPeerAddresses peer
 
-            debugLog $ unwords
-                [ "new peer"
-                , show [ refDigest $ storedRef $ idData pid, refDigest $ storedRef $ idExtData pid ]
-                , show $ map (refDigest . storedRef) $ idDataF $ finalOwner pid
-                , show paddrs
-                ]
-
             let matchedAddrs = flip filter addrs $ \case
                     DiscoveryICE -> True
                     DiscoveryIP ipaddr port ->
                         DatagramAddress (inetToSockAddr ( ipaddr, port )) `elem` paddrs
                     _ -> False
+                localhostPort = getLocalhostPortFromPeerAddresses paddrs
+
+            debugLog $ unwords
+                [ "new peer"
+                , show [ refDigest $ storedRef $ idData pid, refDigest $ storedRef $ idExtData pid ]
+                , show $ map (refDigest . storedRef) $ idDataF $ finalOwner pid
+                , show paddrs
+                , show (map toText matchedAddrs)
+                , show localhostPort
+                ]
 
             forM_ (idDataF =<< unfoldOwners pid) $ \sdata -> do
                 let dp = DiscoveryPeer
                         { dpPriority = fromMaybe 0 priority
                         , dpPeer = Just peer
                         , dpAddress = matchedAddrs
+                        , dpLocalhost = localhostPort
                         , dpIceSession = Nothing
                         }
                     rv = ResultValue
@@ -360,10 +373,19 @@ instance Service DiscoveryService where
                             st <- getStorage
                             forM_ dgsts $ \dgst -> do
                                 when (dgst `M.member` peerSearchingFor) $ do
-                                    offerTunnel <- offerTunnelBetween attrs peer sp >>= return . \case
-                                        True  -> (++ [ DiscoveryTunnel ])
-                                        False -> id
-                                    let discoveryAddrs = offerTunnel matchedAddrs
+                                    discoveryAddrs <- concat <$> sequence
+                                        [ case localhostPort of
+                                              Just port -> getPeerAddresses sp >>= \case
+                                                  spaddrs
+                                                      | isJust $ getLocalhostPortFromPeerAddresses spaddrs
+                                                      -> return [ DiscoveryLocalhost port ]
+                                                  _ -> return []
+                                              _ -> return []
+                                        , return matchedAddrs
+                                        , offerTunnelBetween attrs peer sp >>= return . \case
+                                            True  -> [ DiscoveryTunnel ]
+                                            False -> []
+                                        ]
                                     let ( results, via )
                                             | dgst == (refDigest $ storedRef $ idData pid)
                                             = ( discoveryAddrs, [] )
@@ -403,6 +425,7 @@ instance Service DiscoveryService where
             let dgst = either refDigest id edgst
             peer <- asks svcPeer
             pid <- asks svcPeerIdentity
+            paddrs <- getPeerAddresses peer
             (M.lookup dgst . dgsPeers <$> svcGetGlobal) >>= \case
                 Just rv
                   | direct <- (\p -> Just p <* guard (p /= peer)) =<< dpPeer =<< rvDirect rv
@@ -412,14 +435,19 @@ instance Service DiscoveryService where
                   , isJust direct || not (null rvia)
                   -> do
                     attrs <- asks svcAttributes
-                    offerTunnel <- case direct of
-                        Just dpeer -> offerTunnelBetween attrs peer dpeer >>= return . \case
-                            True  -> (++ [ DiscoveryTunnel ])
-                            False -> id
-                        Nothing -> return id
-                    let results
-                            | isJust direct = offerTunnel $ maybe [] dpAddress $ rvDirect rv
-                            | otherwise = []
+                    results <- if
+                        | isJust direct -> concat <$> sequence
+                            [ case ( dpLocalhost =<< rvDirect rv, getLocalhostPortFromPeerAddresses paddrs ) of
+                                ( Just port, Just _ ) -> return [ DiscoveryLocalhost port ]
+                                _ -> return []
+                            , return $ maybe [] dpAddress $ rvDirect rv
+                            , case direct of
+                                Just dpeer -> offerTunnelBetween attrs peer dpeer >>= return . \case
+                                    True  -> [ DiscoveryTunnel ]
+                                    False -> []
+                                Nothing -> return []
+                            ]
+                        | otherwise -> return []
                     via <- liftIO $ fmap catMaybes $ mapM (viaFromPeer attrs peer) rvia
                     replyPacket $ DiscoveryResult edgst results via
                     debugLog $ "search by " <> show (refDigest $ storedRef $ idData pid) <>
@@ -464,6 +492,14 @@ instance Service DiscoveryService where
             let runAsService = runPeerService @DiscoveryService @IO discoveryPeer
 
             let tryAddresses = \case
+                    DiscoveryLocalhost port : _ -> do
+                        void $ liftIO $ forkIO $ do
+                            let saddr = makeLocalhostAddress port
+                            peer <- serverPeer server saddr
+                            runAsService $ do
+                                let upd rv = rv { rvDirect = Just $ (fromMaybe emptyPeer $ rvDirect rv) { dpPeer = Just peer } }
+                                svcModifyGlobal $ \s -> s { dgsPeers = M.alter (Just . upd . fromMaybe mempty) dgst $ dgsPeers s }
+
                     DiscoveryIP ipaddr port : _ -> do
                         void $ liftIO $ forkIO $ do
                             let saddr = inetToSockAddr ( ipaddr, port )
@@ -883,3 +919,6 @@ discoverySetupTunnelResponse target = do
             (emptyConnection (Right self) (Right target))
             { dconnTunnel = True
             }
+
+getLocalhostPortFromPeerAddresses :: [ PeerAddress ] -> Maybe PortNumber
+getLocalhostPortFromPeerAddresses = msum . map (\case DatagramAddress a -> getLocalhostPort a; _ -> Nothing)
