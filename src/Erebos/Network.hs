@@ -7,6 +7,7 @@ module Erebos.Network (
     getNextPeerChangeChan,
     getServerAddresses,
     ServerOptions(..), serverIdentity, defaultServerOptions,
+    ServicePacketTracer, servicePacketTracer,
 
     Peer, peerServer, peerStorage,
     PeerAddress(..), getPeerAddress, getPeerAddresses,
@@ -131,6 +132,7 @@ data ServerOptions = ServerOptions
     , serverLocalDiscovery :: Bool
     , serverErrorPrefix :: String
     , serverTestLog :: Bool
+    , serverServicePacketTracers :: [ ServicePacketTracer ]
     }
 
 defaultServerOptions :: ServerOptions
@@ -140,7 +142,13 @@ defaultServerOptions = ServerOptions
     , serverLocalDiscovery = True
     , serverErrorPrefix = ""
     , serverTestLog = False
+    , serverServicePacketTracers = []
     }
+
+data ServicePacketTracer = forall s. Service s => ServicePacketTracer (Peer -> PeerAddress -> Stored s -> IO ())
+
+servicePacketTracer :: forall s. Service s => (Peer -> PeerAddress -> Stored s -> IO ()) -> ServicePacketTracer
+servicePacketTracer = ServicePacketTracer
 
 
 data Peer = Peer
@@ -467,7 +475,12 @@ startServer serverOptions serverOrigHead logd' serverServices = do
     forkServerThread server "service-handler" $ forever $ do
         ( peer, paddr, svc, ref, streams ) <- atomically $ readTQueue chanSvc
         case find ((svc ==) . someServiceID) serverServices of
-            Just service@(SomeService (_ :: Proxy s) attr) -> runPeerServiceOn (Just ( service, attr )) streams paddr peer (serviceHandler $ wrappedLoad @s ref)
+            Just service@(SomeService (_ :: Proxy s) attr) -> do
+                let packet = wrappedLoad @s ref
+                forM_ (serverServicePacketTracers serverOptions) $ \case
+                    ServicePacketTracer t | Just (t' :: Peer -> PeerAddress -> Stored s -> IO ()) <- cast t -> t' peer paddr packet
+                    _ -> return ()
+                runPeerServiceOn (Just ( service, attr )) streams paddr peer (serviceHandler packet)
             _ -> atomically $ logd $ "unhandled service '" ++ show (toUUID svc) ++ "'"
 
     return server

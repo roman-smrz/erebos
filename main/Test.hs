@@ -675,9 +675,16 @@ cmdStartServer = do
             }
         ( sname, _ ) -> throwOtherError $ "unknown service `" <> T.unpack sname <> "'"
 
+    serviceTracers <- forM (map fst $ filter (("trace" `elem`) . snd) serviceNames) $ \case
+        sname -> throwOtherError $ "tracer not implemented for ‘" <> T.unpack sname <> "’"
+
+    let serverOptions' = serverOptions
+            { serverServicePacketTracers = serviceTracers
+            }
+
     let logPrint str = do BC.hPutStrLn stdout (BC.pack str)
                           hFlush stdout
-    rsServer <- liftIO $ startServer serverOptions h logPrint services
+    rsServer <- liftIO $ startServer serverOptions' h logPrint services
 
     rsPeerThread <- liftIO $ forkIO $ void $ forever $ do
         peer <- getNextPeerChange rsServer
