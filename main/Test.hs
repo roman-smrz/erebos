@@ -728,6 +728,7 @@ cmdStartServer = do
         modifyMVar_ rsPeers update
 
     modify $ \s -> s { tsServer = Just RunningServer {..} }
+    cmdOut "start-server-done"
 
 cmdStopServer :: Command
 cmdStopServer = do

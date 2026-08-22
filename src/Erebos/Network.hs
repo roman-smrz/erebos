@@ -449,16 +449,16 @@ startServer serverOptions serverOrigHead logd' serverServices = do
 
             erebosNetworkProtocol (headLocalIdentity serverOrigHead) logd logt protocolRawPath protocolControlFlow
 
-    forkServerThread server "main-loop" $ withSocketsDo $ do
+    withSocketsDo $ do
         let hints = defaultHints
-              { addrFlags = [AI_PASSIVE]
+              { addrFlags = [ AI_PASSIVE ]
               , addrFamily = AF_INET6
               , addrSocketType = Datagram
               }
         addr:_ <- getAddrInfo (Just hints) Nothing (Just $ show $ serverPort serverOptions)
         let open = socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
             closeAndNotify sock = close sock >> putMVar serverSocketClosed ()
-        bracket open closeAndNotify $ \sock -> do
+        bracketOnError open closeAndNotify $ \sock -> do
             withFdSocket sock setCloseOnExecIfNeeded
             setSocketOption sock Broadcast 1
             bind sock (addrAddress addr) `catchIOError` \e -> if
@@ -470,7 +470,8 @@ startServer serverOptions serverOrigHead logd' serverServices = do
                       bind sock (SockAddrInet6 0 f h s)
                 | otherwise -> ioError e
             putMVar serverSocket sock
-            loop sock
+            forkServerThread server "main-loop" $ do
+                loop sock `finally` closeAndNotify sock
 
     forkServerThread server "service-handler" $ forever $ do
         ( peer, paddr, svc, ref, streams ) <- atomically $ readTQueue chanSvc
