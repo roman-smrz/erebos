@@ -615,7 +615,11 @@ cmdCreateIdentity = do
             , lsOther = []
             }
     initTestHead h
-    cmdOut $ unwords [ "create-identity-done", "ref", show $ refDigest $ storedRef $ lsIdentity $ headObject h ]
+    cmdOut $ unwords
+        [ "create-identity-done"
+        , "ref", show $ refDigest $ storedRef $ eiddStoredBase $ lsIdentity $ headObject h
+        , "extref", show $ refDigest $ storedRef $ lsIdentity $ headObject h
+        ]
 
 cmdIdentityInfo :: Command
 cmdIdentityInfo = do

@@ -181,26 +181,26 @@ test DirectMessageDiscovery:
 	send "create-identity Discovery" to pd
 
 	send "create-identity Device1 Owner1" to p1
-	expect /create-identity-done ref ($refpat)/ from p1 capture p1_id
+	expect /create-identity-done ref ($refpat) extref ($refpat).*/ from p1 capture p1_base, p1_id
 	send "identity-info $p1_id" to p1
-	expect /identity-info ref $p1_id base ($refpat) owner ($refpat).*/ from p1 capture p1_base, p1_owner
+	expect /identity-info ref $p1_id base $p1_base owner ($refpat).*/ from p1 capture p1_owner
 
 	send "create-identity Device2 Owner2" to p2
-	expect /create-identity-done ref ($refpat)/ from p2 capture p2_id
+	expect /create-identity-done ref ($refpat) extref ($refpat).*/ from p2 capture p2_base, p2_id
 	send "identity-info $p2_id" to p2
-	expect /identity-info ref $p2_id base ($refpat) owner ($refpat).*/ from p2 capture p2_base, p2_owner
+	expect /identity-info ref $p2_id base $p2_base owner ($refpat).*/ from p2 capture p2_owner
 	send "identity-info $p2_owner" to p2
 	expect /identity-info ref $p2_owner base ($refpat).*/ from p2 capture p2_obase
 
 	send "create-identity Device3 Owner3" to p3
-	expect /create-identity-done ref ($refpat)/ from p3 capture p3_id
+	expect /create-identity-done ref ($refpat) extref ($refpat).*/ from p3 capture p3_base, p3_id
 	send "identity-info $p3_id" to p3
-	expect /identity-info ref $p3_id base ($refpat) owner ($refpat).*/ from p3 capture p3_base, p3_owner
+	expect /identity-info ref $p3_id base $p3_base owner ($refpat).*/ from p3 capture p3_owner
 
 	send "create-identity Device4 Owner4" to p4
-	expect /create-identity-done ref ($refpat)/ from p4 capture p4_id
+	expect /create-identity-done ref ($refpat) extref ($refpat).*/ from p4 capture p4_base, p4_id
 	send "identity-info $p4_id" to p4
-	expect /identity-info ref $p4_id base ($refpat) owner ($refpat).*/ from p4 capture p4_base, p4_owner
+	expect /identity-info ref $p4_id base $p4_base owner ($refpat).*/ from p4 capture p4_owner
 
 
 	for p in [ p1, p2, p3, p4 ]:
@@ -315,14 +315,14 @@ test DirectMessageSeen:
 	spawn as p2
 
 	send "create-identity Device1 Owner1" to p1
-	expect /create-identity-done ref ($refpat)/ from p1 capture p1id
+	expect /create-identity-done ref ($refpat) extref ($refpat).*/ from p1 capture p1base, p1id
 	send "identity-info $p1id" to p1
-	expect /identity-info ref $p1id base ($refpat) owner ($refpat).*/ from p1 capture p1base, p1owner
+	expect /identity-info ref $p1id base $p1base owner ($refpat).*/ from p1 capture p1owner
 
 	send "create-identity Device2 Owner2" to p2
-	expect /create-identity-done ref ($refpat)/ from p2 capture p2id
+	expect /create-identity-done ref ($refpat) extref ($refpat).*/ from p2 capture p2base, p2id
 	send "identity-info $p2id" to p2
-	expect /identity-info ref $p2id base ($refpat) owner ($refpat).*/ from p2 capture p2base, p2owner
+	expect /identity-info ref $p2id base $p2base owner ($refpat).*/ from p2 capture p2owner
 
 	for p in [ p1, p2 ]:
 		send "start-server services $services" to p
@@ -408,7 +408,7 @@ test MessageManyPeers:
 	send "create-identity Device1 Owner7" to p7
 	send "create-identity Device1 Owner8" to p8
 	for p in ps:
-		expect /create-identity-done ref $refpat/ from p
+		expect /create-identity-done ref $refpat.*/ from p
 
 	for p in ps:
 		send "start-server services $services" to p
@@ -440,7 +440,7 @@ test MessageManyConcurrent:
 	send "create-identity Device1 Owner1" to p1
 	send "create-identity Device1 Owner2" to p2
 	for p in ps:
-		expect /create-identity-done ref $refpat/ from p
+		expect /create-identity-done ref $refpat.*/ from p
 		send "start-server services $services" to p
 
 	for p in ps:
