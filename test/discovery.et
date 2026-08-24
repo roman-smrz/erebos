@@ -488,6 +488,26 @@ test CommonOwnerDiscovery:
             /peer [0-9]+ addr ${p2.node.ip} 29665/
             /peer [0-9]+ addr ${p3.node.ip} 29665/
 
+        for p in [ p1, p2 ]:
+            send "stop-server" to p
+        for p in [ p1, p2 ]:
+            expect /stop-server-done/ from p
+        for p in [ p1, p2 ]:
+            send "start-server services $services" to p
+
+        send "peer-add ${pd.node.ip}" to p1
+        send "peer-add ${p3.node.ip}" to p2
+
+        expect from p1:
+            /peer [0-9]+ addr ${pd.node.ip} 29665/
+            /peer [0-9]+ addr ${p2.node.ip} 29665/
+            /peer [0-9]+ addr ${p3.node.ip} 29665/
+
+        expect from p2:
+            /peer [0-9]+ addr ${pd.node.ip} 29665/
+            /peer [0-9]+ addr ${p1.node.ip} 29665/
+            /peer [0-9]+ addr ${p3.node.ip} 29665/
+
 
 test DiscoveryOnLocalhost:
     let services = "discovery"
