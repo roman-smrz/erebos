@@ -530,6 +530,7 @@ test ConnectToSelf:
         with p:
             expect /create-identity-done .*/
             send "start-server"
+            expect /start-server-done/
 
             # no peer should be added:
             send "peer-add ${p.node.ip}"
