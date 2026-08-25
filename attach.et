@@ -101,6 +101,7 @@ test SyncAfterAttach:
         expect /create-identity-done ref $refpat.*/ from p3
 
         send "start-server services $services_1" to p1
+        expect /start-server-done/ from p1
         for p in [ p2, p3 ]:
             with p:
                 send "start-server services $services_1"
@@ -121,6 +122,8 @@ test SyncAfterAttach:
     send "start-server services $services_d" to pd
     for p in [ p1, p2, p3 ]:
         send "start-server services $services_2" to p
+    expect /start-server-done/ from pd
+    expect /start-server-done/ from p1
 
     # Shared identity sync after explicit direct connection
 

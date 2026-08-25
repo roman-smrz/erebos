@@ -208,6 +208,7 @@ test DirectMessageDiscovery:
 			send "start-server services $services"
 
 	for p in [ p2, p3, p4 ]:
+		expect /start-server-done/ from p
 		with p1:
 			send "peer-add ${p.node.ip}"
 			expect:
@@ -239,6 +240,7 @@ test DirectMessageDiscovery:
 	for p in [ p1, p2, p3, p4, pd ]:
 		with p:
 			send "start-server services $services"
+	expect /start-server-done/ from pd
 
 	for p in [ p2, p3, p4, p1 ]:
 		with p:
@@ -288,6 +290,7 @@ test DirectMessageDiscovery:
 	for p in [ p1, p2, p3, p4, pd ]:
 		with p:
 			send "start-server services $services"
+	expect /start-server-done/ from pd
 	for p in [ p2, p3, p4, p1 ]:
 		with p:
 			send "peer-add ${pd.node.ip}"

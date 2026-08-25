@@ -31,6 +31,7 @@ test ManualDiscovery:
     for id in [ p1obase, p1base ]:
         for p in [ pd, p1, p2 ]:
             send "start-server services $services" to p
+        expect from pd /start-server-done/
 
         for p in [ p1, p2 ]:
             with p:
@@ -60,6 +61,7 @@ test ManualDiscovery:
     for id in [ p1obase ]:
         for p in [ pd, p1, p2 ]:
             send "start-server services $services" to p
+        expect from pd /start-server-done/
 
         with p1:
             send "peer-add ${pd.node.ip}"
@@ -120,6 +122,7 @@ test DiscoveryJoinedAfter:
     for id in [ p1obase ]:
         for p in [ pd, p1, p2 ]:
             send "start-server services $services" to p
+        expect from pd /start-server-done/
 
         for p in [ p2 ]:
             with p:
@@ -189,6 +192,7 @@ test DiscoveryTunnel:
     for id in [ p1obase ]:
         for p in [ pd, p1, p2 ]:
             send "start-server services $services test-log" to p
+        expect from pd /start-server-done/
 
         for p in [ p1, p2 ]:
             with p:
@@ -263,6 +267,8 @@ test DiscoveryTunnelWithChangedAddresses:
 
         for p in [ p1, p2 ]:
             send "start-server services $services test-log" to p
+
+        expect from pd /start-server-done/
 
         for p in [ p1, p2 ]:
             with p:
@@ -347,6 +353,7 @@ test DiscoveryTunnelRefused:
     for id in [ p1obase ]:
         for p in [ pd, p1, p2 ]:
             send "start-server services $services test-log" to p
+        expect from pd /start-server-done/
 
         for p in [ p1, p2 ]:
             with p:
@@ -411,6 +418,8 @@ test CommonOwnerDiscovery:
 
         for p in [ p1, p2, p3 ]:
             send "start-server services attach" to p
+        for p in [ p1, p2, p3 ]:
+            expect /start-server-done/ from p
         for p in [ p2, p3 ]:
             send "watch-local-identity" to p
             send "peer-add ${p1.node.ip} 29665" to p
@@ -444,6 +453,7 @@ test CommonOwnerDiscovery:
 
         for p in [ pd, p1, p2, p3 ]:
             send "start-server services $services" to p
+        expect from pd /start-server-done/
 
         send "peer-add ${pd.node.ip}" to p1
         expect from pd /discovery-packet ${p1.node.ip} 29665 search $owner/
