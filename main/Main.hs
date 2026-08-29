@@ -449,7 +449,7 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
 
                 case optDmBotEcho opts of
                     Just prefix
-                        | not (msgFrom msg `sameIdentity` self)
+                        | new && not (msgFrom msg `sameIdentity` self)
                         -> do
                             void $ forkIO $ do
                                 res <- runExceptT $ flip runReaderT erebosHead $ sendDirectMessage (msgFrom msg) (prefix <> msgText msg)
