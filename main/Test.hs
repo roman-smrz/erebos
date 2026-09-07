@@ -28,6 +28,8 @@ import Data.Text.IO qualified as T
 import Data.Typeable
 import Data.UUID.Types qualified as U
 
+import GHC.TypeLits
+
 import Network.Socket
 
 import System.IO
@@ -57,6 +59,7 @@ import Erebos.Storage.Merge
 import Erebos.Sync
 
 import Test.Service
+import Test.State
 
 
 data TestState = TestState
@@ -344,6 +347,8 @@ commands =
     , ( "local-state-wait", cmdLocalStateWait )
     , ( "shared-state-get", cmdSharedStateGet )
     , ( "shared-state-wait", cmdSharedStateWait )
+    , ( "shared-state-val-get", cmdSharedStateValGet )
+    , ( "shared-state-val-set", cmdSharedStateValSet )
     , ( "watch-local-identity", cmdWatchLocalIdentity )
     , ( "watch-shared-identity", cmdWatchSharedIdentity )
     , ( "update-local-identity", cmdUpdateLocalIdentity )
@@ -875,6 +880,25 @@ cmdSharedStateGet = do
 
 cmdSharedStateWait :: Command
 cmdSharedStateWait = localStateWaitHelper "shared-state-wait" (lsShared . headObject)
+
+cmdSharedStateValGet :: Command
+cmdSharedStateValGet = do
+    [ stid ] <- asks tiParams
+    h <- getOrLoadHead
+    case someSymbolVal $ T.unpack stid of
+        SomeSymbol (_ :: Proxy tid) -> do
+            let value = lookupSharedValueH @(CustomSharedState tid) h
+            cmdOut $ unwords $ "shared-state-val-get" : T.unpack stid : map (BC.unpack . showRef . storedRef) (customStateComponents value)
+
+cmdSharedStateValSet :: Command
+cmdSharedStateValSet = do
+    stid : trefs <- asks tiParams
+    st <- asks tiStorage
+    Just refs <- liftIO $ fmap sequence $ mapM (readRef st . encodeUtf8) trefs
+    case someSymbolVal $ T.unpack stid of
+        SomeSymbol (_ :: Proxy tid) -> do
+            updateLocalState_ $ updateSharedState_ $ \_ -> do
+                return $ CustomSharedState @tid $ map wrappedLoad refs
 
 cmdWatchLocalIdentity :: Command
 cmdWatchLocalIdentity = do

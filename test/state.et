@@ -1,0 +1,26 @@
+module state
+
+import common
+
+test SharedStateLocal:
+    spawn as p
+    with p:
+        send "create-identity Device Owner"
+        expect /create-identity-done ref $refpat extref ($refpat).*/ capture device
+        send "identity-info $device"
+        expect /identity-info ref $device base $refpat owner ($refpat).*/ capture owner
+
+        send "shared-state-val-get 0c6c1fe0-f2d7-4891-926b-c332449f7871"
+        expect /shared-state-val-get 0c6c1fe0-f2d7-4891-926b-c332449f7871 $owner/
+
+        for i in [ 1 .. 10 ]:
+            send:
+                "store rec"
+                "i:i $i"
+                ""
+            expect /store-done ($refpat)/ capture r
+
+            send "shared-state-val-set ffffffff-0000-0000-0000-000000000001 $r"
+
+            send "shared-state-val-get ffffffff-0000-0000-0000-000000000001"
+            expect /shared-state-val-get ffffffff-0000-0000-0000-000000000001 $r/
