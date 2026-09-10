@@ -127,12 +127,17 @@ precedesOrEquals x y = filterAncestors [ x, y ] == [ y ]
 filterAncestors :: Storable a => [ Stored a ] -> StoredTips a
 filterAncestors [ x ] = [ x ]
 filterAncestors xs = let xs' = uniq $ sort xs
-                      in helper xs' xs'
-    where helper remains walk = case generationMax walk of
-                                     Just x -> let px = previous x
-                                                   remains' = filter (\r -> all (/=r) px) remains
-                                                in helper remains' $ uniq $ sort (px ++ filter (/=x) walk)
-                                     Nothing -> remains
+                      in sort $ helper xs' xs'
+  where
+    helper [] _ = []
+    helper remains walk =
+        case generationMax walk of
+            Just x ->
+                let px = previous x
+                    youngerThenX r = Just GT == compareGeneration (storedGeneration r) (storedGeneration x)
+                    ( returned, remains' ) = partition youngerThenX $ filter (\r -> all (/= r) px) remains
+                 in returned ++ helper remains' (uniq $ sort (px ++ filter (/= x) walk))
+            Nothing -> remains
 
 commonAncestors :: Storable a => [ Stored a ] -> [ Stored a ] -> StoredTips a
 commonAncestors [] _ = []
