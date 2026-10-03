@@ -3,9 +3,7 @@ module attach
 import common
 
 
-export def perform_attach of dev to owner:
-    flush from owner matching // # TODO: forces (owner : Process), drop when not necessary
-
+export def perform_attach of (dev : Process) to (owner : Process):
     send "peer-get-by-addr ${owner.node.ip} 29665" to dev
     send "peer-get-by-addr ${dev.node.ip} 29665" to owner
     expect /peer-get-by-addr ([0-9]+)/ from dev capture owner_pidx
