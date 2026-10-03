@@ -822,16 +822,16 @@ discoverySearch server dgst = do
             Just (UnhandledService svc) | svc == serviceID (Proxy @DiscoveryService) -> return ()
             _ -> throwError e) $ do
         peers <- liftIO $ getCurrentPeerList server
-        match <- forM peers $ \peer -> do
+        peersFull <- fmap catMaybes $ forM peers $ \peer -> do
             getPeerIdentity peer >>= \case
-                PeerIdentityFull pid -> do
-                    return $ dgst `elem` identityDigests pid
-                _ -> return False
-        when (not $ or match) $ do
+                PeerIdentityFull pid -> return $ Just ( peer, pid )
+                _ -> return Nothing
+        let match = any ((dgst `elem`) . identityDigests . snd) peersFull
+        when (not match) $ do
             _ <- modifyServiceGlobalState server (Proxy @DiscoveryService) $ \s ->
                 ( s { dgsSearchingFor =  S.insert dgst $ dgsSearchingFor s }, () )
             now <- liftIO $ getTime Monotonic
-            forM_ peers $ \peer -> do
+            forM_ peersFull $ \( peer, _ ) -> do
                 runPeerService peer $ do
                     weAskedFor <- dpsWeAskedFor <$> svcGet
                     when (not $ M.member dgst weAskedFor) $ do

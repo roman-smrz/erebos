@@ -1116,7 +1116,7 @@ runPeerServiceOn mbservice newStreams paddr peer handler = liftIO $ do
                                             putTMVar (serverServiceStates server) $ M.insert svc (SomeServiceGlobalState proxy gs') global
                                         return h'
                 _ -> do
-                    atomically $ logd $ "can't run service handler on peer with incomplete identity " ++ show paddr
+                    atomically $ logd $ "can't run service " <> show (toUUID svc) <> " handler on peer with incomplete identity " ++ show paddr
 
         _ -> atomically $ do
             logd $ "unhandled service '" ++ show (toUUID svc) ++ "'"
