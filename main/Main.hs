@@ -776,17 +776,25 @@ cmdPeers = do
     forM_ (zip [1..] peers) $ \(i :: Int, (_, name)) -> do
         printSelectOption i $ plainText name
 
+peerAddressFromText :: (MonadIO m, MonadError ErebosError m) => Text -> m SockAddr
+peerAddressFromText taddr = do
+    ( hostname, port ) <- case words (T.unpack taddr) of
+        hostname : p : _ -> return ( hostname, p )
+        [ single ]
+            | all isDigit single -> return ( "localhost", single )
+            | otherwise -> return ( single, show discoveryPort )
+        [] -> throwOtherError "missing peer address"
+    liftIO (getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just hostname) (Just port)) >>= \case
+        addr : _ -> return (addrAddress addr)
+        [] -> throwOtherError "address not found"
+
 cmdPeerAdd :: Command
 cmdPeerAdd = void $ do
     server <- asks ciServer
-    (hostname, port) <- (words <$> asks ciLine) >>= \case
-        hostname:p:_ -> return (hostname, p)
-        [hostname] -> return (hostname, show discoveryPort)
-        [] -> throwOtherError "missing peer address"
-    addr:_ <- liftIO $ getAddrInfo (Just $ defaultHints { addrSocketType = Datagram }) (Just hostname) (Just port)
+    addr <- peerAddressFromText . T.pack =<< asks ciLine
     contextOptsVar <- asks ciContextOptionsVar
     liftIO $ modifyMVar_ contextOptsVar $ return . first (const $ Just WatchPeers)
-    liftIO $ serverPeer server (addrAddress addr)
+    liftIO $ serverPeer server addr
 
 cmdPeerAddPublic :: Command
 cmdPeerAddPublic = do
