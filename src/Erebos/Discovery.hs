@@ -242,14 +242,14 @@ emptyPeer = DiscoveryPeer
 viaFromPeer :: DiscoveryAttributes -> Peer -> DiscoveryPeer -> IO (Maybe DiscoveryVia)
 viaFromPeer attrs peer DiscoveryPeer {..}
     | Just dpeer <- dpPeer
-    , _ : _ <- dpAddress
     = do
         getPeerIdentity dpeer >>= \case
             PeerIdentityFull pid -> do
                 offerTunnel <- offerTunnelBetween attrs peer dpeer
                 let viaAddress = (if offerTunnel then (++ [ DiscoveryTunnel ]) else id) dpAddress
                 let viaIdentity = refDigest $ storedRef $ idData pid
-                return $ Just DiscoveryVia {..}
+                return $ if null viaAddress then Nothing
+                                            else Just DiscoveryVia {..}
             _ -> return Nothing
     | otherwise
     = return Nothing
