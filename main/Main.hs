@@ -64,9 +64,10 @@ import WebSocket
 
 data Options = Options
     { optServer :: ServerOptions
-    , optServices :: [ServiceOption]
+    , optServices :: [ ServiceOption ]
     , optStorage :: StorageOption
     , optCreateIdentity :: Maybe ( Maybe Text, [ Maybe Text ] )
+    , optCommands :: [ Text ]
     , optChatroomAutoSubscribe :: Maybe Int
     , optDmBotEcho :: Maybe Text
     , optWebSocketServer :: Maybe Int
@@ -93,6 +94,7 @@ defaultOptions = Options
     , optServices = availableServices
     , optStorage = DefaultStorage
     , optCreateIdentity = Nothing
+    , optCommands = []
     , optChatroomAutoSubscribe = Nothing
     , optDmBotEcho = Nothing
     , optWebSocketServer = Nothing
@@ -147,6 +149,9 @@ options =
                  in maybe (Just ( Nothing, [ ownerName ] )) (Just . second (ownerName :)) (optCreateIdentity opts)
             }) "<name>")
         "create owner for a new device identity"
+    , Option [ 'c' ] [ "command" ]
+        (ReqArg (\value -> \opts -> return opts { optCommands = optCommands opts ++ [ T.pack value ] }) "<command>")
+        "run given <command> after starting the server"
     , Option [] [ "chatroom-auto-subscribe" ]
         (ReqArg (\count -> \opts -> return opts { optChatroomAutoSubscribe = Just (read count) }) "<count>")
         "automatically subscribe for up to <count> chatrooms"
@@ -396,21 +401,20 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
                     | tui       -> KeepPrompt mzero
                     | otherwise -> KeepPrompt $ liftIO $ forever $ threadDelay 100000000
 
+        parseCommand cmdline =
+            case dropWhile isSpace <$> span (\c -> isAlphaNum c || c == '-') cmdline of
+                ( scmd, args )
+                    | not (null scmd) && all isDigit scmd
+                    -> ( cmdSelectContext, scmd )
+
+                    | otherwise
+                    -> ( fromMaybe (cmdUnknown scmd) $ lookup scmd commands, args )
+
         getInputCommandTui cstate = do
-            let parseCommand cmdline =
-                    case dropWhile isSpace <$> span (\c -> isAlphaNum c || c == '-') cmdline of
-                        ( scmd, args )
-                            | not (null scmd) && all isDigit scmd
-                            -> ( cmdSelectContext, scmd )
-
-                            | otherwise
-                            -> ( fromMaybe (cmdUnknown scmd) $ lookup scmd commands, args )
-
-            ( CommandM cmd, line ) <- getInputLinesTui cstate >>= return . \case
+            getInputLinesTui cstate >>= return . \case
                 '/' : input     -> parseCommand input
                 input | not tui -> parseCommand input
                 input           -> ( cmdSend, input )
-            return ( cmd, line )
 
     let getInputCommand = getInputCommandTui . Left
 
@@ -515,9 +519,8 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
                     cur -> return cur
             _ -> return ()
 
-    let process :: CommandState -> MaybeT IO CommandState
-        process cstate = do
-            (cmd, line) <- getInputCommand cstate
+    let process :: CommandState -> ( Command, String ) -> MaybeT IO CommandState
+        process cstate ( CommandM cmd, line ) = do
             h <- liftIO (reloadHead $ csHead cstate) >>= \case
                 Just h  -> return h
                 Nothing -> do lift $ extPrintLn "current head deleted"
@@ -548,9 +551,12 @@ interactiveLoop st opts = withTerminal commandCompletion $ \term -> do
                     lift $ extPrintLn $ withStyle (setForegroundColor BrightRed noStyle) $ plainText $ T.pack $ "Error: " ++ showErebosError err
                     return cstate
 
-    let loop (Just cstate) = runMaybeT (process cstate) >>= loop
-        loop Nothing = return ()
-    loop $ Just $ CommandState
+    let loop [] (Just cstate) = do
+            loop [] =<< runMaybeT (process cstate =<< getInputCommand cstate)
+        loop (c : cs) (Just cstate) = do
+            loop cs =<< runMaybeT (process cstate $ parseCommand $ T.unpack c)
+        loop _ Nothing = return ()
+    loop (optCommands opts) $ Just $ CommandState
         { csHead = erebosHead
         , csContext = NoContext
         , csWatchChatrooms = watched
