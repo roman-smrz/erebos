@@ -19,6 +19,7 @@ import Data.ByteString qualified as B
 import Data.ByteString.Char8 qualified as BC
 import Data.ByteString.Lazy qualified as BL
 import Data.ByteString.Lazy.Char8 qualified as BL
+import Data.Char
 import Data.Foldable
 import Data.Ord
 import Data.Text (Text)
@@ -668,7 +669,11 @@ cmdStartServer = do
         ( "chatroom", _ ) -> return $ someService @ChatroomService Proxy
         ( "contact", _ ) -> return $ someServiceAttr $ pairingAttributes (Proxy @ContactService) out rsPeers "contact"
         ( "discovery", params ) -> return $ someServiceAttr $ discoveryAttributes
-            { discoveryProvideTunnel = \_ _ -> "tunnel" `elem` params
+            { discoveryProvideTunnel
+                = \_ paddr -> or
+                    [ "tunnel" `elem` params
+                    , ("tunnel-" <> T.pack (takeWhile (not . isSpace) $ show paddr)) `elem` params
+                    ]
             }
         ( "dm", _ ) -> return $ someServiceAttr $ directMessageAttributes out
         ( "invite", _ ) -> return $ someServiceAttr $ inviteAttributes out
