@@ -126,7 +126,10 @@ instance (HeadType a, MonadIO m) => MonadHead a (ReaderT (Head a) m) where
     updateLocalHead f = do
         h <- ask
         snd <$> updateHead' h (\h' -> local (const h') (f $ headStoredObject h'))
-    getLocalHeadCache _ = asks headCache
+
+    getLocalHeadCache _ = do
+        h <- ask
+        snd <$> updateHead' h (\h' -> return ( headStoredObject h', headCache h' ))
 
 
 newtype LocalHeadT h m a = LocalHeadT { runLocalHeadT_ :: Storage -> ( Stored h, HeadCacheType h ) -> m ( a, ( Stored h, HeadCacheType h ) ) }
