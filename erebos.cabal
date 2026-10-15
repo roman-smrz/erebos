@@ -53,6 +53,7 @@ common common
 
     default-extensions:
         DefaultSignatures
+        DataKinds
         ExistentialQuantification
         FlexibleContexts
         FlexibleInstances
