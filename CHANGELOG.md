@@ -1,5 +1,12 @@
 # Revision history for erebos
 
+## 0.2.4 -- 2026-10-15
+
+* Added `--command` command-line option to run initial commands after starting the server.
+* Discovery is now working also on localhost without the need for external interface.
+* Fixed tunnel offer for peers without inet addresses.
+* Fixed status indicator for new messages not being updated in some situations.
+
 ## 0.2.3 -- 2026-08-19
 
 * Discovery service handles situation when search target joins later.
