@@ -419,7 +419,7 @@ startServer serverOptions serverOrigHead logd' serverServices = do
                             case mbpid of
                                 Just dgst -> do
                                     identity <- readMVar serverIdentity_
-                                    atomically $ runPacketHandler False peer $ do
+                                    atomically $ runPacketHandler False peer conn $ do
                                         wref <- newWaitingRef dgst $ handleIdentityAnnounce identity peer
                                         readTVarP (peerIdentityVar peer) >>= \case
                                             PeerIdentityUnknown idwait -> do
@@ -434,7 +434,7 @@ startServer serverOptions serverOrigHead logd' serverServices = do
                                         prefs <- forM objs $ storeObject $ peerInStorage peer
                                         identity <- readMVar serverIdentity_
                                         let svcs = map someServiceID serverServices
-                                        handlePacket paddr identity secure peer chanSvc svcs header prefs
+                                        handlePacket conn identity secure peer chanSvc svcs header prefs
                                         peerLoop
                                     Nothing -> do
                                         case paddr of
@@ -542,10 +542,10 @@ newtype PacketHandler a = PacketHandler { unPacketHandler :: StateT PacketHandle
 instance MonadFail PacketHandler where
     fail = throwError
 
-runPacketHandler :: Bool -> Peer -> PacketHandler () -> STM ()
-runPacketHandler secure peer@Peer {..} act = do
+runPacketHandler :: Bool -> Peer -> Connection PeerAddress -> PacketHandler () -> STM ()
+runPacketHandler secure peer@Peer {..} conn act = do
     let logd = writeTQueue $ serverErrorLog peerServer_
-    runExceptT (flip execStateT (PacketHandlerState peer [] [] [] Nothing False) $ unPacketHandler act) >>= \case
+    runExceptT (flip execStateT (PacketHandlerState peer conn [] [] [] Nothing False) $ unPacketHandler act) >>= \case
         Left err -> do
             logd $ "Error in handling packet from " ++ show peerAddress ++ ": " ++ err
         Right ph -> do
@@ -577,9 +577,10 @@ modifyTMVarP v f = liftSTM $ putTMVar v . f =<< takeTMVar v
 
 data PacketHandlerState = PacketHandlerState
     { phPeer :: Peer
-    , phHead :: [TransportHeaderItem]
-    , phAckedBy :: [TransportHeaderItem]
-    , phBody :: [Ref]
+    , phConnection :: Connection PeerAddress
+    , phHead :: [ TransportHeaderItem ]
+    , phAckedBy :: [ TransportHeaderItem ]
+    , phBody :: [ Ref ]
     , phBodyStream :: Maybe RawStreamWriter
     , phPlaintextReply :: Bool
     }
@@ -607,9 +608,7 @@ keepPlaintextReply = modify $ \ph -> ph { phPlaintextReply = True }
 openStream :: PacketHandler RawStreamWriter
 openStream = do
     Peer {..} <- gets phPeer
-    conn <- readTVarP peerState >>= \case
-        PeerConnected conn -> return conn
-        _                  -> throwError "can't open stream without established connection"
+    conn <- gets phConnection
     (hdr, writer, handler) <- liftEither =<< liftSTM (connAddWriteStream conn)
 
     liftSTM $ writeTQueue (serverIOActions peerServer_) (liftIO $ forkServerThread peerServer_ "stream-writer" handler)
@@ -618,10 +617,7 @@ openStream = do
 
 acceptStream :: Word8 -> PacketHandler RawStreamReader
 acceptStream streamNumber = do
-    Peer {..} <- gets phPeer
-    conn <- readTVarP peerState >>= \case
-        PeerConnected conn -> return conn
-        _                  -> throwError "can't accept stream without established connection"
+    conn <- gets phConnection
     liftSTM $ connAddReadStream conn streamNumber
 
 appendDistinct :: Eq a => a -> [a] -> [a]
@@ -629,10 +625,11 @@ appendDistinct x (y:ys) | x == y    = y : ys
                         | otherwise = y : appendDistinct x ys
 appendDistinct x [] = [x]
 
-handlePacket :: PeerAddress -> UnifiedIdentity -> Bool
+handlePacket :: Connection PeerAddress -> UnifiedIdentity -> Bool
     -> Peer -> TQueue ( Peer, PeerAddress, ServiceID, Ref, [ RawStreamReader ] ) -> [ ServiceID ]
     -> TransportHeader -> [ PartialRef ] -> IO ()
-handlePacket paddr identity secure peer chanSvc svcs (TransportHeader headers) prefs = atomically $ do
+handlePacket conn identity secure peer chanSvc svcs (TransportHeader headers) prefs = atomically $ do
+    let paddr = connAddress conn
     let server = peerServer peer
     ochannel <- getPeerChannel peer
     let sidentity = idData identity
@@ -645,7 +642,7 @@ handlePacket paddr identity secure peer chanSvc svcs (TransportHeader headers) p
                    _                      -> []
             ]
 
-    runPacketHandler secure peer $ do
+    runPacketHandler secure peer conn $ do
         let logd = liftSTM . writeTQueue (serverErrorLog server)
         forM_ headers $ \case
             Acknowledged dgst -> do
