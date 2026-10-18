@@ -42,6 +42,10 @@ flag cryptonite
     description:    Use deprecated 'cryptonite' package as crypto backed
     default: False
 
+flag crypto-reflibs
+    description:    Use various (reference) libraries as crypto backed
+    default: False
+
 source-repository head
     type:       git
     location:   https://code.erebosprotocol.net/erebos
@@ -194,6 +198,25 @@ library
         hs-source-dirs:
             src/crypto/crypton
 
+    elif flag(crypto-reflibs)
+        other-modules:
+            Crypto.Cipher.ChaChaPoly1305
+            Crypto.Error
+            Crypto.Hash
+            Crypto.MAC.Poly1305
+            Crypto.PubKey.Curve25519
+            Crypto.PubKey.Ed25519
+            Crypto.Random
+            Crypto.Random.Entropy
+        build-depends:
+            ed25519 ^>= { 0.0.6 },
+            ppad-aead ^>= { 0.1 },
+        hs-source-dirs:
+            src/crypto/reflibs
+        extra-libraries:
+            blake2b-ref
+            curve25519-donna
+
     else
         build-depends: base < 0
 
@@ -249,3 +272,12 @@ executable erebos
     elif flag(cryptonite)
         build-depends:
             cryptonite,
+
+    elif flag(crypto-reflibs)
+        other-modules:
+            Crypto.Random
+            Crypto.Random.Entropy
+        hs-source-dirs:
+            src/crypto/reflibs
+        build-depends:
+            memory,
