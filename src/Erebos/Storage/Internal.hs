@@ -24,8 +24,6 @@ import Control.Concurrent
 import Control.DeepSeq
 import Control.Monad.Identity
 
-import Crypto.Hash
-
 import Data.Bits
 import Data.ByteArray (ByteArrayAccess, ScrubbedBytes)
 import Data.ByteArray qualified as BA
@@ -41,6 +39,7 @@ import Foreign.Storable (peek)
 
 import System.IO.Unsafe (unsafePerformIO)
 
+import Crypto
 import Erebos.UUID (UUID)
 import Erebos.Util
 

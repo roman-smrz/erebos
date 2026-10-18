@@ -12,25 +12,21 @@ module Erebos.PubKey (
 
 import Control.Monad
 
-import Crypto.Error
-import qualified Crypto.PubKey.Ed25519 as ED
-import qualified Crypto.PubKey.Curve25519 as CX
-
 import Data.ByteArray
-import Data.ByteString (ByteString)
-import qualified Data.Text as T
+import Data.Text qualified as T
 
+import Crypto
 import Erebos.Storable
 import Erebos.Storage.Key
 
-data PublicKey = PublicKey ED.PublicKey
+data PublicKey = PublicKey EdPublicKey
     deriving (Show)
 
-data SecretKey = SecretKey ED.SecretKey (Stored PublicKey)
+data SecretKey = SecretKey EdSecretKey (Stored PublicKey)
 
 data Signature = Signature
     { sigKey :: Stored PublicKey
-    , sigSignature :: ED.Signature
+    , sigSignature :: EdSignature
     }
     deriving (Show)
 
@@ -50,13 +46,13 @@ instance KeyPair SecretKey PublicKey where
     keyGetPublic (SecretKey _ pub) = pub
     keyGetData (SecretKey sec _) = convert sec
     keyFromData kdata spub = do
-        skey <- maybeCryptoError $ ED.secretKey kdata
+        skey <- maybeCryptoError $ edSecretKey kdata
         let PublicKey pkey = fromStored spub
-        guard $ ED.toPublic skey == pkey
+        guard $ edToPublic skey == pkey
         return $ SecretKey skey spub
     generateKeys st = do
-        secret <- ED.generateSecretKey
-        public <- wrappedStore st $ PublicKey $ ED.toPublic secret
+        secret <- edGenerateSecretKey
+        public <- wrappedStore st $ PublicKey $ edToPublic secret
         let pair = SecretKey secret public
         storeKey pair
         return (pair, public)
@@ -70,8 +66,7 @@ instance Storable PublicKey where
         ktype <- loadText "type"
         guard $ ktype == "ed25519"
         maybe (throwOtherError "public key decoding failed") (return . PublicKey) .
-            maybeCryptoError . (ED.publicKey :: ByteString -> CryptoFailable ED.PublicKey) =<<
-                loadBinary "pubkey"
+            maybeCryptoError . edPublicKey =<< loadBinary "pubkey"
 
 instance Storable Signature where
     store' sig = storeRec $ do
@@ -82,7 +77,7 @@ instance Storable Signature where
         <$> loadRef "key"
         <*> loadSignature "sig"
         where loadSignature = maybe (throwOtherError "signature decoding failed") return .
-                  maybeCryptoError . (ED.signature :: ByteString -> CryptoFailable ED.Signature) <=< loadBinary
+                  maybeCryptoError . edSignature <=< loadBinary
 
 instance Storable a => Storable (Signed a) where
     store' sig = storeRec $ do
@@ -94,7 +89,7 @@ instance Storable a => Storable (Signed a) where
         sigs <- loadRefs "sig"
         forM_ sigs $ \sig -> do
             let PublicKey pubkey = fromStored $ sigKey $ fromStored sig
-            when (not $ ED.verify pubkey (storedRef sdata) $ sigSignature $ fromStored sig) $
+            when (not $ edVerify pubkey (storedRef sdata) $ sigSignature $ fromStored sig) $
                 throwOtherError "signature verification failed"
         return $ Signed sdata sigs
 
@@ -104,12 +99,12 @@ sign secret val = signAdd secret $ Signed val []
 signAdd :: MonadStorage m => SecretKey -> Signed a -> m (Signed a)
 signAdd (SecretKey secret spublic) (Signed val sigs) = do
     let PublicKey public = fromStored spublic
-        sig = ED.sign secret public $ storedRef val
+        sig = edSign secret public $ storedRef val
     ssig <- mstore $ Signature spublic sig
     return $ Signed val (ssig : sigs)
 
 isSignedBy :: Signed a -> Stored PublicKey -> Bool
-isSignedBy sig key = key `elem` map (sigKey . fromStored) (signedSignature sig)
+isSignedBy sig key = key `elem` Prelude.map (sigKey . fromStored) (signedSignature sig)
 
 fromSigned :: Stored (Signed a) -> a
 fromSigned = fromStored . signedData . fromStored
@@ -119,22 +114,22 @@ unsafeMapSigned :: (a -> b) -> Signed a -> Signed b
 unsafeMapSigned f signed = signed { signedData_ = unsafeMapStored f (signedData_ signed) }
 
 
-data PublicKexKey = PublicKexKey CX.PublicKey
+data PublicKexKey = PublicKexKey CxPublicKey
     deriving (Show)
 
-data SecretKexKey = SecretKexKey CX.SecretKey (Stored PublicKexKey)
+data SecretKexKey = SecretKexKey CxSecretKey (Stored PublicKexKey)
 
 instance KeyPair SecretKexKey PublicKexKey where
     keyGetPublic (SecretKexKey _ pub) = pub
     keyGetData (SecretKexKey sec _) = convert sec
     keyFromData kdata spub = do
-        skey <- maybeCryptoError $ CX.secretKey kdata
+        skey <- maybeCryptoError $ cxSecretKey kdata
         let PublicKexKey pkey = fromStored spub
-        guard $ CX.toPublic skey == pkey
+        guard $ cxToPublic skey == pkey
         return $ SecretKexKey skey spub
     generateKeys st = do
-        secret <- CX.generateSecretKey
-        public <- wrappedStore st $ PublicKexKey $ CX.toPublic secret
+        secret <- cxGenerateSecretKey
+        public <- wrappedStore st $ PublicKexKey $ cxToPublic secret
         let pair = SecretKexKey secret public
         storeKey pair
         return (pair, public)
@@ -148,8 +143,7 @@ instance Storable PublicKexKey where
         ktype <- loadText "type"
         guard $ ktype == "x25519"
         maybe (throwOtherError "public key decoding failed") (return . PublicKexKey) .
-            maybeCryptoError . (CX.publicKey :: ScrubbedBytes -> CryptoFailable CX.PublicKey) =<<
-                loadBinary "pubkey"
+            maybeCryptoError . cxPublicKey =<< loadBinary "pubkey"
 
 dhSecret :: SecretKexKey -> PublicKexKey -> ScrubbedBytes
-dhSecret (SecretKexKey secret _) (PublicKexKey public) = convert $ CX.dh public secret
+dhSecret (SecretKexKey secret _) (PublicKexKey public) = convert $ diffieHellman public secret

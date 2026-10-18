@@ -14,8 +14,6 @@ import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
 
-import Crypto.Random
-
 import Data.Bits
 import Data.ByteArray qualified as BA
 import Data.ByteString (ByteString)
@@ -26,6 +24,7 @@ import Data.Maybe
 import Data.Typeable
 import Data.Word
 
+import Crypto
 import Erebos.Identity
 import Erebos.Network
 import Erebos.Object

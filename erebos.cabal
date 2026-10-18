@@ -31,11 +31,15 @@ Extra-Source-Files:
     src/Erebos/ICE/pjproject.h
     src/Erebos/Network/ifaddrs.h
 
-Flag ice
+flag ice
     Description:    Enable peer discovery with ICE support using pjproject
 
-Flag cryptonite
-    description:    Use deprecated 'cryptonite' package
+flag crypton
+    description:    Use 'crypton' package as crypto backend
+    default: True
+
+flag cryptonite
+    description:    Use deprecated 'cryptonite' package as crypto backed
     default: False
 
 source-repository head
@@ -119,6 +123,7 @@ library
         Erebos.TextFormat.Ansi
 
     other-modules:
+        Crypto
         Erebos.Conversation.Class
         Erebos.Flow
         Erebos.Network.Address
@@ -177,12 +182,20 @@ library
         uuid-types ^>= { 1.0.4 },
         zlib >=0.6 && <0.8
 
-    if !flag(cryptonite)
+    if flag(crypton)
         build-depends:
             crypton ^>= { 0.34, 1.0 },
-    else
+        hs-source-dirs:
+            src/crypto/crypton
+
+    elif flag(cryptonite)
         build-depends:
             cryptonite >=0.25 && <0.31,
+        hs-source-dirs:
+            src/crypto/crypton
+
+    else
+        build-depends: base < 0
 
     if os(windows)
         hs-source-dirs: src/windows
@@ -229,9 +242,10 @@ executable erebos
         uuid-types,
         websockets ^>= { 0.12.7, 0.13 },
 
-    if !flag(cryptonite)
+    if flag(crypton)
         build-depends:
             crypton,
-    else
+
+    elif flag(cryptonite)
         build-depends:
             cryptonite,

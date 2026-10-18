@@ -20,8 +20,6 @@ import Control.Monad.Except
 import Control.Monad.IO.Class
 import Control.Monad.Reader
 
-import Crypto.Random
-
 import Data.ByteArray (ByteArray, ByteArrayAccess)
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as BC
@@ -33,6 +31,7 @@ import Data.Text qualified as T
 import Data.Text.Encoding
 import Data.Time.LocalTime
 
+import Crypto
 import Erebos.Contact
 import Erebos.Discovery
 import Erebos.Identity

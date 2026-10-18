@@ -49,8 +49,6 @@ import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.Writer
 
-import Crypto.Hash
-
 import Data.Bifunctor
 import Data.ByteArray qualified as BA
 import Data.ByteString (ByteString)
@@ -75,6 +73,7 @@ import Data.Word
 
 import System.IO.Unsafe
 
+import Crypto
 import Erebos.Error
 import Erebos.Storage.Internal
 import Erebos.UUID (UUID)

@@ -16,15 +16,13 @@ import Control.Monad
 import Control.Monad.Except
 import Control.Monad.IO.Class
 
-import Crypto.Cipher.ChaChaPoly1305
-import Crypto.Error
-
 import Data.Binary
 import Data.ByteArray (ByteArray, Bytes, ScrubbedBytes, convert)
 import Data.ByteArray qualified as BA
 import Data.ByteString.Lazy qualified as BL
 import Data.List
 
+import Crypto
 import Erebos.Identity
 import Erebos.PubKey
 import Erebos.Storable
@@ -142,12 +140,12 @@ channelEncrypt Channel {..} plain = do
     count <- liftIO $ modifyMVar chCounterNextOut $ \c -> return (c + 1, c)
     let cbytes = convert $ BL.toStrict $ encode count
         nonce = nonce8 chNonceFixedOur cbytes
-    state <- case initialize chKey =<< nonce of
+    state <- case aeadInitialize chKey =<< nonce of
         CryptoPassed state -> return state
         CryptoFailed err -> throwOtherError $ "failed to init chacha-poly1305 cipher: " <> show err
 
     let (ctext, state') = encrypt plain state
-        tag = finalize state'
+        tag = aeadFinalize state'
     return (BA.concat [ convert $ BA.drop 7 cbytes, ctext, convert tag ], count)
 
 channelDecrypt :: (ByteArray ba, MonadIO m, MonadError e m, FromErebosError e) => Channel -> ba -> m (ba, Word64)
@@ -163,13 +161,15 @@ channelDecrypt Channel {..} body = do
         blen = BA.length body' - 16
         ctext = BA.takeView body' blen
         tag = BA.dropView body' blen
-    state <- case initialize chKey =<< nonce of
+    state <- case aeadInitialize chKey =<< nonce of
         CryptoPassed state -> return state
         CryptoFailed err -> throwOtherError $ "failed to init chacha-poly1305 cipher: " <> show err
 
-    let (plain, state') = decrypt (convert ctext) state
-    when (not $ tag `BA.constEq` finalize state') $ do
-        throwOtherError $ "tag validation falied"
+    auth <- case authTag tag of
+        CryptoPassed auth -> return auth
+        CryptoFailed err -> throwOtherError $ "failed to decode auth tag: " <> show err
+    plain <- maybe (throwOtherError "tag validation failed") return $
+        decrypt ( convert ctext, auth ) state
 
     liftIO $ modifyMVar_ chCounterNextIn $ return . max (guessedCount + 1)
     return (plain, guessedCount)

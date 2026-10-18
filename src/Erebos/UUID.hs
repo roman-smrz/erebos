@@ -6,13 +6,13 @@ module Erebos.UUID (
     nextRandom,
 ) where
 
-import Crypto.Random.Entropy
-
 import Data.Bits
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BSL
 import Data.Maybe
 import Data.UUID.Types
+
+import Crypto
 
 nextRandom :: IO UUID
 nextRandom = do
