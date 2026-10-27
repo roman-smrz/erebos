@@ -25,8 +25,7 @@ import Control.DeepSeq
 import Control.Monad.Identity
 
 import Data.Bits
-import Data.ByteArray (ByteArrayAccess, ScrubbedBytes)
-import Data.ByteArray qualified as BA
+import Data.ByteArray (ByteArrayAccess)
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as BC
 import Data.ByteString.Lazy qualified as BL
@@ -40,6 +39,7 @@ import Foreign.Storable (peek)
 import System.IO.Unsafe (unsafePerformIO)
 
 import Crypto
+import ConvertByteString
 import Erebos.UUID (UUID)
 import Erebos.Util
 
@@ -168,13 +168,13 @@ watchListDel wid wl = wl { wlList = filter ((/= wid) . wlID) $ wlList wl }
 
 
 newtype RefDigest = RefDigest (Digest Blake2b_256)
-    deriving (Eq, Ord, NFData, ByteArrayAccess)
+    deriving (Eq, Ord, NFData, ByteArrayAccess, ToByteString)
 
 instance Show RefDigest where
     show = BC.unpack . showRefDigest
 
 instance Hashable RefDigest where
-    hashWithSalt salt ref = salt `xor` unsafePerformIO (BA.withByteArray ref peek)
+    hashWithSalt salt ref = salt `xor` unsafePerformIO (withByteArray ref peek)
 
 showRefDigestParts :: RefDigest -> (ByteString, ByteString)
 showRefDigestParts x = (BC.pack "blake2", showHex x)
@@ -184,9 +184,9 @@ showRefDigest = showRefDigestParts >>> \(alg, hex) -> alg <> BC.pack "#" <> hex
 
 readRefDigest :: ByteString -> Maybe RefDigest
 readRefDigest x = case BC.split '#' x of
-                       [alg, dgst] | BA.convert alg == BC.pack "blake2" ->
-                           refDigestFromByteString =<< readHex dgst
-                       _ -> Nothing
+    [ alg, dgst ] | alg == BC.pack "blake2" ->
+        refDigestFromByteString =<< readHex dgst
+    _ -> Nothing
 
 refDigestFromByteString :: ByteString -> Maybe RefDigest
 refDigestFromByteString = fmap RefDigest . digestFromByteString

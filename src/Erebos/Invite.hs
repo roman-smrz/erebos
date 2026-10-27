@@ -31,6 +31,7 @@ import Data.Text qualified as T
 import Data.Text.Encoding
 import Data.Time.LocalTime
 
+import ConvertByteString
 import Crypto
 import Erebos.Contact
 import Erebos.Discovery
@@ -79,7 +80,7 @@ instance Storable InviteData where
 
 
 newtype InviteToken = InviteToken ByteString
-    deriving (Eq, Ord, Semigroup, Monoid, ByteArray, ByteArrayAccess)
+    deriving (Eq, Ord, Semigroup, Monoid, ByteArray, ByteArrayAccess, ToByteString)
 
 showInviteToken :: InviteToken -> String
 showInviteToken (InviteToken token) = BC.unpack (showHex token)

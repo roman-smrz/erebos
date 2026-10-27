@@ -12,9 +12,9 @@ module Erebos.PubKey (
 
 import Control.Monad
 
-import Data.ByteArray
 import Data.Text qualified as T
 
+import ConvertByteString
 import Crypto
 import Erebos.Storable
 import Erebos.Storage.Key

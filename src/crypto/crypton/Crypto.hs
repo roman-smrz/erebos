@@ -1,3 +1,5 @@
+{-# OPTIONS_GHC -fno-warn-orphans #-}
+
 module Crypto (
     getEntropy,
     getRandomBytes,
@@ -37,8 +39,16 @@ import Crypto.PubKey.Ed25519 qualified as Ed
 import Crypto.Random
 import Crypto.Random.Entropy
 
-import Data.ByteArray
+import Data.ByteArray (Bytes, ByteArray)
+import Data.ByteArray qualified as BA
 import Data.ByteString (ByteString)
+
+import ConvertByteString
+
+
+instance ToByteString (Digest a) where
+    toByteString = BA.convert
+    withByteArray = BA.withByteArray
 
 
 type AeadState = C.State
@@ -66,7 +76,7 @@ encrypt = C.encrypt
 decrypt :: ByteArray ba => ( ba, Auth ) -> AeadState -> Maybe ba
 decrypt ( ctext, auth ) st = do
     let ( plain, st' ) = C.decrypt ctext st
-    guard (C.finalize st' `constEq` auth)
+    guard (C.finalize st' `BA.constEq` auth)
     return plain
 
 aeadFinalize :: AeadState -> Auth
@@ -77,10 +87,14 @@ type EdPublicKey = Ed.PublicKey
 type EdSecretKey = Ed.SecretKey
 type EdSignature = Ed.Signature
 
+instance ToByteString EdSecretKey where
+    toByteString = BA.convert
+    withByteArray = BA.withByteArray
+
 edPublicKey :: ByteString -> CryptoFailable EdPublicKey
 edPublicKey = Ed.publicKey
 
-edSecretKey :: ByteArrayAccess ba => ba -> CryptoFailable EdSecretKey
+edSecretKey :: ScrubbedBytes -> CryptoFailable EdSecretKey
 edSecretKey = Ed.secretKey
 
 edGenerateSecretKey :: IO EdSecretKey
@@ -92,20 +106,28 @@ edToPublic = Ed.toPublic
 edSignature :: ByteString -> CryptoFailable EdSignature
 edSignature = Ed.signature
 
-edSign :: ByteArrayAccess ba => EdSecretKey -> EdPublicKey -> ba -> EdSignature
-edSign = Ed.sign
+edSign :: ToByteString ba => EdSecretKey -> EdPublicKey -> ba -> EdSignature
+edSign skey pkey content = Ed.sign skey pkey (toByteString content)
 
-edVerify :: ByteArrayAccess ba => EdPublicKey -> ba -> EdSignature -> Bool
-edVerify = Ed.verify
+edVerify :: ToByteString ba => EdPublicKey -> ba -> EdSignature -> Bool
+edVerify pkey content sig = Ed.verify pkey (toByteString content) sig
 
 type CxPublicKey = Cx.PublicKey
 type CxSecretKey = Cx.SecretKey
 type DhSecret = Cx.DhSecret
 
+instance ToByteString CxSecretKey where
+    toByteString = BA.convert
+    withByteArray = BA.withByteArray
+
+instance ToByteString DhSecret where
+    toByteString = BA.convert
+    withByteArray = BA.withByteArray
+
 cxPublicKey :: ByteString -> CryptoFailable CxPublicKey
 cxPublicKey = Cx.publicKey
 
-cxSecretKey :: ByteArrayAccess ba => ba -> CryptoFailable CxSecretKey
+cxSecretKey :: ScrubbedBytes -> CryptoFailable CxSecretKey
 cxSecretKey = Cx.secretKey
 
 cxGenerateSecretKey :: IO CxSecretKey

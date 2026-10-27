@@ -16,9 +16,11 @@ import Crypto.Error
 import Crypto.Random
 import Crypto.Sign.Ed25519 qualified as Ed
 
-import Data.ByteArray as BA
+import Data.ByteArray qualified as BA
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
+
+import ConvertByteString
 
 
 newtype EdSecretKey = EdSecretKey { fromSecretKey :: Ed.SecretKey }
@@ -34,16 +36,28 @@ instance Show EdSecretKey where show = show . fromSecretKey
 instance Show EdPublicKey where show = show . fromPublicKey
 instance Show EdSignature where show = show . fromSignature
 
-instance ByteArrayAccess EdSecretKey where
+instance BA.ByteArrayAccess EdSecretKey where
     length = BS.length . Ed.openSecretKey . fromSecretKey
+    withByteArray = BA.withByteArray . Ed.openSecretKey . fromSecretKey
+
+instance BA.ByteArrayAccess EdPublicKey where
+    length = BS.length . Ed.openPublicKey . fromPublicKey
+    withByteArray = BA.withByteArray . Ed.openPublicKey . fromPublicKey
+
+instance BA.ByteArrayAccess EdSignature where
+    length = BS.length . Ed.unSignature . fromSignature
+    withByteArray = BA.withByteArray . Ed.unSignature . fromSignature
+
+instance ToByteString EdSecretKey where
+    toByteString = Ed.openSecretKey . fromSecretKey
     withByteArray = withByteArray . Ed.openSecretKey . fromSecretKey
 
-instance ByteArrayAccess EdPublicKey where
-    length = BS.length . Ed.openPublicKey . fromPublicKey
+instance ToByteString EdPublicKey where
+    toByteString = Ed.openPublicKey . fromPublicKey
     withByteArray = withByteArray . Ed.openPublicKey . fromPublicKey
 
-instance ByteArrayAccess EdSignature where
-    length = BS.length . Ed.unSignature . fromSignature
+instance ToByteString EdSignature where
+    toByteString = Ed.unSignature . fromSignature
     withByteArray = withByteArray . Ed.unSignature . fromSignature
 
 signatureSize :: Int
@@ -57,16 +71,16 @@ edSignature bs
 edPublicKey :: ByteString -> CryptoFailable EdPublicKey
 edPublicKey = maybe (CryptoFailed CryptoError) (CryptoPassed . EdPublicKey) . Ed.makePublicKey . convert
 
-edSecretKey :: ByteArrayAccess ba => ba -> CryptoFailable EdSecretKey
+edSecretKey :: ScrubbedBytes -> CryptoFailable EdSecretKey
 edSecretKey = maybe (CryptoFailed CryptoError) (CryptoPassed . EdSecretKey) . Ed.makeSecretKey . convert
 
 edToPublic :: EdSecretKey -> EdPublicKey
 edToPublic = EdPublicKey . Ed.secretToPublicKey . fromSecretKey
 
-edSign :: ByteArrayAccess ba => EdSecretKey -> EdPublicKey -> ba -> EdSignature
+edSign :: ToByteString ba => EdSecretKey -> EdPublicKey -> ba -> EdSignature
 edSign (EdSecretKey key) _ = EdSignature . Ed.dsign key . convert
 
-edVerify :: ByteArrayAccess ba => EdPublicKey -> ba -> EdSignature -> Bool
+edVerify :: ToByteString ba => EdPublicKey -> ba -> EdSignature -> Bool
 edVerify (EdPublicKey pub) msg (EdSignature sig) = Ed.dverify pub (convert msg) sig
 
 edGenerateSecretKey :: IO EdSecretKey

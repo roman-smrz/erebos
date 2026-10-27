@@ -18,10 +18,10 @@ module Erebos.Storage.Backend (
 
 import Control.Concurrent.MVar
 
-import Data.ByteArray qualified as BA
 import Data.ByteString (ByteString)
 import Data.HashTable.IO qualified as HT
 
+import ConvertByteString
 import Erebos.Object.Internal
 import Erebos.Storage.Internal
 
@@ -37,4 +37,4 @@ withStorageBackend Storage {..} f = f stBackend
 
 
 refDigestBytes :: RefDigest -> ByteString
-refDigestBytes = BA.convert
+refDigestBytes = toByteString

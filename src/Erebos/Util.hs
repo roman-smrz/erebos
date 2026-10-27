@@ -2,11 +2,11 @@ module Erebos.Util where
 
 import Control.Monad
 
-import Data.ByteArray (ByteArray, ByteArrayAccess)
-import Data.ByteArray qualified as BA
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as B
 import Data.Char
+
+import ConvertByteString
 
 
 uniq :: Eq a => [a] -> [a]
@@ -47,15 +47,15 @@ intersectsSorted (x:xs) (y:ys) | x < y     = intersectsSorted xs (y:ys)
 intersectsSorted _ _ = False
 
 
-showHex :: ByteArrayAccess ba => ba -> ByteString
-showHex = B.concat . map showHexByte . BA.unpack
+showHex :: ToByteString ba => ba -> ByteString
+showHex = B.concat . map showHexByte . B.unpack . toByteString
     where showHexChar x | x < 10    = x + o '0'
                         | otherwise = x + o 'a' - 10
           showHexByte x = B.pack [ showHexChar (x `div` 16), showHexChar (x `mod` 16) ]
           o = fromIntegral . ord
 
-readHex :: ByteArray ba => ByteString -> Maybe ba
-readHex = return . BA.concat <=< readHex'
+readHex :: FromByteString ba => ByteString -> Maybe ba
+readHex = return . fromByteString . B.concat <=< readHex'
     where readHex' bs | B.null bs = Just []
           readHex' bs = do (bx, bs') <- B.uncons bs
                            (by, bs'') <- B.uncons bs'

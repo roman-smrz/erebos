@@ -127,6 +127,7 @@ library
         Erebos.TextFormat.Ansi
 
     other-modules:
+        ConvertByteString
         Crypto
         Erebos.Conversation.Class
         Erebos.Flow

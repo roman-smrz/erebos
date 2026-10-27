@@ -73,6 +73,7 @@ import Data.Word
 
 import System.IO.Unsafe
 
+import ConvertByteString
 import Crypto
 import Erebos.Error
 import Erebos.Storage.Internal
@@ -92,9 +93,9 @@ instance Eq (Ref' c) where
 instance Show (Ref' c) where
     show ref@(Ref st _) = show st ++ ":" ++ BC.unpack (showRef ref)
 
-instance BA.ByteArrayAccess (Ref' c) where
-    length (Ref _ dgst) = BA.length dgst
-    withByteArray (Ref _ dgst) = BA.withByteArray dgst
+instance ToByteString (Ref' c) where
+    withByteArray (Ref _ dgst) = withByteArray dgst
+    toByteString (Ref _ dgst) = toByteString dgst
 
 instance Hashable (Ref' c) where
     hashWithSalt salt = hashWithSalt salt . refDigest
@@ -117,7 +118,7 @@ zeroRef s = Ref s (RefDigest h)
           digestAlgo = undefined
 
 isZeroRef :: Ref' c -> Bool
-isZeroRef (Ref _ h) = all (==0) $ BA.unpack h
+isZeroRef (Ref _ h) = all (== 0) $ B.unpack $ toByteString h
 
 
 refFromDigest :: Storage' c -> RefDigest -> IO (Maybe (Ref' c))

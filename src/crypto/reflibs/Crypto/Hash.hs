@@ -26,9 +26,11 @@ import Foreign.Storable
 
 import System.IO.Unsafe
 
+import ConvertByteString
+
 
 newtype Digest a = Digest ByteString
-    deriving (Eq, Ord, NFData, ByteArrayAccess)
+    deriving (Eq, Ord, NFData, ByteArrayAccess, ToByteString)
 
 data Context a = Context (ForeignPtr Blake2bContext)
 
