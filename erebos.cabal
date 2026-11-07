@@ -197,6 +197,9 @@ library
         zlib >=0.6 && <0.8
 
     if flag(crypton)
+        if flag(cryptonite) || flag(crypto-reflibs)
+            build-depends:
+                crypton < 0
         if flag(bytearray-ram)
             build-depends:
                 crypton ^>= { 1.1, 2.0 },
@@ -210,6 +213,9 @@ library
             src/crypto/crypton
 
     elif flag(cryptonite)
+        if flag(crypto-reflibs)
+            build-depends:
+                cryptonite < 0
         if flag(bytearray-memory)
             build-depends:
                 cryptonite >=0.25 && <0.31,
