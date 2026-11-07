@@ -55,6 +55,10 @@ flag bytearray-memory
     description:    Use 'memory' package to provide the ByteArray module
     default: False
 
+flag bytearray-internal
+    description:    Use internal implementation of the ByteArray module
+    default: False
+
 
 source-repository head
     type:       git
@@ -248,14 +252,21 @@ library
         build-depends: base < 0
 
     if flag(bytearray-ram)
-        if flag(bytearray-memory)
+        if flag(bytearray-memory) || flag(bytearray-internal)
             build-depends:
                 base < 0
         build-depends:
             ram ^>= { 0.21, 0.22 }
     elif flag(bytearray-memory)
+        if flag(bytearray-internal)
+            build-depends:
+                base < 0
         build-depends:
             memory ^>= { 0.14, 0.15, 0.16, 0.17, 0.18 },
+    elif flag(bytearray-internal)
+        hs-source-dirs: src/bytearray-internal
+        other-modules:
+            Data.ByteArray
     else
         build-depends:
             base < 0
