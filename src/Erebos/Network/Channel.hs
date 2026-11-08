@@ -17,8 +17,10 @@ import Control.Monad.Except
 import Control.Monad.IO.Class
 
 import Data.Binary
-import Data.ByteArray (ByteArray, Bytes, ScrubbedBytes, convert)
+import Data.ByteArray (Bytes, ScrubbedBytes, convert)
 import Data.ByteArray qualified as BA
+import Data.ByteString (ByteString)
+import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BL
 import Data.List
 
@@ -135,32 +137,32 @@ acceptedChannel self peer acc = do
     return Channel {..}
 
 
-channelEncrypt :: (ByteArray ba, MonadIO m, MonadError e m, FromErebosError e) => Channel -> ba -> m (ba, Word64)
+channelEncrypt :: (MonadIO m, MonadError e m, FromErebosError e) => Channel -> ByteString -> m ( ByteString, Word64 )
 channelEncrypt Channel {..} plain = do
-    count <- liftIO $ modifyMVar chCounterNextOut $ \c -> return (c + 1, c)
-    let cbytes = convert $ BL.toStrict $ encode count
-        nonce = nonce8 chNonceFixedOur cbytes
+    count <- liftIO $ modifyMVar chCounterNextOut $ \c -> return ( c + 1, c )
+    let cbytes = BL.toStrict $ encode count
+        nonce = nonce8 chNonceFixedOur (convert cbytes)
     state <- case aeadInitialize chKey =<< nonce of
         CryptoPassed state -> return state
         CryptoFailed err -> throwOtherError $ "failed to init chacha-poly1305 cipher: " <> show err
 
-    let (ctext, state') = encrypt plain state
+    let ( ctext, state' ) = encrypt plain state
         tag = aeadFinalize state'
-    return (BA.concat [ convert $ BA.drop 7 cbytes, ctext, convert tag ], count)
+    return ( BS.concat [ BS.drop 7 cbytes, ctext, convert tag ], count )
 
-channelDecrypt :: (ByteArray ba, MonadIO m, MonadError e m, FromErebosError e) => Channel -> ba -> m (ba, Word64)
+channelDecrypt :: (MonadIO m, MonadError e m, FromErebosError e) => Channel -> ByteString -> m ( ByteString, Word64 )
 channelDecrypt Channel {..} body = do
-    when (BA.length body < 17) $ do
+    when (BS.length body < 17) $ do
         throwOtherError $ "invalid encrypted data length"
 
     expectedCount <- liftIO $ readMVar chCounterNextIn
-    let countByte = body `BA.index` 0
-        body' = BA.dropView body 1
+    let countByte = body `BS.index` 0
+        body' = BS.drop 1 body
         guessedCount = expectedCount - 128 + fromIntegral (countByte - fromIntegral expectedCount + 128 :: Word8)
         nonce = nonce8 chNonceFixedPeer $ convert $ BL.toStrict $ encode guessedCount
-        blen = BA.length body' - 16
-        ctext = BA.takeView body' blen
-        tag = BA.dropView body' blen
+        blen = BS.length body' - 16
+        ctext = BS.take blen body'
+        tag = BS.drop blen body'
     state <- case aeadInitialize chKey =<< nonce of
         CryptoPassed state -> return state
         CryptoFailed err -> throwOtherError $ "failed to init chacha-poly1305 cipher: " <> show err
