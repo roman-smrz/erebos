@@ -39,7 +39,6 @@ import Crypto.PubKey.Ed25519 qualified as Ed
 import Crypto.Random
 import Crypto.Random.Entropy
 
-import Data.ByteArray (ByteArray)
 import Data.ByteArray qualified as BA
 import Data.ByteString (ByteString)
 
@@ -70,10 +69,10 @@ aeadAppendAAD = C.appendAAD
 aeadFinalizeAAD :: AeadState -> AeadState
 aeadFinalizeAAD = C.finalizeAAD
 
-encrypt :: ByteArray ba => ba -> AeadState -> ( ba, AeadState )
+encrypt :: ByteString -> AeadState -> ( ByteString, AeadState )
 encrypt = C.encrypt
 
-decrypt :: ByteArray ba => ( ba, Auth ) -> AeadState -> Maybe ba
+decrypt :: ( ByteString, Auth ) -> AeadState -> Maybe ByteString
 decrypt ( ctext, auth ) st = do
     let ( plain, st' ) = C.decrypt ctext st
     guard (C.finalize st' `BA.constEq` auth)

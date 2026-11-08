@@ -54,17 +54,17 @@ aeadAppendAAD aad st = st { stAAD = stAAD st ++ [ aad ] }
 aeadFinalizeAAD :: AeadState -> AeadState
 aeadFinalizeAAD = id
 
-encrypt :: ByteArray ba => ba -> AeadState -> ( ba, AeadState )
+encrypt :: ByteString -> AeadState -> ( ByteString, AeadState )
 encrypt ptext st =
     let Nonce nonce = stNonce st
-        ( ctext, mac ) = P.encrypt (B.concat $ stAAD st) (stKey st) nonce (convert ptext)
-     in ( convert ctext, st { stAuth = Just $ Auth mac } )
+        ( ctext, mac ) = P.encrypt (B.concat $ stAAD st) (stKey st) nonce ptext
+     in ( ctext, st { stAuth = Just $ Auth mac } )
 
-decrypt :: ByteArray ba => ( ba, Auth ) -> AeadState -> Maybe ba
+decrypt :: ( ByteString, Auth ) -> AeadState -> Maybe ByteString
 decrypt ( ctext, auth ) st = do
     let Nonce nonce = stNonce st
         Auth mac = auth
-    fmap convert $ P.decrypt (B.concat $ stAAD st) (stKey st) nonce ( convert ctext, mac )
+    P.decrypt (B.concat $ stAAD st) (stKey st) nonce ( ctext, mac )
 
 aeadFinalize :: AeadState -> Auth
 aeadFinalize st = case stAuth st of
