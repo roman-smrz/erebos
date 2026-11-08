@@ -17,7 +17,7 @@ import Control.Monad.Except
 import Control.Monad.IO.Class
 
 import Data.Binary
-import Data.ByteArray (Bytes, ScrubbedBytes, convert)
+import Data.ByteArray (ScrubbedBytes, convert)
 import Data.ByteArray qualified as BA
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
@@ -32,8 +32,8 @@ import Erebos.Storable
 data Channel = Channel
     { chPeers :: [Stored (Signed IdentityData)]
     , chKey :: ScrubbedBytes
-    , chNonceFixedOur :: Bytes
-    , chNonceFixedPeer :: Bytes
+    , chNonceFixedOur :: ByteString
+    , chNonceFixedPeer :: ByteString
     , chCounterNextOut :: MVar Word64
     , chCounterNextIn :: MVar Word64
     }
@@ -103,8 +103,8 @@ acceptChannelRequest self peer req = do
         let chPeers = crPeers $ fromStored $ signedData $ fromStored req
             chKey = BA.take keySize $ dhSecret xsecret $
                 fromStored $ crKey $ fromStored $ signedData $ fromStored req
-            chNonceFixedOur  = BA.pack [ 2, 0, 0, 0 ]
-            chNonceFixedPeer = BA.pack [ 1, 0, 0, 0 ]
+            chNonceFixedOur  = BS.pack [ 2, 0, 0, 0 ]
+            chNonceFixedPeer = BS.pack [ 1, 0, 0, 0 ]
         chCounterNextOut <- newMVar 0
         chCounterNextIn <- newMVar 0
 
@@ -129,8 +129,8 @@ acceptedChannel self peer acc = do
     let chPeers = crPeers $ fromStored $ signedData $ fromStored req
         chKey = BA.take keySize $ dhSecret xsecret $
             fromStored $ caKey $ fromStored $ signedData $ fromStored acc
-        chNonceFixedOur  = BA.pack [ 1, 0, 0, 0 ]
-        chNonceFixedPeer = BA.pack [ 2, 0, 0, 0 ]
+        chNonceFixedOur  = BS.pack [ 1, 0, 0, 0 ]
+        chNonceFixedPeer = BS.pack [ 2, 0, 0, 0 ]
     chCounterNextOut <- liftIO $ newMVar 0
     chCounterNextIn <- liftIO $ newMVar 0
 
@@ -141,7 +141,7 @@ channelEncrypt :: (MonadIO m, MonadError e m, FromErebosError e) => Channel -> B
 channelEncrypt Channel {..} plain = do
     count <- liftIO $ modifyMVar chCounterNextOut $ \c -> return ( c + 1, c )
     let cbytes = BL.toStrict $ encode count
-        nonce = nonce8 chNonceFixedOur (convert cbytes)
+        nonce = nonce8 chNonceFixedOur cbytes
     state <- case aeadInitialize chKey =<< nonce of
         CryptoPassed state -> return state
         CryptoFailed err -> throwOtherError $ "failed to init chacha-poly1305 cipher: " <> show err
@@ -159,7 +159,7 @@ channelDecrypt Channel {..} body = do
     let countByte = body `BS.index` 0
         body' = BS.drop 1 body
         guessedCount = expectedCount - 128 + fromIntegral (countByte - fromIntegral expectedCount + 128 :: Word8)
-        nonce = nonce8 chNonceFixedPeer $ convert $ BL.toStrict $ encode guessedCount
+        nonce = nonce8 chNonceFixedPeer $ BL.toStrict $ encode guessedCount
         blen = BS.length body' - 16
         ctext = BS.take blen body'
         tag = BS.drop blen body'

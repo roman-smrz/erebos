@@ -49,7 +49,7 @@ import Data.Binary
 import Data.Binary.Get
 import Data.Binary.Put
 import Data.Bits
-import Data.ByteArray (Bytes, ScrubbedBytes)
+import Data.ByteArray (ScrubbedBytes)
 import Data.ByteArray qualified as BA
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as B
@@ -145,7 +145,7 @@ instance Binary ParsedCookie where
         putByteString cookieContent
 
     get = do
-        Just cookieNonce <- maybeCryptoError . C.nonce12 . BA.convert <$> getByteString 12
+        Just cookieNonce <- maybeCryptoError . C.nonce12 <$> getByteString 12
         cookieValidity <- getWord32be
         Just cookieMac <- maybeCryptoError . C.authTag <$> getByteString 16
         cookieContent <- BL.toStrict <$> getRemainingLazyByteString
@@ -800,7 +800,7 @@ generateCookieHeaders Connection {..} ch = catMaybes <$> sequence [ echoHeader, 
 
 createCookie :: GlobalState addr -> addr -> IO Cookie
 createCookie GlobalState {..} addr = do
-    (nonceBytes :: Bytes) <- getRandomBytes 12
+    nonceBytes <- getRandomBytes 12
     validUntil <- (fromNanoSecs (60 * 10^(9 :: Int)) +) <$> getTime Monotonic
     let validSecondsFromStart = fromIntegral $ toNanoSecs (validUntil - gStartTime) `div` (10^(9 :: Int))
         cookieValidity = validSecondsFromStart - gCookieStartTime

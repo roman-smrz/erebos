@@ -27,16 +27,16 @@ data AeadState = AeadState
 newtype Nonce = Nonce ByteString
     deriving (Eq, ByteArrayAccess)
 
-nonce8 :: Bytes -> Bytes -> CryptoFailable Nonce
+nonce8 :: ByteString -> ByteString -> CryptoFailable Nonce
 nonce8 c iv
-    | BA.length c /= 4 = CryptoFailed CryptoError
-    | BA.length iv /= 8 = CryptoFailed CryptoError
-    | otherwise = CryptoPassed $ Nonce $ B.concat $ [ BA.convert c, BA.convert iv ]
+    | B.length c /= 4 = CryptoFailed CryptoError
+    | B.length iv /= 8 = CryptoFailed CryptoError
+    | otherwise = CryptoPassed $ Nonce $ B.concat [ c, iv ]
 
-nonce12 :: Bytes -> CryptoFailable Nonce
+nonce12 :: ByteString -> CryptoFailable Nonce
 nonce12 iv
-    | BA.length iv /= 12 = CryptoFailed CryptoError
-    | otherwise = CryptoPassed $ Nonce $ BA.convert iv
+    | B.length iv /= 12 = CryptoFailed CryptoError
+    | otherwise = CryptoPassed $ Nonce iv
 
 aeadInitialize :: ScrubbedBytes -> Nonce -> CryptoFailable AeadState
 aeadInitialize key nonce

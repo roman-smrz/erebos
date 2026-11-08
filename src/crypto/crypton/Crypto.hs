@@ -39,7 +39,7 @@ import Crypto.PubKey.Ed25519 qualified as Ed
 import Crypto.Random
 import Crypto.Random.Entropy
 
-import Data.ByteArray (Bytes, ByteArray)
+import Data.ByteArray (ByteArray)
 import Data.ByteArray qualified as BA
 import Data.ByteString (ByteString)
 
@@ -55,10 +55,10 @@ type AeadState = C.State
 
 type Nonce = C.Nonce
 
-nonce8 :: Bytes -> Bytes -> CryptoFailable Nonce
+nonce8 :: ByteString -> ByteString -> CryptoFailable Nonce
 nonce8 = C.nonce8
 
-nonce12 :: Bytes -> CryptoFailable Nonce
+nonce12 :: ByteString -> CryptoFailable Nonce
 nonce12 = C.nonce12
 
 aeadInitialize :: ScrubbedBytes -> Nonce -> CryptoFailable AeadState
