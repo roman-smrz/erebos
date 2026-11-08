@@ -538,7 +538,7 @@ erebosNetworkProtocol initialIdentity gLog gTestLog gDataFlow gControlFlow = do
     gInitConfig <- store mStorage $ (Rec [] :: Object)
 
     gCookieKey <- getRandomBytes 32
-    gCookieStartTime <- runGet getWord32host . BL.pack . BA.unpack @ScrubbedBytes <$> getRandomBytes 4
+    gCookieStartTime <- runGet getWord32host . BL.fromStrict <$> getRandomBytes 4
 
     let gs = GlobalState {..}
 
