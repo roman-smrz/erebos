@@ -15,7 +15,6 @@ import Control.Monad.Except
 import Control.Monad.Reader
 
 import Data.Bits
-import Data.ByteArray qualified as BA
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BC
@@ -24,6 +23,7 @@ import Data.Maybe
 import Data.Typeable
 import Data.Word
 
+import ConvertByteString
 import Crypto
 import Erebos.Identity
 import Erebos.Network
@@ -198,7 +198,7 @@ nonceDigest idReq idRsp nonceReq nonceRsp = hashToRefDigest $ serializeObject $ 
 
 confirmationNumber :: RefDigest -> String
 confirmationNumber dgst =
-    case map fromIntegral $ BA.unpack dgst :: [Word32] of
+    case map fromIntegral $ BS.unpack $ toByteString dgst :: [ Word32 ] of
          (a:b:c:d:_) -> let str = show $ ((a `shift` 24) .|. (b `shift` 16) .|. (c `shift` 8) .|. d) `mod` (10 ^ len)
                          in replicate (len - length str) '0' ++ str
          _ -> ""
