@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP #-}
+
 module Erebos.Network.Address (
     InetAddress(..),
     inetFromSockAddr,
@@ -9,7 +11,9 @@ module Erebos.Network.Address (
 ) where
 
 import Data.Bifunctor
+#ifdef ENABLE_SOCKETS
 import Data.IP qualified as IP
+#endif
 import Data.Word
 
 import Foreign.C.Types
@@ -17,10 +21,14 @@ import Foreign.Marshal.Array
 import Foreign.Ptr
 import Foreign.Storable as F
 
+#ifdef ENABLE_SOCKETS
 import Network.Socket
+#endif
 
 import Text.Read
 
+
+#ifdef ENABLE_SOCKETS
 
 newtype InetAddress = InetAddress { fromInetAddress :: IP.IP }
     deriving (Eq, Ord)
@@ -58,18 +66,43 @@ instance F.Storable InetAddress where
         IP.IPv6 ip -> do
             pokeByteOff ptr 0 (packFamily AF_INET6)
             pokeArray (ptr `plusPtr` sizeOf (undefined :: CInt) :: Ptr Word8) (map fromIntegral $ IP.fromIPv6b ip)
+#else
+
+data SockAddr
+    deriving (Eq, Ord, Show, Read)
+
+type PortNumber = Word16
+
+data InetAddress
+    deriving (Eq, Ord, Show, Read)
+
+#endif
 
 
 inetFromSockAddr :: SockAddr -> Maybe ( InetAddress, PortNumber )
+#ifdef ENABLE_SOCKETS
 inetFromSockAddr saddr = first InetAddress <$> IP.fromSockAddr saddr
+#else
+inetFromSockAddr = \case {}
+#endif
 
 inetToSockAddr :: ( InetAddress, PortNumber ) -> SockAddr
+#ifdef ENABLE_SOCKETS
 inetToSockAddr = IP.toSockAddr . first fromInetAddress
+#else
+inetToSockAddr ( addr, _ ) = case addr of {}
+#endif
 
 
 makeLocalhostAddress :: PortNumber -> SockAddr
+#ifdef ENABLE_SOCKETS
 makeLocalhostAddress port = SockAddrInet6 port 0 ( 0, 0, 0, 1 ) 0
+#else
+makeLocalhostAddress _ = undefined
+#endif
 
 getLocalhostPort :: SockAddr -> Maybe PortNumber
+#ifdef ENABLE_SOCKETS
 getLocalhostPort (SockAddrInet6 port _ ( 0, 0, 0, 1 ) _) = Just port
+#endif
 getLocalhostPort _                                       = Nothing

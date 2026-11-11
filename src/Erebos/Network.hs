@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP #-}
+
 module Erebos.Network (
     Server,
     startServer,
@@ -45,7 +47,9 @@ import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as BC
 import Data.ByteString.Lazy qualified as BL
 import Data.Function
+#ifdef ENABLE_SOCKETS
 import Data.IP qualified as IP
+#endif
 import Data.List
 import Data.Map (Map)
 import Data.Map qualified as M
@@ -61,8 +65,10 @@ import Foreign.Storable as F
 
 import GHC.Conc.Sync (unsafeIOToSTM)
 
+#ifdef ENABLE_SOCKETS
 import Network.Socket hiding (ControlMessage)
 import Network.Socket.ByteString qualified as S
+#endif
 
 import System.IO.Error
 
@@ -87,8 +93,10 @@ import Service
 discoveryPort :: PortNumber
 discoveryPort = 29665
 
+#ifdef ENABLE_SOCKETS
 discoveryMulticastGroup :: HostAddress6
 discoveryMulticastGroup = tupleToHostAddress6 (0xff12, 0xb6a4, 0x6b1f, 0x0969, 0xcaee, 0xacc2, 0x5c93, 0x73e1) -- ff12:b6a4:6b1f:969:caee:acc2:5c93:73e1
+#endif
 
 announceIntervalSeconds :: Int
 announceIntervalSeconds = 60
@@ -101,8 +109,10 @@ data Server = Server
     , serverCurrentHead :: MVar (Head LocalState)
     , serverIdentity_ :: MVar UnifiedIdentity
     , serverThreads :: MVar [ThreadId]
+#ifdef ENABLE_SOCKETS
     , serverSocket :: MVar Socket
     , serverSocketClosed :: MVar ()
+#endif
     , serverRawPath :: SymFlow (PeerAddress, BC.ByteString)
     , serverControlFlow :: Flow (ControlMessage PeerAddress) (ControlRequest PeerAddress)
     , serverDataResponse :: TQueue (Peer, Maybe PartialRef)
@@ -289,8 +299,10 @@ startServer serverOptions serverOrigHead logd' serverServices = do
     serverCurrentHead <- newMVar serverOrigHead
     serverIdentity_ <- newMVar $ headLocalIdentity serverOrigHead
     serverThreads <- newMVar []
+#ifdef ENABLE_SOCKETS
     serverSocket <- newEmptyMVar
     serverSocketClosed <- newEmptyMVar
+#endif
     (serverRawPath, protocolRawPath) <- newFlowIO
     (serverControlFlow, protocolControlFlow) <- newFlowIO
     serverDataResponse <- newTQueueIO
@@ -322,6 +334,7 @@ startServer serverOptions serverOrigHead logd' serverServices = do
             atomically (readTQueue serverIOActions)
 
     let loop sock = do
+#ifdef ENABLE_SOCKETS
             when (serverLocalDiscovery serverOptions) $ forkServerThread server "discovery" $ do
                 announceAddreses <- fmap concat $ sequence $
                     [ map (SockAddrInet6 discoveryPort 0 discoveryMulticastGroup) <$> joinMulticast sock
@@ -330,6 +343,7 @@ startServer serverOptions serverOrigHead logd' serverServices = do
                 forever $ do
                     atomically $ writeFlowBulk serverControlFlow $ map (SendAnnounce . DatagramAddress) announceAddreses
                     threadDelay $ announceIntervalSeconds * 1000 * 1000
+#endif
 
             let announceUpdate identity = do
                     st <- derivePartialStorage serverStorage
@@ -379,9 +393,11 @@ startServer serverOptions serverOrigHead logd' serverServices = do
                             atomically $ writeTQueue serverIOActions $ do
                                 act server x
 
+#ifdef ENABLE_SOCKETS
             forkServerThread server "receiver" $ forever $ do
                 (msg, saddr) <- S.recvFrom sock 4096
                 writeFlowIO serverRawPath (DatagramAddress saddr, msg)
+#endif
 
             forkServerThread server "sender" $ forever $ do
                 ( paddr, msg ) <- readFlowIO serverRawPath
@@ -392,7 +408,10 @@ startServer serverOptions serverOrigHead logd' serverServices = do
                 handle logAndDropAddress $ do
                     case paddr of
                         CustomPeerAddress addr -> sendBytesToAddress addr msg
-                        DatagramAddress addr -> void $ S.sendTo sock msg addr
+                        DatagramAddress addr -> case addr of
+#ifdef ENABLE_SOCKETS
+                            _ -> void $ S.sendTo sock msg addr
+#endif
 
             forkServerThread server "control-handler" $ forever $ do
                 readFlowIO serverControlFlow >>= \case
@@ -449,6 +468,7 @@ startServer serverOptions serverOrigHead logd' serverServices = do
 
             erebosNetworkProtocol (headLocalIdentity serverOrigHead) logd logt protocolRawPath protocolControlFlow
 
+#ifdef ENABLE_SOCKETS
     withSocketsDo $ do
         let hints = defaultHints
               { addrFlags = [ AI_PASSIVE ]
@@ -472,6 +492,9 @@ startServer serverOptions serverOrigHead logd' serverServices = do
             putMVar serverSocket sock
             forkServerThread server "main-loop" $ do
                 loop sock `finally` closeAndNotify sock
+#else
+    forkServerThread server "main-loop" $ loop ()
+#endif
 
     forkServerThread server "service-handler" $ forever $ do
         ( peer, paddr, svc, ref, streams ) <- atomically $ readTQueue chanSvc
@@ -502,7 +525,9 @@ stopServer server@Server {..} = do
                     _ -> emptyServiceState proxy
             serviceStopServer proxy server gs ps
         mapM_ killThread =<< takeMVar serverThreads
+#ifdef ENABLE_SOCKETS
     takeMVar serverSocketClosed
+#endif
 
 dataResponseWorker :: Server -> IO ()
 dataResponseWorker server = forever $ do
@@ -913,11 +938,15 @@ mkPeer peerServer_ peerAddress = do
 
 serverPeer :: Server -> SockAddr -> IO Peer
 serverPeer server paddr = do
+#ifdef ENABLE_SOCKETS
     let paddr' = case IP.fromSockAddr paddr of
             Just (IP.IPv4 ipv4, port)
                 -> IP.toSockAddr (IP.IPv6 $ IP.toIPv6w (0, 0, 0xffff, IP.fromIPv4w ipv4), port)
             _   -> paddr
     serverPeer' server (DatagramAddress paddr')
+#else
+    case paddr of {}
+#endif
 
 serverPeerCustom :: PeerAddressType addr => Server -> addr -> IO Peer
 serverPeerCustom server addr = serverPeer' server (CustomPeerAddress addr)
@@ -1148,6 +1177,8 @@ requestDataFromPeer peer@Peer {..} dgst bound callback = do
         writeTQueue (serverDataResponse peerServer_) ( peer, Nothing )
 
 
+#ifdef ENABLE_SOCKETS
+
 foreign import ccall unsafe "Network/ifaddrs.h erebos_join_multicast" cJoinMulticast :: CInt -> Ptr CSize -> IO (Ptr Word32)
 foreign import ccall unsafe "Network/ifaddrs.h erebos_local_addresses" cLocalAddresses :: Ptr CSize -> IO (Ptr InetAddress)
 foreign import ccall unsafe "Network/ifaddrs.h erebos_broadcast_addresses" cBroadcastAddresses :: IO (Ptr Word32)
@@ -1168,8 +1199,11 @@ joinMulticast sock =
             cFree ptr
             return res
 
+#endif
+
 getServerAddresses :: Server -> IO [ SockAddr ]
 getServerAddresses Server {..} = do
+#ifdef ENABLE_SOCKETS
     tryReadMVar serverSocket >>= \case
         Just sock -> do
             getSocketName sock >>= \case
@@ -1186,7 +1220,11 @@ getServerAddresses Server {..} = do
                             return $ map (inetToSockAddr . (, port )) res
                 _ -> return []
         Nothing -> return []
+#else
+    return []
+#endif
 
+#ifdef ENABLE_SOCKETS
 getBroadcastAddresses :: PortNumber -> IO [SockAddr]
 getBroadcastAddresses port = do
     ptr <- cBroadcastAddresses
@@ -1200,3 +1238,5 @@ getBroadcastAddresses port = do
         addrs <- parse 0
         cFree ptr
         return addrs
+
+#endif

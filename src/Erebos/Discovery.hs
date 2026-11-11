@@ -492,6 +492,7 @@ instance Service DiscoveryService where
             let runAsService = runPeerService @DiscoveryService @IO discoveryPeer
 
             let tryAddresses = \case
+#ifdef ENABLE_SOCKETS
                     DiscoveryLocalhost port : _ -> do
                         void $ liftIO $ forkIO $ do
                             let saddr = makeLocalhostAddress port
@@ -507,6 +508,7 @@ instance Service DiscoveryService where
                             runAsService $ do
                                 let upd rv = rv { rvDirect = Just $ (fromMaybe emptyPeer $ rvDirect rv) { dpPeer = Just peer } }
                                 svcModifyGlobal $ \s -> s { dgsPeers = M.alter (Just . upd . fromMaybe mempty) dgst $ dgsPeers s }
+#endif
 
                     DiscoveryICE : rest -> do
 #ifdef ENABLE_ICE_SUPPORT
@@ -637,6 +639,7 @@ instance Service DiscoveryService where
                     -- response to our request, try to connect to the peer
                     server <- asks svcServer
                     if
+#ifdef ENABLE_SOCKETS
                         | Just addr <- dconnAddress conn
                         , [ addrStr, portStr ] <- words (T.unpack addr)
                         , Just ipaddr <- readMaybe addrStr
@@ -647,6 +650,7 @@ instance Service DiscoveryService where
                             let upd rv = rv { rvDirect = Just $ (fromMaybe emptyPeer $ rvDirect rv) { dpPeer = Just peer } }
                             svcModifyGlobal $ \s -> s
                                 { dgsPeers = M.alter (Just . upd . fromMaybe mempty) (either refDigest id $ dconnTarget conn) $ dgsPeers s }
+#endif
 
                         | dconnTunnel conn
                         , Just tunnelWriter <- lookup (either refDigest id (dconnTarget conn)) (dpsOurTunnelRequests dps)
