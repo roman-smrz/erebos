@@ -31,6 +31,7 @@ module Erebos.Storage.Graph (
 
 import Control.Arrow
 import Control.Concurrent.MVar
+import Control.Exception
 
 import Data.ByteString.Char8 qualified as BC
 import Data.HashTable.IO qualified as HT
@@ -83,15 +84,17 @@ generationMax (x : xs) = Just $ snd $ foldl' helper (storedGeneration x, x) xs
 generationMax [] = Nothing
 
 storedGeneration :: Storable a => Stored a -> Generation
-storedGeneration x =
-    unsafePerformIO $ withMVar (stRefGeneration $ refStorage $ storedRef x) $ \ht -> do
-        let doLookup y = HT.lookup ht (refDigest $ storedRef y) >>= \case
-                Just gen -> return gen
-                Nothing -> do
-                    gen <- nextGeneration <$> mapM doLookup (previous y)
-                    HT.insert ht (refDigest $ storedRef y) gen
-                    return gen
-        doLookup x
+storedGeneration x = unsafePerformIO $ doLookup x
+  where
+    mvar = stRefGeneration $ refStorage $ storedRef x
+    doLookup y = do
+        dgst <- evaluate $ refDigest $ storedRef y
+        withMVar mvar (\ht -> HT.lookup ht dgst) >>= \case
+            Just gen -> return gen
+            Nothing -> do
+                gen <- evaluate . nextGeneration =<< mapM doLookup (previous y)
+                withMVar mvar (\ht -> HT.insert ht dgst gen)
+                return gen
 
 
 -- |Returns list of sets starting with the set of given objects and
@@ -171,18 +174,19 @@ commonAncestors oxs oys = sort $ gom oxs' oys'
 
 
 storedRoots :: Storable a => Stored a -> [ Stored a ]
-storedRoots x = do
-    let st = refStorage $ storedRef x
-    unsafePerformIO $ withMVar (stRefRoots st) $ \ht -> do
-        let doLookup y = HT.lookup ht (refDigest $ storedRef y) >>= \case
-                Just roots -> return roots
-                Nothing -> do
-                    roots <- case previous y of
-                        [] -> return [ refDigest $ storedRef y ]
-                        ps -> foldl' mergeUniq [] <$> mapM doLookup ps
-                    HT.insert ht (refDigest $ storedRef y) roots
-                    return roots
-        map (wrappedLoad . Ref st) <$> doLookup x
+storedRoots x = unsafePerformIO $ map (wrappedLoad . Ref st) <$> doLookup x
+  where
+    st = refStorage $ storedRef x
+    doLookup y = do
+        dgst <- evaluate $ refDigest $ storedRef y
+        withMVar (stRefRoots st) (\ht -> HT.lookup ht dgst) >>= \case
+            Just roots -> return roots
+            Nothing -> do
+                roots <- case previous y of
+                    [] -> return [ dgst ]
+                    ps -> foldl' mergeUniq [] <$> mapM doLookup ps
+                withMVar (stRefRoots st) (\ht -> HT.insert ht dgst roots)
+                return roots
 
 walkAncestors :: (Storable a, Monoid m) => (Stored a -> m) -> [Stored a] -> m
 walkAncestors f = helper . sortBy cmp
